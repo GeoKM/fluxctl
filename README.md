@@ -35,3 +35,7 @@ Run the minimal sanity test suite with:
 ```bash
 pytest
 ```
+
+## Development planning
+
+For the comprehensive prompt that guides the next sprint toward a feature-complete v1.0 release, see [docs/CODEX_PROMPT.md](docs/CODEX_PROMPT.md).
