@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+from functools import wraps
 from pathlib import Path
 from typing import Optional
 
 import typer
 
+from .exceptions import FluxctlError
 from .decoding.mfm import mfm_decoder
 from .exporters.img import export_img
 from .exporters.imd import export_imd
@@ -22,7 +24,20 @@ from .sector.reconstruct import reconstructor
 app = typer.Typer(add_completion=False, help="Fluxctl modular SCP toolkit")
 
 
+def _handle_cli_errors(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except FluxctlError as exc:
+            typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1)
+
+    return wrapper
+
+
 @app.command()
+@_handle_cli_errors
 def info(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
     """Print basic SCP information."""
     scp = parse_scp(path)
@@ -32,6 +47,7 @@ def info(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
 
 
 @app.command()
+@_handle_cli_errors
 def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
     """Run lightweight detection and print candidate layouts."""
     load_builtin_layouts()
@@ -60,6 +76,7 @@ def _decode_tracks(path: Path, layout_id: str, limit_tracks: Optional[int] = Non
 
 
 @app.command()
+@_handle_cli_errors
 def sectors(
     path: Path = typer.Argument(..., exists=True, readable=True),
     layout: str = typer.Option(..., "--layout", help="Layout identifier"),
@@ -75,6 +92,7 @@ def sectors(
 
 
 @app.command()
+@_handle_cli_errors
 def dump(
     path: Path = typer.Argument(..., exists=True, readable=True),
     layout: str = typer.Option(..., "--layout"),
@@ -93,6 +111,7 @@ def dump(
 
 
 @app.command()
+@_handle_cli_errors
 def qc(
     path: Path = typer.Argument(..., exists=True, readable=True),
     layout: str = typer.Option(..., "--layout"),
@@ -124,6 +143,7 @@ def qc(
 
 
 @app.command()
+@_handle_cli_errors
 def map(
     path: Path = typer.Argument(..., exists=True, readable=True),
     layout: str = typer.Option(..., "--layout"),
@@ -138,6 +158,7 @@ def map(
 
 
 @app.command()
+@_handle_cli_errors
 def convert(
     path: Path = typer.Argument(..., exists=True, readable=True),
     layout: str = typer.Option(..., "--layout"),
@@ -163,6 +184,7 @@ def convert(
 
 
 @app.command()
+@_handle_cli_errors
 def extract(
     path: Path = typer.Argument(..., exists=True, readable=True),
     layout: str = typer.Option(..., "--layout"),
@@ -187,6 +209,7 @@ def extract(
 
 
 @app.command()
+@_handle_cli_errors
 def decode(
     path: Path = typer.Argument(..., exists=True, readable=True),
     assume: str = typer.Option(..., "--assume"),
@@ -198,6 +221,7 @@ def decode(
 
 
 @app.command()
+@_handle_cli_errors
 def patch(
     path: Path = typer.Argument(..., exists=True, readable=True),
     layout: str = typer.Option(..., "--layout"),
