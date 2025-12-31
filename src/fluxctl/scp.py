@@ -5,6 +5,7 @@ import hashlib
 from pathlib import Path
 from typing import List
 
+from .exceptions import SCPFormatError
 from .models import RevolutionFlux, SCPImage, TrackFlux
 
 MAGIC = b"SCP"
@@ -12,12 +13,14 @@ MAGIC = b"SCP"
 
 def _read_header(data: bytes) -> tuple[int, int, int]:
     if len(data) < 16:
-        raise ValueError("SCP file too small")
+        raise SCPFormatError("SCP file too small for header")
     if data[0:3] != MAGIC:
-        raise ValueError("Not an SCP file")
+        raise SCPFormatError("Not an SCP file")
     version = data[3]
     # Simplified: bytes 4-5: disk type, 6-7: revolutions, 8-9: start track, 10-11: end track
     revolutions = int.from_bytes(data[6:8], "little", signed=False)
+    if revolutions <= 0:
+        raise SCPFormatError("SCP header reports no revolutions")
     timebase = int.from_bytes(data[14:16], "little", signed=False) or 25
     return version, revolutions, timebase
 
@@ -29,6 +32,8 @@ def parse_scp(path: Path) -> SCPImage:
     # but reports presence counts based on header indices.
     start_track = data[8]
     end_track = data[9]
+    if start_track > end_track:
+        raise SCPFormatError("Start track greater than end track")
     tracks: List[TrackFlux] = []
     for track in range(start_track, end_track + 1):
         for side in range(2):
