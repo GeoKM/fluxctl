@@ -6,6 +6,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Dict, Iterable, List
 
+from ..exceptions import LayoutNotFoundError
 from ..models import LayoutDescriptor
 from ..plugins import registry
 
@@ -46,5 +47,5 @@ def ensure_layout_loaded(layout_id: str) -> LayoutDescriptor:
         load_builtin_layouts()
     descriptor = registry.get_layout(layout_id)
     if descriptor is None:
-        raise KeyError(f"Unknown layout {layout_id}")
+        raise LayoutNotFoundError(f"Unknown layout {layout_id}")
     return descriptor
