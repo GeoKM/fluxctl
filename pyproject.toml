@@ -1,0 +1,27 @@
+[project]
+name = "fluxctl"
+version = "0.1.0"
+description = "Modular SCP flux imaging toolkit"
+authors = [{name = "Fluxctl Maintainers"}]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "typer[all]>=0.9.0",
+]
+
+[project.scripts]
+fluxctl = "fluxctl.cli:app"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"fluxctl" = ["data/layouts/*.json"]
