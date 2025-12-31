@@ -1,0 +1,2 @@
+*.scp !text !filter !merge !diff
+tests/fixtures/3.5inch/IBM/IBM-Generic-DSED-MFM-IBMPCDIR-2880K.scp filter=lfs diff=lfs merge=lfs -text
