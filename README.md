@@ -24,7 +24,7 @@ Layout descriptors are data-driven JSON files stored under `fluxctl/data/layouts
 * `fluxctl probe disk.scp` – list candidate encodings/layouts.
 * `fluxctl sectors disk.scp --track 0 --head 0 --encoding mfm` – decode a specific track and summarize sectors.
 * `fluxctl qc disk.scp --encoding mfm --json-out qc.json --text-out qc.txt` – generate QC reports.
-* `fluxctl map disk.scp --layout ibm_mfm_1440k --ascii` – render ASCII disk map.
+* `fluxctl visualize disk.scp --format ascii` – render ASCII disk map for quick inspection.
 * `fluxctl convert disk.scp --layout ibm_mfm_1440k --to raw --out disk.img` – export a flat IMG.
 * `fluxctl convert disk.scp --layout ibm_mfm_1440k --to imd --out disk.imd` – export ImageDisk with provenance.
 * `fluxctl extract disk.scp --list` – auto-detect a filesystem and list the root directory (FAT12 supported).
@@ -53,6 +53,19 @@ fluxctl qc disk.scp --encoding mfm --json-out qc.json --text-out qc.txt
 
 If no output path is provided, a brief summary is printed to stdout. Additional metrics (flux jitter, index variance) and
 encoding support for FM or GCR media can be added by extending `fluxctl.reports.qc`.
+
+## Visualization
+
+Use the visualizer to generate quick disk maps that highlight sector health:
+
+```bash
+fluxctl visualize disk.scp --format ascii
+fluxctl visualize disk.scp --format svg --out map.svg
+```
+
+ASCII output uses `■` for good sectors, `□` for weak sectors (CRC OK but low confidence), and `×` for missing or bad sectors.
+SVG output draws concentric rings with green/yellow/red segments for good/weak/bad respectively. Future versions may add PNG
+rendering or per-head overlays for multi-sided media.
 
 ## Testing
 

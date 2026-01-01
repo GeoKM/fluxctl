@@ -19,7 +19,7 @@ from .filesystems import Filesystem, RawSectorImage, TrackSectorImage, load_buil
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from .models import CandidateFormat, ProvenanceRecord
 from .plugins import registry
-from .reports.map import build_map_json, write_map_outputs
+from .reports.map import build_disk_map, render_ascii, render_svg
 from .reports.qc import build_qc_report, write_qc_report_json, write_qc_report_text
 from .scp import parse_scp, sha256_file
 from .sector.models import TrackSectors
@@ -218,17 +218,36 @@ def qc(
 
 @app.command()
 @_handle_cli_errors
-def map(
+def visualize(
     path: Path = typer.Argument(..., exists=True, readable=True),
-    layout: str = typer.Option(..., "--layout"),
-    json_out: Optional[Path] = typer.Option(None, "--json"),
-    svg: Optional[Path] = typer.Option(None, "--svg"),
-    ascii: bool = typer.Option(False, "--ascii"),
+    format: str = typer.Option("ascii", "--format", help="Output format: ascii or svg"),
+    out: Optional[Path] = typer.Option(None, "--out", help="Write output to a file"),
+    encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding (mfm, fm, gcr)"),
 ):
-    layout_desc = ensure_layout_loaded(layout)
-    track_data = _decode_tracks(path, layout)
-    map_json = build_map_json(layout_desc, track_data)
-    write_map_outputs(map_json, ascii_out=ascii, json_path=json_out, svg_path=svg)
+    """Render a disk map in ASCII or SVG form."""
+
+    format_lower = format.lower()
+    if format_lower not in {"ascii", "svg"}:
+        raise typer.BadParameter("--format must be 'ascii' or 'svg'")
+
+    image = parse_scp(path)
+    decoder = _get_decoder(encoding)
+    disk_map = build_disk_map(image, decoder)
+
+    if format_lower == "ascii":
+        ascii_map = render_ascii(disk_map)
+        if out:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(ascii_map, encoding="utf-8")
+        else:
+            typer.echo(ascii_map)
+    else:
+        if out is None:
+            raise typer.BadParameter("--out is required for SVG output")
+        svg_map = render_svg(disk_map)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(svg_map, encoding="utf-8")
+        typer.echo(f"Wrote SVG visualization to {out}")
 
 
 @app.command()
