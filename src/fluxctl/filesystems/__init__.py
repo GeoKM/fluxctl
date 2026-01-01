@@ -1,0 +1,160 @@
+"""Filesystem abstractions and helpers.
+
+This module defines lightweight interfaces for filesystem plugins as well as
+utility wrappers for accessing reconstructed sector data. Filesystem plugins are
+expected to follow the :class:`Filesystem` protocol and can be registered with
+:mod:`fluxctl.plugins` for discovery by the CLI.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple
+
+from ..exceptions import FilesystemError
+from ..plugins import PluginInfo, registry
+from ..sector.models import TrackSectors
+
+
+class SectorImage(Protocol):
+    """Protocol for objects that can expose sector-addressable storage."""
+
+    bytes_per_sector: int
+
+    def read_sector(self, lba: int, count: int = 1) -> bytes:
+        """Return the bytes for ``count`` sectors starting at ``lba``."""
+
+    def iter_sectors(self) -> Iterable[bytes]:
+        """Iterate over available sectors in logical order."""
+
+
+class Filesystem(Protocol):
+    """Minimal interface implemented by filesystem plugins."""
+
+    def probe(self, image: SectorImage) -> bool:
+        """Return ``True`` if the filesystem recognises ``image`` and is ready."""
+
+    def list_directory(self, path: str = "/") -> List["FileEntry"]:
+        """Return entries for the directory at ``path``."""
+
+    def extract_file(self, path: str) -> bytes:
+        """Return the file contents located at ``path``."""
+
+    def metadata(self) -> Dict[str, Any]:
+        """Return implementation-defined metadata about the mounted image."""
+
+
+@dataclass(slots=True)
+class FileEntry:
+    """Basic directory entry information returned by filesystem plugins."""
+
+    name: str
+    is_dir: bool
+    size: int
+    cluster_start: int
+    modified: Optional[str] = None
+    attributes: Optional[int] = None
+
+
+class RawSectorImage:
+    """Sector access wrapper for flat disk images."""
+
+    def __init__(self, data: bytes, bytes_per_sector: int = 512):
+        self.data = data
+        self.bytes_per_sector = bytes_per_sector
+        self.total_sectors = len(data) // bytes_per_sector if bytes_per_sector else 0
+
+    def read_sector(self, lba: int, count: int = 1) -> bytes:
+        start = lba * self.bytes_per_sector
+        end = start + count * self.bytes_per_sector
+        if end > len(self.data):
+            raise FilesystemError("Requested sector range exceeds image size")
+        return self.data[start:end]
+
+    def iter_sectors(self) -> Iterable[bytes]:  # pragma: no cover - simple generator
+        for idx in range(self.total_sectors):
+            yield self.read_sector(idx)
+
+
+class TrackSectorImage:
+    """Sector access wrapper backed by reconstructed :class:`TrackSectors` data."""
+
+    def __init__(self, tracks: Sequence[TrackSectors], bytes_per_sector: Optional[int] = None):
+        self.tracks = list(tracks)
+        self.bytes_per_sector = bytes_per_sector or self._infer_sector_size()
+        self._geometry: Optional[Tuple[int, int]] = None
+        self._sector_lookup = self._build_lookup()
+
+    def _infer_sector_size(self) -> int:
+        for ts in self.tracks:
+            for sector in ts.sectors:
+                return sector.size
+        raise FilesystemError("No sector data available to infer size")
+
+    def _build_lookup(self) -> Dict[Tuple[int, int, int], bytes]:
+        lookup: Dict[Tuple[int, int, int], bytes] = {}
+        for ts in self.tracks:
+            for sector in ts.sectors:
+                lookup[(ts.track, ts.head, sector.sector_id)] = sector.data
+        if not lookup:
+            raise FilesystemError("No sectors available for filesystem access")
+        return lookup
+
+    def set_geometry(self, sectors_per_track: int, heads: int) -> None:
+        self._geometry = (sectors_per_track, heads)
+
+    def _chs_for_lba(self, lba: int) -> Tuple[int, int, int]:
+        if self._geometry is None:
+            if lba == 0:
+                return (0, 0, 1)
+            raise FilesystemError("Geometry unknown; cannot translate LBA without FAT parameters")
+        sectors_per_track, heads = self._geometry
+        track = lba // (sectors_per_track * heads)
+        rem = lba % (sectors_per_track * heads)
+        head = rem // sectors_per_track
+        sector_id = (rem % sectors_per_track) + 1
+        return (track, head, sector_id)
+
+    def read_sector(self, lba: int, count: int = 1) -> bytes:
+        segments: List[bytes] = []
+        for offset in range(count):
+            chs = self._chs_for_lba(lba + offset)
+            try:
+                sector_data = self._sector_lookup[chs]
+            except KeyError as exc:
+                raise FilesystemError(f"Sector {chs} not available in reconstructed data") from exc
+            segments.append(sector_data)
+        return b"".join(segments)
+
+    def iter_sectors(self) -> Iterable[bytes]:  # pragma: no cover - integration helper
+        for key in sorted(self._sector_lookup.keys()):
+            yield self._sector_lookup[key]
+
+
+def load_builtin_filesystems() -> List[PluginInfo]:
+    """Register bundled filesystem plugins and return them."""
+
+    if registry.filesystem:
+        return list(registry.filesystem.values())
+
+    from .fat12 import FAT12
+
+    registry.register_filesystem(
+        "fat12",
+        PluginInfo(
+            name="FAT12 Filesystem",
+            version="0.1",
+            entry=FAT12(),
+            description="MS-DOS FAT12 filesystem",
+        ),
+    )
+    return list(registry.filesystem.values())
+
+
+__all__ = [
+    "FileEntry",
+    "Filesystem",
+    "RawSectorImage",
+    "SectorImage",
+    "TrackSectorImage",
+    "load_builtin_filesystems",
+]

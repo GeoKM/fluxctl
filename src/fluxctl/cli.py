@@ -12,7 +12,7 @@ from .decoding.mfm import mfm_decoder
 from .exceptions import FluxDecodeError, FluxctlError
 from .exporters.img import export_img
 from .exporters.imd import export_imd
-from .filesystems.fat12 import extract_fat12
+from .filesystems import Filesystem, RawSectorImage, TrackSectorImage, load_builtin_filesystems
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from .models import CandidateFormat
 from .plugins import registry
@@ -75,11 +75,13 @@ def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
     typer.echo(json.dumps([c.__dict__ for c in candidates], indent=2))
 
 
-def _decode_tracks(path: Path, layout_id: str, limit_tracks: Optional[int] = None) -> list[TrackSectors]:
+def _decode_tracks(
+    path: Path, layout_id: Optional[str], limit_tracks: Optional[int] = None, encoding: Optional[str] = None
+) -> list[TrackSectors]:
     scp = parse_scp(path)
-    layout = ensure_layout_loaded(layout_id)
+    layout = ensure_layout_loaded(layout_id) if layout_id else None
     track_data: list[TrackSectors] = []
-    decoder = _get_decoder(layout.encoding)
+    decoder = _get_decoder(layout.encoding if layout else (encoding or "mfm"))
     for ts in scp.tracks[: limit_tracks or None]:
         if not ts.revolutions:
             continue
@@ -89,10 +91,32 @@ def _decode_tracks(path: Path, layout_id: str, limit_tracks: Optional[int] = Non
                 bitstream,
                 cylinder=ts.track,
                 head=ts.side,
-                expected_sectors=layout.sectors_per_track,
+                expected_sectors=layout.sectors_per_track if layout else None,
             )
         )
     return track_data
+
+
+def _detect_filesystem(image) -> Optional[Filesystem]:
+    if not registry.filesystem:
+        load_builtin_filesystems()
+    for plugin in registry.filesystem.values():
+        fs = plugin.entry
+        if fs.probe(image):
+            return fs
+    return None
+
+
+def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
+    if path.suffix.lower() == ".img":
+        return RawSectorImage(path.read_bytes())
+    if path.suffix.lower() == ".scp":
+        track_data = _decode_tracks(path, layout_id, encoding=encoding)
+        return TrackSectorImage(track_data)
+    if layout_id:
+        track_data = _decode_tracks(path, layout_id, encoding=encoding)
+        return TrackSectorImage(track_data)
+    return RawSectorImage(path.read_bytes())
 
 
 @app.command()
@@ -222,25 +246,45 @@ def convert(
 @_handle_cli_errors
 def extract(
     path: Path = typer.Argument(..., exists=True, readable=True),
-    layout: str = typer.Option(..., "--layout"),
-    fs: str = typer.Option("fat12", "--fs"),
-    out_dir: Path = typer.Option(Path("extract"), "--out"),
+    layout: Optional[str] = typer.Option(None, "--layout", help="Layout identifier for reconstruction"),
+    encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding for SCP sources"),
+    list_only: bool = typer.Option(False, "--list", help="List directory contents"),
+    file_path: Optional[str] = typer.Option(None, "--path", help="Filesystem path to extract"),
+    out: Optional[Path] = typer.Option(None, "--out", help="Destination for extracted data"),
 ):
-    layout_desc = ensure_layout_loaded(layout)
-    track_data = _decode_tracks(path, layout)
-    if fs != "fat12":
-        raise typer.BadParameter("Only FAT12 is supported in MVP")
-    extract_fat12(track_data, layout_desc.sector_size, out_dir)
-    provenance = {
-        "input_path": str(path),
-        "input_sha256": sha256_file(path),
-        "fs": fs,
-        "layout": layout,
-        "tool": "fluxctl",
-        "version": "0.1.0",
-    }
-    (out_dir / "provenance.json").write_text(json.dumps(provenance, indent=2), encoding="utf-8")
-    typer.echo(f"Extracted to {out_dir}")
+    """Detect filesystem, list directories, or extract a file."""
+
+    if file_path and out is None:
+        raise typer.BadParameter("--out must be provided when --path is used")
+
+    image_obj = _prepare_image(path, layout, encoding)
+    filesystem = _detect_filesystem(image_obj)
+
+    if filesystem is None:
+        if out is None and (file_path or list_only):
+            raise FluxctlError("No filesystem detected; cannot extract named paths")
+        if out is None:
+            typer.echo("No filesystem detected; provide --out to dump raw sectors")
+            return
+        raw_bytes = b"".join(image_obj.iter_sectors())
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(raw_bytes)
+        typer.echo(f"No filesystem detected; wrote raw sector dump to {out}")
+        return
+
+    if list_only or file_path is None:
+        target_dir = "/" if file_path is None else file_path
+        entries = filesystem.list_directory(target_dir)
+        for entry in entries:
+            type_label = "<DIR>" if entry.is_dir else f"{entry.size} bytes"
+            typer.echo(f"{entry.name}\t{type_label}")
+        return
+
+    assert out is not None  # guarded above
+    content = filesystem.extract_file(file_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(content)
+    typer.echo(f"Extracted {file_path} to {out}")
 
 
 @app.command()
