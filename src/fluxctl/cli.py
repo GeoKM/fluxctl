@@ -8,18 +8,19 @@ from typing import Optional
 
 import typer
 
-from .exceptions import FluxctlError
 from .decoding.mfm import mfm_decoder
+from .exceptions import FluxDecodeError, FluxctlError
 from .exporters.img import export_img
 from .exporters.imd import export_imd
 from .filesystems.fat12 import extract_fat12
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
-from .models import CandidateFormat, TrackSectors
+from .models import CandidateFormat
 from .plugins import registry
 from .reports.map import build_map_json, write_map_outputs
 from .reports.qc import build_qc_report, write_qc_report
 from .scp import parse_scp, sha256_file
-from .sector.reconstruct import reconstructor
+from .sector.models import TrackSectors
+from .sector.reconstruct import build_track_sectors, reconstruct_track
 
 app = typer.Typer(add_completion=False, help="Fluxctl modular SCP toolkit")
 
@@ -34,6 +35,15 @@ def _handle_cli_errors(func):
             raise typer.Exit(code=1)
 
     return wrapper
+
+
+def _get_decoder(encoding: str):
+    if encoding == "mfm":
+        return mfm_decoder
+    plugin = registry.encoding.get(encoding)
+    if plugin:
+        return plugin.entry
+    raise FluxDecodeError(f"Unknown encoding '{encoding}'")
 
 
 @app.command()
@@ -69,9 +79,19 @@ def _decode_tracks(path: Path, layout_id: str, limit_tracks: Optional[int] = Non
     scp = parse_scp(path)
     layout = ensure_layout_loaded(layout_id)
     track_data: list[TrackSectors] = []
+    decoder = _get_decoder(layout.encoding)
     for ts in scp.tracks[: limit_tracks or None]:
-        bitstreams = [mfm_decoder.decode_revolution(rev) for rev in ts.revolutions]
-        track_data.append(reconstructor.parse_track(layout, ts.track, ts.side, bitstreams))
+        if not ts.revolutions:
+            continue
+        bitstream = decoder.decode_revolution(ts.revolutions[0])
+        track_data.append(
+            reconstruct_track(
+                bitstream,
+                cylinder=ts.track,
+                head=ts.side,
+                expected_sectors=layout.sectors_per_track,
+            )
+        )
     return track_data
 
 
@@ -79,16 +99,31 @@ def _decode_tracks(path: Path, layout_id: str, limit_tracks: Optional[int] = Non
 @_handle_cli_errors
 def sectors(
     path: Path = typer.Argument(..., exists=True, readable=True),
-    layout: str = typer.Option(..., "--layout", help="Layout identifier"),
-    track: int = typer.Option(0, help="Track index"),
-    side: int = typer.Option(0, help="Side index"),
+    track: int = typer.Option(0, "--track", help="Cylinder index"),
+    head: int = typer.Option(0, "--head", help="Head index"),
+    encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding (mfm, fm, gcr)"),
 ):
-    """List sectors for a given track."""
-    track_data = _decode_tracks(path, layout)
-    for ts in track_data:
-        if ts.track == track and ts.side == side:
-            for sector in ts.sectors:
-                typer.echo(f"T{ts.track} S{ts.side} ID{sector.sector_id} size={sector.size} state={sector.state} conf={sector.confidence}")
+    """Decode a specific track/head and list reconstructed sectors."""
+
+    scp = parse_scp(path)
+    track_flux = next((t for t in scp.tracks if t.track == track and t.side == head), None)
+    if track_flux is None:
+        raise FluxctlError(f"Track {track} head {head} not found in image")
+    if not track_flux.revolutions:
+        raise FluxDecodeError("No revolutions captured for the selected track")
+
+    decoder = _get_decoder(encoding)
+    track_sectors = build_track_sectors(track_flux.revolutions[0], decoder, cylinder=track, head=head)
+    typer.echo(
+        f"Track {track_sectors.track} head {track_sectors.head}: "
+        f"{len(track_sectors.sectors)} sectors (weak={track_sectors.weak} missing={track_sectors.missing})"
+    )
+    for sector in sorted(track_sectors.sectors, key=lambda s: s.sector_id):
+        crc_status = "ok" if sector.crc_ok else "bad"
+        typer.echo(
+            f"ID {sector.sector_id:02d} size={sector.size} crc={crc_status} "
+            f"deleted={'yes' if sector.deleted else 'no'} conf={sector.confidence:.2f}"
+        )
 
 
 @app.command()

@@ -25,15 +25,16 @@ class MFMDecoder(Decoder):
     keeping the door open for a more sophisticated PLL in future iterations.
     """
 
-    def __init__(self, cell_ns: float = 4000.0) -> None:
+    def __init__(self, cell_ns: float = 4000.0, max_cells: int = 64) -> None:
         self.cell_ns = cell_ns
+        self.max_cells = max_cells
 
     def _intervals_to_bits(self, intervals_ns: Sequence[int]) -> List[int]:
         bits: List[int] = []
         for interval in intervals_ns:
             if interval <= 0:
                 continue
-            cells = max(1, round(interval / self.cell_ns))
+            cells = max(1, min(round(interval / self.cell_ns), self.max_cells))
             if cells == 1:
                 bits.append(1)
             else:
@@ -45,12 +46,17 @@ class MFMDecoder(Decoder):
         if not rev.interval_ns:
             raise FluxDecodeError("No flux intervals supplied for revolution")
 
-        bits = self._intervals_to_bits(rev.interval_ns)
+        intervals_ns = list(rev.interval_ns)
+        mean_interval = sum(intervals_ns) / len(intervals_ns)
+        if mean_interval > 1_000_000:
+            intervals_ns = [max(1, int(val / 1000)) for val in intervals_ns]
+
+        bits = self._intervals_to_bits(intervals_ns)
         # Estimate PLL stability as the mean fractional deviation from the ideal
         # bit cell. This is a coarse measure but yields a reproducible confidence
         # score for testing.
         deviations = []
-        for interval in rev.interval_ns:
+        for interval in intervals_ns:
             cells = max(1, round(interval / self.cell_ns))
             expected = cells * self.cell_ns
             deviations.append(fabs(interval - expected) / expected if expected else 0.0)
