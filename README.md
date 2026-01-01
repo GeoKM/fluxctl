@@ -23,7 +23,7 @@ Layout descriptors are data-driven JSON files stored under `fluxctl/data/layouts
 * `fluxctl info disk.scp` – basic SCP header details.
 * `fluxctl probe disk.scp` – list candidate encodings/layouts.
 * `fluxctl sectors disk.scp --track 0 --head 0 --encoding mfm` – decode a specific track and summarize sectors.
-* `fluxctl qc disk.scp --layout ibm_mfm_1440k --out qc.json` – generate QC report.
+* `fluxctl qc disk.scp --encoding mfm --json-out qc.json --text-out qc.txt` – generate QC reports.
 * `fluxctl map disk.scp --layout ibm_mfm_1440k --ascii` – render ASCII disk map.
 * `fluxctl convert disk.scp --layout ibm_mfm_1440k --to img --out disk.img` – export IMG.
 * `fluxctl convert disk.scp --layout ibm_mfm_1440k --to imd --out disk.imd` – export IMD.
@@ -35,6 +35,18 @@ Layout descriptors are data-driven JSON files stored under `fluxctl/data/layouts
 Filesystem plugins are registered via the plugin registry and probed when running `fluxctl extract`. The initial release ships
 with a FAT12 implementation that reads MS-DOS formatted floppies, lists directory entries, and extracts file contents. If no
 filesystem is detected, `fluxctl extract --out dump.bin` will concatenate reconstructed sectors into a raw dump.
+
+## Quality control
+
+The QC pipeline inspects each decoded track/head pair and reports sector health, weak decodes, CRC failures, and overall
+confidence. JSON output is suitable for machine processing while the text report provides a quick per-track summary. Example:
+
+```bash
+fluxctl qc disk.scp --encoding mfm --json-out qc.json --text-out qc.txt
+```
+
+If no output path is provided, a brief summary is printed to stdout. Additional metrics (flux jitter, index variance) and
+encoding support for FM or GCR media can be added by extending `fluxctl.reports.qc`.
 
 ## Testing
 
