@@ -36,6 +36,9 @@ Run the minimal sanity test suite with:
 pytest
 ```
 
+The integration suite builds on disk images stored under `tests/fixtures`, following the naming convention documented in that
+folder. Use `fluxctl.fixtures.discover_fixtures` to parameterize tests across every available sample without hard-coding paths.
+
 ## Contributor guide
 
 For coding standards, workflows, and review expectations see [AGENTS.md](AGENTS.md).
