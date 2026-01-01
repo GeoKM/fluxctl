@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 from typing import List
 
-from ..models import LayoutDescriptor, TrackSectors
+from ..models import LayoutDescriptor
+from ..sector.models import TrackSectors
 
 LEGEND = {"good": "G", "weak": "W", "bad": "B", "missing": "M", "unknown": "?"}
 
