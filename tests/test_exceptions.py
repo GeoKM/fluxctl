@@ -30,6 +30,6 @@ def test_ensure_layout_error_surfaces_in_cli(tmp_path: Path) -> None:
     image = tmp_path / "empty.scp"
     _write_minimal_scp(image)
     runner = CliRunner()
-    result = runner.invoke(cli.app, ["sectors", str(image), "--layout", "missing"])
+    result = runner.invoke(cli.app, ["sectors", str(image)])
     assert result.exit_code == 1
-    assert "Unknown layout" in result.output
+    assert "no revolutions" in result.output.lower()

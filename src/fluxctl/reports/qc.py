@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from ..models import QCReport, Sector, TrackSectors
+from ..models import QCReport
+from ..sector.models import Sector, TrackSectors
 
 
 def build_qc_report(

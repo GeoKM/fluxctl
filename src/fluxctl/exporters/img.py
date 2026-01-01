@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 from typing import List
 
-from ..models import LayoutDescriptor, Sector, TrackSectors
+from ..models import LayoutDescriptor
+from ..sector.models import Sector, TrackSectors
 from ..scp import sha256_file
 
 
