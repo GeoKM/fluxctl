@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
@@ -19,6 +18,7 @@ from .filesystems import Filesystem, RawSectorImage, TrackSectorImage, load_buil
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from .models import CandidateFormat, ProvenanceRecord
 from .plugins import registry
+from .provenance import write_provenance
 from .reports.map import build_disk_map, render_ascii, render_svg
 from .reports.qc import build_qc_report, write_qc_report_json, write_qc_report_text
 from .scp import parse_scp, sha256_file
@@ -26,6 +26,8 @@ from .sector.models import TrackSectors
 from .sector.reconstruct import build_track_sectors, reconstruct_track
 
 app = typer.Typer(add_completion=False, help="Fluxctl modular SCP toolkit")
+provenance_app = typer.Typer(help="Inspect provenance records")
+app.add_typer(provenance_app, name="provenance")
 
 
 def _handle_cli_errors(func):
@@ -122,23 +124,19 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
     return RawSectorImage(path.read_bytes())
 
 
-def _write_provenance(out_path: Path, record: ProvenanceRecord, exporter_metadata: dict) -> None:
-    payload = asdict(record)
-    payload.update({
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "exporter_metadata": exporter_metadata,
-    })
-    out_path.with_suffix(out_path.suffix + ".provenance.json").write_text(
-        json.dumps(payload, indent=2), encoding="utf-8"
-    )
-
-
 def _is_lossy(track_data: Optional[list[TrackSectors]], exporter_metadata: dict) -> bool:
     if not track_data:
         return bool(exporter_metadata.get("padded_missing"))
     missing = any(ts.missing or ts.weak for ts in track_data)
     sector_health = any((not sec.crc_ok) or (not sec.data) for ts in track_data for sec in ts.sectors)
     return missing or sector_health or exporter_metadata.get("padded_missing", False)
+
+
+@provenance_app.command("show")
+def provenance_show(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
+    """Print a provenance JSON file."""
+
+    typer.echo(path.read_text(encoding="utf-8"))
 
 
 @app.command()
@@ -198,6 +196,7 @@ def qc(
     encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding for analysis"),
     json_out: Optional[Path] = typer.Option(None, "--json-out", help="Write QC results to a JSON file"),
     text_out: Optional[Path] = typer.Option(None, "--text-out", help="Write QC results to a text file"),
+    prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Override provenance output path"),
 ):
     """Assess image quality and emit QC reports."""
 
@@ -205,15 +204,34 @@ def qc(
     decoder = _get_decoder(encoding)
     report = build_qc_report(scp, decoder)
 
+    targets: list[Path] = []
     if json_out:
         write_qc_report_json(report, json_out)
+        targets.append(json_out)
     if text_out:
         write_qc_report_text(report, text_out)
-    if not json_out and not text_out:
+        targets.append(text_out)
+    if not targets:
         typer.echo(
             f"Analysed {len(report.tracks)} tracks; overall confidence {report.overall_confidence:.2f}; "
             f"missing tracks {report.missing_tracks}"
         )
+    if targets:
+        target_path = targets[0]
+        prov_target = prov_out or target_path.with_suffix(target_path.suffix + ".provenance.json")
+        record = ProvenanceRecord(
+            tool_name="fluxctl",
+            tool_version=__version__,
+            operation="qc",
+            input_path=path,
+            input_sha256=sha256_file(path),
+            output_path=target_path,
+            output_sha256=ProvenanceRecord.sha256_file(target_path),
+            parameters={"encoding": encoding, "json_out": str(json_out or ""), "text_out": str(text_out or "")},
+            plugins={"decoder": encoding},
+            decoder=encoding,
+        )
+        write_provenance(record, prov_target)
 
 
 @app.command()
@@ -223,6 +241,7 @@ def visualize(
     format: str = typer.Option("ascii", "--format", help="Output format: ascii or svg"),
     out: Optional[Path] = typer.Option(None, "--out", help="Write output to a file"),
     encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding (mfm, fm, gcr)"),
+    prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar path"),
 ):
     """Render a disk map in ASCII or SVG form."""
 
@@ -234,11 +253,13 @@ def visualize(
     decoder = _get_decoder(encoding)
     disk_map = build_disk_map(image, decoder)
 
+    output_path: Optional[Path] = None
     if format_lower == "ascii":
         ascii_map = render_ascii(disk_map)
         if out:
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(ascii_map, encoding="utf-8")
+            output_path = out
         else:
             typer.echo(ascii_map)
     else:
@@ -248,6 +269,24 @@ def visualize(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(svg_map, encoding="utf-8")
         typer.echo(f"Wrote SVG visualization to {out}")
+        output_path = out
+
+    if output_path:
+        prov_target = prov_out or output_path.with_suffix(output_path.suffix + ".provenance.json")
+        record = ProvenanceRecord(
+            tool_name="fluxctl",
+            tool_version=__version__,
+            operation="visualize",
+            input_path=path,
+            input_sha256=sha256_file(path),
+            output_path=output_path,
+            output_sha256=ProvenanceRecord.sha256_file(output_path),
+            parameters={"format": format_lower, "encoding": encoding, "out": str(out or "")},
+            plugins={"decoder": encoding, "renderer": format_lower},
+            decoder=encoding,
+            encoder=None,
+        )
+        write_provenance(record, prov_target)
 
 
 @app.command()
@@ -258,6 +297,7 @@ def convert(
     out: Path = typer.Option(..., "--out"),
     layout: Optional[str] = typer.Option(None, "--layout", help="Layout identifier for reconstruction"),
     encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding for SCP sources"),
+    prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar output"),
 ):
     load_builtin_exporters()
     layout_desc = ensure_layout_loaded(layout) if layout else None
@@ -288,14 +328,23 @@ def convert(
     provenance = ProvenanceRecord(
         tool_name="fluxctl",
         tool_version=__version__,
+        operation="convert",
+        input_path=path,
         input_sha256=sha256_file(path),
+        output_path=out,
         output_sha256=hashlib.sha256(exported).hexdigest(),
         parameters={
-            "layout": layout or "", "encoding": decoder_used, "exporter": to, "output": str(out)
+            "layout": layout or "",
+            "encoding": decoder_used,
+            "exporter": to,
+            "output": str(out),
         },
         plugins={"exporter": plugin.name, "exporter_version": plugin.version, "decoder": decoder_used},
+        decoder=decoder_used,
+        encoder=to,
     )
-    _write_provenance(out, provenance, exporter_metadata)
+    prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
+    write_provenance(provenance, prov_target)
 
     if _is_lossy(track_data, exporter_metadata):
         typer.secho(
@@ -313,6 +362,7 @@ def extract(
     list_only: bool = typer.Option(False, "--list", help="List directory contents"),
     file_path: Optional[str] = typer.Option(None, "--path", help="Filesystem path to extract"),
     out: Optional[Path] = typer.Option(None, "--out", help="Destination for extracted data"),
+    prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar path"),
 ):
     """Detect filesystem, list directories, or extract a file."""
 
@@ -332,6 +382,21 @@ def extract(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(raw_bytes)
         typer.echo(f"No filesystem detected; wrote raw sector dump to {out}")
+        record = ProvenanceRecord(
+            tool_name="fluxctl",
+            tool_version=__version__,
+            operation="extract",
+            input_path=path,
+            input_sha256=sha256_file(path),
+            output_path=out,
+            output_sha256=ProvenanceRecord.sha256_bytes(raw_bytes),
+            parameters={"layout": layout or "", "encoding": encoding, "path": file_path or ""},
+            plugins={},
+            decoder=encoding,
+            encoder=None,
+        )
+        prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
+        write_provenance(record, prov_target)
         return
 
     if list_only or file_path is None:
@@ -347,6 +412,21 @@ def extract(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(content)
     typer.echo(f"Extracted {file_path} to {out}")
+    prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
+    record = ProvenanceRecord(
+        tool_name="fluxctl",
+        tool_version=__version__,
+        operation="extract",
+        input_path=path,
+        input_sha256=sha256_file(path),
+        output_path=out,
+        output_sha256=ProvenanceRecord.sha256_bytes(content),
+        parameters={"layout": layout or "", "encoding": encoding, "path": file_path or ""},
+        plugins={"filesystem": filesystem.__class__.__name__},
+        decoder=encoding,
+        encoder=None,
+    )
+    write_provenance(record, prov_target)
 
 
 @app.command()
@@ -399,14 +479,19 @@ def patch(
     provenance = ProvenanceRecord(
         tool_name="fluxctl",
         tool_version=__version__,
+        operation="patch",
+        input_path=path,
         input_sha256=sha256_file(path),
         output_sha256=hashlib.sha256(exported).hexdigest(),
         parameters={
             "layout": layout, "patched_sector": write_sector, "encoding": layout_desc.encoding, "output": str(out)
         },
         plugins={"exporter": exporter_info.name, "exporter_version": exporter_info.version},
+        output_path=out,
+        decoder=layout_desc.encoding,
+        encoder=exporter_info.name,
     )
-    _write_provenance(out, provenance, exporter_metadata)
+    write_provenance(provenance, out.with_suffix(out.suffix + ".provenance.json"))
     out.with_suffix(out.suffix + ".patchlog.json").write_text(
         json.dumps({"patched": write_sector}, indent=2), encoding="utf-8"
     )

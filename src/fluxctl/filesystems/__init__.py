@@ -137,6 +137,7 @@ def load_builtin_filesystems() -> List[PluginInfo]:
         return list(registry.filesystem.values())
 
     from .fat12 import FAT12
+    from .amiga import AmigaOFS
 
     registry.register_filesystem(
         "fat12",
@@ -145,6 +146,15 @@ def load_builtin_filesystems() -> List[PluginInfo]:
             version="0.1",
             entry=FAT12(),
             description="MS-DOS FAT12 filesystem",
+        ),
+    )
+    registry.register_filesystem(
+        "amiga",
+        PluginInfo(
+            name="Amiga OFS Filesystem",
+            version="0.1",
+            entry=AmigaOFS(),
+            description="Simplified Amiga OFS/FFS reader",
         ),
     )
     return list(registry.filesystem.values())
