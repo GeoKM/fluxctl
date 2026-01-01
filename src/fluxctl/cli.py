@@ -17,7 +17,7 @@ from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from .models import CandidateFormat
 from .plugins import registry
 from .reports.map import build_map_json, write_map_outputs
-from .reports.qc import build_qc_report, write_qc_report
+from .reports.qc import build_qc_report, write_qc_report_json, write_qc_report_text
 from .scp import parse_scp, sha256_file
 from .sector.models import TrackSectors
 from .sector.reconstruct import build_track_sectors, reconstruct_track
@@ -173,32 +173,25 @@ def dump(
 @_handle_cli_errors
 def qc(
     path: Path = typer.Argument(..., exists=True, readable=True),
-    layout: str = typer.Option(..., "--layout"),
-    out: Path = typer.Option(Path("qc.json"), "--out"),
-    rev_policy: str = typer.Option("best_crc"),
-    min_confidence: float = typer.Option(0.5, "--min-confidence"),
+    encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding for analysis"),
+    json_out: Optional[Path] = typer.Option(None, "--json-out", help="Write QC results to a JSON file"),
+    text_out: Optional[Path] = typer.Option(None, "--text-out", help="Write QC results to a text file"),
 ):
+    """Assess image quality and emit QC reports."""
+
     scp = parse_scp(path)
-    layout_desc = ensure_layout_loaded(layout)
-    track_data = _decode_tracks(path, layout)
-    report = build_qc_report(
-        tool_version="0.1.0",
-        input_path=path,
-        input_sha256=sha256_file(path),
-        scp_meta={
-            "version": scp.version,
-            "drive_type": None,
-            "revolutions_per_track": scp.revolutions_per_track,
-            "timebase_ns": scp.timebase_ns,
-            "tracks_present": len(scp.tracks),
-        },
-        layout_id=layout_desc.layout_id,
-        rev_policy=rev_policy,
-        track_sector_data=track_data,
-        min_confidence=min_confidence,
-    )
-    write_qc_report(report, out)
-    typer.echo(f"Wrote {out}")
+    decoder = _get_decoder(encoding)
+    report = build_qc_report(scp, decoder)
+
+    if json_out:
+        write_qc_report_json(report, json_out)
+    if text_out:
+        write_qc_report_text(report, text_out)
+    if not json_out and not text_out:
+        typer.echo(
+            f"Analysed {len(report.tracks)} tracks; overall confidence {report.overall_confidence:.2f}; "
+            f"missing tracks {report.missing_tracks}"
+        )
 
 
 @app.command()

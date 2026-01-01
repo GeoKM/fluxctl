@@ -1,95 +1,226 @@
-"""QC report builder adhering to qc.v1 schema."""
+"""Quality-control reporting for decoded disks.
+
+This module inspects reconstructed sectors across every track/head pair and
+produces both structured and human-readable summaries. Future iterations can
+augment the analysis with additional metrics such as flux jitter, index
+variance, or PLL stability across revolutions.
+"""
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+import re
+from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
-from ..models import QCReport
-from ..sector.models import Sector, TrackSectors
+from ..decoding import Decoder
+from ..exceptions import FluxDecodeError
+from ..models import SCPImage
+from ..sector.models import Sector
+from ..sector.reconstruct import build_track_sectors
+
+# Sectors with confidence lower than this threshold are treated as "weak" in the
+# QC report. This can be surfaced in future UI work alongside jitter and
+# drop-out metrics.
+WEAK_CONFIDENCE_THRESHOLD = 0.7
 
 
-def build_qc_report(
-    tool_version: str,
-    input_path: Path,
-    input_sha256: str,
-    scp_meta: dict,
-    layout_id: Optional[str],
-    rev_policy: str,
-    track_sector_data: List[TrackSectors],
-    min_confidence: float,
-) -> QCReport:
-    sectors_flat: List[Sector] = [s for ts in track_sector_data for s in ts.sectors]
-    sectors_good = len([s for s in sectors_flat if s.state == "good"])
-    sectors_weak = len([s for s in sectors_flat if s.state == "weak"])
-    sectors_bad = len([s for s in sectors_flat if s.state == "bad"])
-    sectors_missing = len([s for s in sectors_flat if s.state == "missing"])
-    crc_failures = len([s for s in sectors_flat if not s.crc_ok])
-    summary = {
-        "overall_confidence": min(1.0, max([s.confidence for s in sectors_flat], default=0.0)),
-        "status": "ok" if crc_failures == 0 else "warning",
-        "tracks_total_expected": None,
-        "tracks_analyzed": len(track_sector_data),
-        "sectors_expected_total": None,
-        "sectors_found_total": len(sectors_flat),
-        "sectors_good": sectors_good,
-        "sectors_weak": sectors_weak,
-        "sectors_bad": sectors_bad,
-        "sectors_missing": sectors_missing,
-        "crc_failures": crc_failures,
-    }
-    track_metrics = [
-        {
-            "track": ts.track,
-            "side": ts.side,
-            "revolutions": 0,
-            "rpm_estimates": [],
-            "rpm_mean": None,
-            "rpm_stddev": None,
-            "index_jitter_ms": None,
-            "flux_dropout_events": 0,
-            "pll_lock_score": None,
-            "sector_count_found": len(ts.sectors),
-            "sector_count_expected": None,
-            "crc_failures": len([s for s in ts.sectors if not s.crc_ok]),
-            "weak_sectors": len([s for s in ts.sectors if s.state == "weak"]),
-            "confidence_mean": sum(s.confidence for s in ts.sectors) / max(len(ts.sectors), 1),
+@dataclass
+class TrackQC:
+    """Per-track quality metrics for a decoded disk."""
+
+    track: int
+    head: int
+    total_sectors: int
+    good_sectors: int
+    weak_sectors: int
+    bad_sectors: int
+    crc_errors: int
+    confidence: float
+
+    def to_dict(self) -> dict:
+        """Return a dictionary representation suitable for JSON serialisation."""
+
+        return asdict(self)
+
+
+@dataclass
+class DiskQCReport:
+    """Aggregate QC results across all decoded tracks."""
+
+    tracks: List[TrackQC]
+    overall_confidence: float
+    missing_tracks: int
+
+    def to_dict(self) -> dict:
+        """Return the QC report as a JSON-friendly dictionary."""
+
+        return {
+            "tracks": [track.to_dict() for track in self.tracks],
+            "overall_confidence": self.overall_confidence,
+            "missing_tracks": self.missing_tracks,
         }
-        for ts in track_sector_data
-    ]
-    sector_table = [
-        {
-            "track": s.track,
-            "side": s.side,
-            "sector_id": s.sector_id,
-            "size": s.size,
-            "crc_ok": s.crc_ok,
-            "confidence": s.confidence,
-            "state": s.state,
-            "source_revolutions": s.source_revolutions,
-        }
-        for s in sectors_flat
-    ]
-    return QCReport(
-        schema_version="qc.v1",
-        tool={"name": "fluxctl", "version": tool_version},
-        input={"path": str(input_path), "sha256": input_sha256, "size_bytes": input_path.stat().st_size},
-        scp=scp_meta,
-        analysis_params={
-            "encoding_selected": "mfm" if layout_id else None,
-            "layout_selected": layout_id,
-            "rev_policy": rev_policy,
-            "min_confidence": min_confidence,
-        },
-        summary=summary,
-        track_metrics=track_metrics,
-        sector_table=sector_table,
-        evidence=[f"layout={layout_id}" if layout_id else "no layout"],
+
+    def to_json(self) -> str:
+        """Serialise the QC report to a formatted JSON string."""
+
+        return json.dumps(self.to_dict(), indent=2)
+
+    @classmethod
+    def from_json(cls, payload: str) -> "DiskQCReport":
+        """Create a QC report from a JSON string produced by :meth:`to_json`."""
+
+        data = json.loads(payload)
+        tracks = [TrackQC(**track) for track in data.get("tracks", [])]
+        return cls(
+            tracks=tracks,
+            overall_confidence=data.get("overall_confidence", 0.0),
+            missing_tracks=data.get("missing_tracks", 0),
+        )
+
+
+def _infer_expected_sector_count(track_sectors: List[Sector]) -> int:
+    """Infer how many sectors should exist on a track.
+
+    The heuristic uses the largest sector ID as the expected count when sector
+    IDs are present, otherwise falls back to the number of decoded sectors. A
+    future version may incorporate layout metadata or interleave rules for
+    non-IBM encodings (e.g., GCR, FM, hard-sectored media).
+    """
+
+    if not track_sectors:
+        return 0
+    sector_ids = [sector.sector_id for sector in track_sectors if sector.sector_id is not None]
+    if sector_ids:
+        return max(sector_ids)
+    return len(track_sectors)
+
+
+def _compute_missing_tracks(image: SCPImage) -> int:
+    """Estimate how many tracks are absent within the observed range."""
+
+    if not image.tracks:
+        return 0
+    track_ids = sorted({track.track for track in image.tracks})
+    if not track_ids:
+        return 0
+    expected_tracks = track_ids[-1] - track_ids[0] + 1
+    missing = expected_tracks - len(track_ids)
+    return max(missing, 0)
+
+
+def _estimate_sectors_per_track(image: SCPImage) -> int:
+    """Estimate expected sectors per track using filename hints and track counts."""
+
+    track_total = len(image.tracks)
+    if track_total == 0:
+        return 0
+    match = re.search(r"(\d+(?:\.\d+)?)\s*([KkMm])", image.path.name)
+    if match:
+        value = float(match.group(1))
+        unit = match.group(2).lower()
+        capacity_bytes = value * (1024 ** (1 if unit == "k" else 2))
+        estimated = int(round(capacity_bytes / (track_total * 512)))
+        if estimated > 0:
+            return estimated
+    return 9
+
+
+def build_qc_report(image: SCPImage, decoder: Decoder) -> DiskQCReport:
+    """Analyse an image and build a QC report.
+
+    Each track/head pair is decoded using the supplied ``decoder`` and the first
+    available revolution. Sectors are reconstructed and tallied, with CRC
+    failures and low-confidence decodes highlighted. Tracks that fail to decode
+    are represented with zero confidence and a single bad sector placeholder so
+    that the CLI and report writers can flag the issue clearly.
+    """
+
+    track_reports: List[TrackQC] = []
+    expected_hint = _estimate_sectors_per_track(image)
+    for track_flux in image.tracks:
+        try:
+            if not track_flux.revolutions:
+                raise FluxDecodeError("No revolutions present for track")
+            track_sectors = build_track_sectors(
+                track_flux.revolutions[0],
+                decoder,
+                cylinder=track_flux.track,
+                head=track_flux.side,
+                expected_sectors=expected_hint or None,
+            )
+            expected = _infer_expected_sector_count(track_sectors.sectors) or expected_hint
+            decoded_ids = {sector.sector_id for sector in track_sectors.sectors if sector.data}
+            missing = max(expected - len(decoded_ids), 0)
+            crc_errors = len([sector for sector in track_sectors.sectors if sector.data and not sector.crc_ok])
+            weak = len([sector for sector in track_sectors.sectors if sector.data and sector.confidence < WEAK_CONFIDENCE_THRESHOLD])
+            good = len([sector for sector in track_sectors.sectors if sector.data and sector.crc_ok])
+            bad = missing + len([sector for sector in track_sectors.sectors if not sector.data])
+            confidence = (
+                sum(sector.confidence for sector in track_sectors.sectors) / len(track_sectors.sectors)
+                if track_sectors.sectors
+                else 0.0
+            )
+        except Exception:
+            expected = expected_hint
+            good = 0
+            weak = 0
+            bad = expected or 1
+            crc_errors = bad
+            confidence = 0.0
+
+        track_reports.append(
+            TrackQC(
+                track=track_flux.track,
+                head=track_flux.side,
+                total_sectors=expected,
+                good_sectors=good,
+                weak_sectors=weak,
+                bad_sectors=bad,
+                crc_errors=crc_errors,
+                confidence=confidence,
+            )
+        )
+
+    overall_confidence = (
+        sum(track.confidence for track in track_reports) / len(track_reports) if track_reports else 0.0
     )
+    missing_tracks = _compute_missing_tracks(image)
+    return DiskQCReport(tracks=track_reports, overall_confidence=overall_confidence, missing_tracks=missing_tracks)
 
 
-def write_qc_report(report: QCReport, out_path: Path) -> None:
-    payload = report.__dict__
-    payload["tool"] = report.tool
-    out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+def write_qc_report_text(report: DiskQCReport, path: Path) -> None:
+    """Write a human-readable QC report to ``path``."""
+
+    lines = [
+        "Fluxctl QC Report",
+        f"Tracks analysed: {len(report.tracks)}",
+        f"Overall confidence: {report.overall_confidence:.2f}",
+        f"Missing tracks: {report.missing_tracks}",
+        "",
+        "Per-track breakdown:",
+    ]
+    for track in sorted(report.tracks, key=lambda t: (t.track, t.head)):
+        lines.append(
+            " "
+            f"Track {track.track:02d} Head {track.head}: "
+            f"total={track.total_sectors} good={track.good_sectors} weak={track.weak_sectors} "
+            f"bad={track.bad_sectors} crc_errors={track.crc_errors} conf={track.confidence:.2f}"
+        )
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def write_qc_report_json(report: DiskQCReport, path: Path) -> None:
+    """Write a machine-readable QC report to ``path``."""
+
+    path.write_text(report.to_json(), encoding="utf-8")
+
+
+__all__ = [
+    "DiskQCReport",
+    "TrackQC",
+    "WEAK_CONFIDENCE_THRESHOLD",
+    "build_qc_report",
+    "write_qc_report_json",
+    "write_qc_report_text",
+]
