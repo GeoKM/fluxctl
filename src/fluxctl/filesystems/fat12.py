@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import List
 
-from ..models import TrackSectors
+from ..sector.models import TrackSectors
 
 
 class FAT12Extractor:

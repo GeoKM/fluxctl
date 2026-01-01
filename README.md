@@ -22,6 +22,7 @@ Layout descriptors are data-driven JSON files stored under `fluxctl/data/layouts
 
 * `fluxctl info disk.scp` – basic SCP header details.
 * `fluxctl probe disk.scp` – list candidate encodings/layouts.
+* `fluxctl sectors disk.scp --track 0 --head 0 --encoding mfm` – decode a specific track and summarize sectors.
 * `fluxctl qc disk.scp --layout ibm_mfm_1440k --out qc.json` – generate QC report.
 * `fluxctl map disk.scp --layout ibm_mfm_1440k --ascii` – render ASCII disk map.
 * `fluxctl convert disk.scp --layout ibm_mfm_1440k --to img --out disk.img` – export IMG.

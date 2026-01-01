@@ -5,6 +5,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+# Sector-level models are defined in ``fluxctl.sector.models`` but re-exported
+# here for convenience to avoid cascading import changes.
+from .sector.models import Sector, TrackSectors
+
 
 @dataclass
 class ProvenanceRecord:
@@ -51,26 +55,6 @@ class Bitstream:
     bits: List[int]
     metrics: BitDecodeMetrics
     source_revs: List[int] = field(default_factory=list)
-
-
-@dataclass
-class Sector:
-    track: int
-    side: int
-    sector_id: int
-    size: int
-    data: bytes = b""
-    crc_ok: bool = False
-    confidence: float = 0.0
-    state: str = "unknown"  # good|weak|bad|missing|unknown
-    source_revolutions: List[int] = field(default_factory=list)
-
-
-@dataclass
-class TrackSectors:
-    track: int
-    side: int
-    sectors: List[Sector]
 
 
 @dataclass
