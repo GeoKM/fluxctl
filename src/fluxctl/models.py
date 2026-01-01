@@ -12,13 +12,48 @@ from .sector.models import Sector, TrackSectors
 
 @dataclass
 class ProvenanceRecord:
+    """Structured record describing how an artefact was produced."""
+
     tool_name: str
     tool_version: str
+    operation: str
+    input_path: Optional[Path]
     input_sha256: str
+    output_path: Optional[Path]
     output_sha256: Optional[str]
     parameters: Dict[str, str]
     plugins: Dict[str, str]
+    decoder: Optional[str] = None
+    encoder: Optional[str] = None
+    timestamp: Optional[str] = None
     evidence: List[str] = field(default_factory=list)
+
+    @staticmethod
+    def sha256_bytes(payload: bytes) -> str:
+        """Return the SHA-256 hash for ``payload``.
+
+        The helper is intentionally kept small to make provenance tests easy to
+        follow and to avoid scattering hashing helpers across modules.
+        """
+
+        import hashlib
+
+        return hashlib.sha256(payload).hexdigest()
+
+    @staticmethod
+    def sha256_file(path: Path) -> str:
+        """Return SHA-256 hash of a file located at ``path``."""
+
+        import hashlib
+
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return digest.hexdigest()
 
 
 @dataclass

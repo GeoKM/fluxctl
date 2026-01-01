@@ -14,3 +14,6 @@ class Decoder(Protocol):
 
 
 __all__ = ["Decoder"]
+
+# Register builtin decoders
+from . import gcr  # noqa: E402,F401
