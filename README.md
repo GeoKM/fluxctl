@@ -27,7 +27,14 @@ Layout descriptors are data-driven JSON files stored under `fluxctl/data/layouts
 * `fluxctl map disk.scp --layout ibm_mfm_1440k --ascii` – render ASCII disk map.
 * `fluxctl convert disk.scp --layout ibm_mfm_1440k --to img --out disk.img` – export IMG.
 * `fluxctl convert disk.scp --layout ibm_mfm_1440k --to imd --out disk.imd` – export IMD.
-* `fluxctl extract disk.scp --layout ibm_mfm_1440k --fs fat12 --out outdir/` – extract reconstructed sectors.
+* `fluxctl extract disk.scp --list` – auto-detect a filesystem and list the root directory (FAT12 supported).
+* `fluxctl extract disk.scp --path AUTOEXEC.BAT --out autoexec.bin` – extract a file from a detected filesystem.
+
+### Filesystems
+
+Filesystem plugins are registered via the plugin registry and probed when running `fluxctl extract`. The initial release ships
+with a FAT12 implementation that reads MS-DOS formatted floppies, lists directory entries, and extracts file contents. If no
+filesystem is detected, `fluxctl extract --out dump.bin` will concatenate reconstructed sectors into a raw dump.
 
 ## Testing
 
