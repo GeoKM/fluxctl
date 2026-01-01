@@ -107,3 +107,7 @@ The MVP is scaffolding only; most critical functions are placeholders.
 * Include comprehensive logging; allow debug logs via CLI.
 * Use clear and concise variable and function names.
 * Ensure extensibility: new decoders/filesystems/exporters should be addable via the plugin registry without modifying core code.
+
+## Recent additions
+- GCR decoding and Amiga OFS filesystem support are implemented in a fixtures-first manner to keep tests lightweight.
+- Provenance sidecars (`*.provenance.json`) are emitted for CLI outputs and should remain stable across new commands.
