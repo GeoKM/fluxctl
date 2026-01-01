@@ -25,10 +25,16 @@ Layout descriptors are data-driven JSON files stored under `fluxctl/data/layouts
 * `fluxctl sectors disk.scp --track 0 --head 0 --encoding mfm` – decode a specific track and summarize sectors.
 * `fluxctl qc disk.scp --encoding mfm --json-out qc.json --text-out qc.txt` – generate QC reports.
 * `fluxctl map disk.scp --layout ibm_mfm_1440k --ascii` – render ASCII disk map.
-* `fluxctl convert disk.scp --layout ibm_mfm_1440k --to img --out disk.img` – export IMG.
-* `fluxctl convert disk.scp --layout ibm_mfm_1440k --to imd --out disk.imd` – export IMD.
+* `fluxctl convert disk.scp --layout ibm_mfm_1440k --to raw --out disk.img` – export a flat IMG.
+* `fluxctl convert disk.scp --layout ibm_mfm_1440k --to imd --out disk.imd` – export ImageDisk with provenance.
 * `fluxctl extract disk.scp --list` – auto-detect a filesystem and list the root directory (FAT12 supported).
 * `fluxctl extract disk.scp --path AUTOEXEC.BAT --out autoexec.bin` – extract a file from a detected filesystem.
+
+Example conversion from the bundled fixtures:
+
+```bash
+fluxctl convert tests/fixtures/3.5inch/IBM/IBM-Generic-DSHD-MFM-IBMPC-1440K.scp --to raw --layout ibm_mfm_1440k --out disk.img
+```
 
 ### Filesystems
 

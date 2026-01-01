@@ -1,20 +1,23 @@
 """Fluxctl command line interface."""
 from __future__ import annotations
 
+import hashlib
 import json
+from dataclasses import asdict
+from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 from typing import Optional
 
 import typer
 
+from . import __version__
 from .decoding.mfm import mfm_decoder
-from .exceptions import FluxDecodeError, FluxctlError
-from .exporters.img import export_img
-from .exporters.imd import export_imd
+from .exceptions import ExportError, FluxDecodeError, FluxctlError
+from .exporters import load_builtin_exporters
 from .filesystems import Filesystem, RawSectorImage, TrackSectorImage, load_builtin_filesystems
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
-from .models import CandidateFormat
+from .models import CandidateFormat, ProvenanceRecord
 from .plugins import registry
 from .reports.map import build_map_json, write_map_outputs
 from .reports.qc import build_qc_report, write_qc_report_json, write_qc_report_text
@@ -119,6 +122,25 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
     return RawSectorImage(path.read_bytes())
 
 
+def _write_provenance(out_path: Path, record: ProvenanceRecord, exporter_metadata: dict) -> None:
+    payload = asdict(record)
+    payload.update({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "exporter_metadata": exporter_metadata,
+    })
+    out_path.with_suffix(out_path.suffix + ".provenance.json").write_text(
+        json.dumps(payload, indent=2), encoding="utf-8"
+    )
+
+
+def _is_lossy(track_data: Optional[list[TrackSectors]], exporter_metadata: dict) -> bool:
+    if not track_data:
+        return bool(exporter_metadata.get("padded_missing"))
+    missing = any(ts.missing or ts.weak for ts in track_data)
+    sector_health = any((not sec.crc_ok) or (not sec.data) for ts in track_data for sec in ts.sectors)
+    return missing or sector_health or exporter_metadata.get("padded_missing", False)
+
+
 @app.command()
 @_handle_cli_errors
 def sectors(
@@ -213,25 +235,53 @@ def map(
 @_handle_cli_errors
 def convert(
     path: Path = typer.Argument(..., exists=True, readable=True),
-    layout: str = typer.Option(..., "--layout"),
-    to: str = typer.Option(..., "--to", help="img or imd"),
+    to: str = typer.Option(..., "--to", help="Exporter key (raw, imd)"),
     out: Path = typer.Option(..., "--out"),
-    force: bool = typer.Option(False, "--force"),
+    layout: Optional[str] = typer.Option(None, "--layout", help="Layout identifier for reconstruction"),
+    encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding for SCP sources"),
 ):
-    layout_desc = ensure_layout_loaded(layout)
-    track_data = _decode_tracks(path, layout)
-    provenance = {
-        "input_path": str(path),
-        "input_sha256": sha256_file(path),
-        "tool": "fluxctl",
-        "version": "0.1.0",
-    }
-    if to == "img":
-        export_img(track_data, layout_desc, out, provenance)
-    elif to == "imd":
-        export_imd(track_data, layout_desc, out, provenance, force=force)
+    load_builtin_exporters()
+    layout_desc = ensure_layout_loaded(layout) if layout else None
+    decoder_used = layout_desc.encoding if layout_desc else encoding
+    track_data: Optional[list[TrackSectors]] = None
+
+    if path.suffix.lower() == ".scp":
+        track_data = _decode_tracks(path, layout, encoding=decoder_used)
+        image_obj = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size if layout_desc else None)
+        if layout_desc:
+            image_obj.set_geometry(layout_desc.sectors_per_track, layout_desc.sides)
     else:
+        image_obj = RawSectorImage(path.read_bytes())
+
+    plugin = registry.exporter.get(to)
+    if plugin is None:
         raise typer.BadParameter("Unsupported exporter")
+
+    exporter = plugin.entry
+    if not exporter.supports(image_obj):
+        raise ExportError(f"Exporter '{to}' does not support this image type")
+
+    exported = exporter.export(image_obj)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(exported)
+    exporter_metadata = exporter.metadata()
+
+    provenance = ProvenanceRecord(
+        tool_name="fluxctl",
+        tool_version=__version__,
+        input_sha256=sha256_file(path),
+        output_sha256=hashlib.sha256(exported).hexdigest(),
+        parameters={
+            "layout": layout or "", "encoding": decoder_used, "exporter": to, "output": str(out)
+        },
+        plugins={"exporter": plugin.name, "exporter_version": plugin.version, "decoder": decoder_used},
+    )
+    _write_provenance(out, provenance, exporter_metadata)
+
+    if _is_lossy(track_data, exporter_metadata):
+        typer.secho(
+            "Warning: export may be lossy due to missing or low-confidence sectors", fg=typer.colors.YELLOW
+        )
     typer.echo(f"Wrote {out}")
 
 
@@ -301,6 +351,7 @@ def patch(
     out: Path = typer.Option(..., "--out"),
 ):
     layout_desc = ensure_layout_loaded(layout)
+    load_builtin_exporters()
     track_data = _decode_tracks(path, layout)
     try:
         track_str, payload = write_sector.split(":", 1)
@@ -315,14 +366,28 @@ def patch(
                 if sec.sector_id == sector_idx:
                     sec.data = bytes.fromhex(payload)
                     sec.state = "good"
-    provenance = {
-        "input_path": str(path),
-        "input_sha256": sha256_file(path),
-        "tool": "fluxctl",
-        "version": "0.1.0",
-        "patched_sector": write_sector,
-    }
-    export_img(track_data, layout_desc, out, provenance)
+    exporter_info = registry.exporter.get("raw")
+    if exporter_info is None:
+        raise ExportError("Raw exporter not available")
+    exporter = exporter_info.entry
+    image_obj = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
+    image_obj.set_geometry(layout_desc.sectors_per_track, layout_desc.sides)
+    exported = exporter.export(image_obj)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(exported)
+    exporter_metadata = exporter.metadata()
+
+    provenance = ProvenanceRecord(
+        tool_name="fluxctl",
+        tool_version=__version__,
+        input_sha256=sha256_file(path),
+        output_sha256=hashlib.sha256(exported).hexdigest(),
+        parameters={
+            "layout": layout, "patched_sector": write_sector, "encoding": layout_desc.encoding, "output": str(out)
+        },
+        plugins={"exporter": exporter_info.name, "exporter_version": exporter_info.version},
+    )
+    _write_provenance(out, provenance, exporter_metadata)
     out.with_suffix(out.suffix + ".patchlog.json").write_text(
         json.dumps({"patched": write_sector}, indent=2), encoding="utf-8"
     )
