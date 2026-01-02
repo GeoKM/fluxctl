@@ -67,9 +67,42 @@ def parse_scp(path: Path) -> SCPImage:
         if offset == 0:
             continue
         next_offset = next((o for o in offsets[idx + 1 :] if o != 0), len(data))
-        intervals = _parse_track_flux(data[offset:next_offset], timebase)
-        revolution_flux = [RevolutionFlux(index=i, interval_ns=list(intervals)) for i in range(revolutions)]
-        tracks.append(TrackFlux(track=start_track + idx, side=0, revolutions=revolution_flux))
+        header_len = 32
+        header = data[offset : offset + header_len]
+        if len(header) < header_len:
+            raise SCPFormatError("Track block missing TRK header")
+        track_num = header[3]
+        head_num = header[4] if header[4] in (0, 1) else 0
+
+        revolution_offsets = [
+            int.from_bytes(header[6 + 4 * rev : 10 + 4 * rev], "little", signed=False)
+            for rev in range(revolutions)
+        ]
+
+        revolution_flux: List[RevolutionFlux] = []
+        has_valid_offsets = any(offset <= rev_offset < next_offset for rev_offset in revolution_offsets)
+
+        if not has_valid_offsets:
+            intervals = _parse_track_flux(data[offset:next_offset], timebase)
+            revolution_flux = [RevolutionFlux(index=i, interval_ns=list(intervals)) for i in range(revolutions)]
+        else:
+            for rev_index, rev_offset in enumerate(revolution_offsets):
+                if not (offset <= rev_offset < next_offset):
+                    interval_ns = []
+                else:
+                    following = [o for o in revolution_offsets[rev_index + 1 :] if offset <= o < next_offset and o > rev_offset]
+                    rev_end = following[0] if following else next_offset
+                    if rev_end <= rev_offset:
+                        interval_ns = []
+                    else:
+                        rev_block = data[rev_offset:rev_end]
+                        if not rev_block.startswith(b"TRK"):
+                            rev_block = header + rev_block
+                        intervals = _parse_track_flux(rev_block, timebase)
+                        interval_ns = list(intervals)
+                revolution_flux.append(RevolutionFlux(index=rev_index, interval_ns=interval_ns))
+
+        tracks.append(TrackFlux(track=track_num, side=head_num, revolutions=revolution_flux))
 
     return SCPImage(
         path=path,
