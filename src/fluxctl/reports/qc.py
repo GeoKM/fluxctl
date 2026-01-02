@@ -183,10 +183,18 @@ def build_qc_report(
                         if sector.data and sector.confidence < WEAK_CONFIDENCE_THRESHOLD
                     ]
                 )
+                # Count sectors with CRC failures as bad so the summary aligns with the map.
                 good = len([sector for sector in track_sectors.sectors if sector.data and sector.crc_ok])
-                bad = missing + len([sector for sector in track_sectors.sectors if not sector.data])
+                bad = missing + len(
+                    [
+                        sector
+                        for sector in track_sectors.sectors
+                        if not sector.data or not sector.crc_ok
+                    ]
+                )
+                # Average confidence across sectors with data.
                 confidence = (
-                    sum(sector.confidence for sector in track_sectors.sectors) / len(track_sectors.sectors)
+                    sum(sector.confidence for sector in track_sectors.sectors if sector.data) / len(track_sectors.sectors)
                     if track_sectors.sectors
                     else 0.0
                 )

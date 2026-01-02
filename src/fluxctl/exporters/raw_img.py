@@ -74,10 +74,16 @@ class RawIMGExporter:
         return tracks
 
     def _sector_size(self, tracks: Sequence[TrackSectors]) -> int:
-        for ts in tracks:
-            for sector in ts.sectors:
-                return sector.size
-        raise ExportError("Unable to determine sector size from image")
+        """
+        Determine the common sector size for a group of tracks. If multiple
+        sizes are present, raise an error to avoid corrupt RAW images.
+        """
+        sizes = {sector.size for ts in tracks for sector in ts.sectors if sector.data}
+        if not sizes:
+            raise ExportError("Unable to determine sector size from image")
+        if len(sizes) > 1:
+            raise ExportError(f"Mixed sector sizes {sorted(sizes)} are not supported for RAW export")
+        return next(iter(sizes))
 
     def _ordered_sector_ids(self, sectors: Iterable[Sector]) -> List[int]:
         ids = sorted({sector.sector_id for sector in sectors})

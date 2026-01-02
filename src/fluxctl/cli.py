@@ -159,15 +159,29 @@ def _decode_tracks(
     track_data: list[TrackSectors] = []
     decoder = _get_decoder(layout.encoding if layout else (encoding or "mfm"))
     for ts in scp.tracks[: limit_tracks or None]:
+        # Skip tracks with no captured revolutions.
         if not ts.revolutions:
             continue
+        # Prevent silent MFM decode of GCR images by raising an error.
+        if layout and layout.encoding == "gcr":
+            raise FluxDecodeError(
+                "GCR reconstruction is not supported for this operation; use the 'probe' or 'qc' commands instead."
+            )
         bitstream = decoder.decode_revolution(ts.revolutions[0])
+        # Respect per-track sector counts when available.
+        expected_sectors = None
+        if layout:
+            try:
+                logical_track = ts.track
+                expected_sectors = layout.expected_sectors_for_track(logical_track)
+            except Exception:
+                expected_sectors = layout.sectors_per_track
         track_data.append(
             reconstruct_track(
                 bitstream,
                 cylinder=ts.track,
                 head=ts.side,
-                expected_sectors=layout.sectors_per_track if layout else None,
+                expected_sectors=expected_sectors,
             )
         )
     return track_data
