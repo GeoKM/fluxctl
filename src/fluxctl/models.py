@@ -131,3 +131,13 @@ class LayoutDescriptor:
     id_rules: Dict[str, object]
     crc: Dict[str, object]
     address_marks: Dict[str, object]
+    track_sectors: Optional[List[int]] = None
+
+    def expected_sectors_for_track(self, track_index: int) -> int:
+        """Return the expected sector count for a logical track."""
+
+        if self.track_sectors:
+            if 0 <= track_index < len(self.track_sectors):
+                return self.track_sectors[track_index]
+            return self.track_sectors[-1]
+        return self.sectors_per_track

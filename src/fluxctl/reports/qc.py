@@ -15,7 +15,7 @@ from typing import List
 
 from ..decoding import Decoder
 from ..exceptions import FluxDecodeError
-from ..models import SCPImage
+from ..models import LayoutDescriptor, SCPImage
 from ..sector.models import Sector
 from ..sector.reconstruct import build_track_sectors
 
@@ -96,7 +96,7 @@ def _infer_expected_sector_count(track_sectors: List[Sector]) -> int:
     return len(track_sectors)
 
 
-def _compute_missing_tracks(image: SCPImage) -> int:
+def _compute_missing_tracks(image: SCPImage, layout: LayoutDescriptor | None, track_step: int) -> int:
     """Estimate how many tracks are absent within the observed range."""
 
     if not image.tracks:
@@ -104,6 +104,12 @@ def _compute_missing_tracks(image: SCPImage) -> int:
     track_ids = sorted({track.track for track in image.tracks})
     if not track_ids:
         return 0
+    if layout:
+        expected_tracks = layout.tracks * layout.sides
+        logical_ids = {track_id // max(track_step, 1) for track_id in track_ids}
+        present = len([tid for tid in logical_ids if tid < expected_tracks])
+        missing = expected_tracks - present
+        return max(missing, 0)
     expected_tracks = track_ids[-1] - track_ids[0] + 1
     missing = expected_tracks - len(track_ids)
     return max(missing, 0)
@@ -126,7 +132,12 @@ def _estimate_sectors_per_track(image: SCPImage) -> int:
     return 9
 
 
-def build_qc_report(image: SCPImage, decoder: Decoder) -> DiskQCReport:
+def build_qc_report(
+    image: SCPImage,
+    decoder: Decoder,
+    layout: LayoutDescriptor | None = None,
+    track_step: int = 1,
+) -> DiskQCReport:
     """Analyse an image and build a QC report.
 
     Each track/head pair is decoded using the supplied ``decoder`` and the first
@@ -139,30 +150,48 @@ def build_qc_report(image: SCPImage, decoder: Decoder) -> DiskQCReport:
     track_reports: List[TrackQC] = []
     expected_hint = _estimate_sectors_per_track(image)
     for track_flux in image.tracks:
+        logical_track = track_flux.track // max(track_step, 1)
+        if layout and logical_track >= layout.tracks * layout.sides:
+            continue
         try:
             if not track_flux.revolutions:
                 raise FluxDecodeError("No revolutions present for track")
-            track_sectors = build_track_sectors(
-                track_flux.revolutions[0],
-                decoder,
-                cylinder=track_flux.track,
-                head=track_flux.side,
-                expected_sectors=expected_hint or None,
-            )
-            expected = _infer_expected_sector_count(track_sectors.sectors) or expected_hint
-            decoded_ids = {sector.sector_id for sector in track_sectors.sectors if sector.data}
-            missing = max(expected - len(decoded_ids), 0)
-            crc_errors = len([sector for sector in track_sectors.sectors if sector.data and not sector.crc_ok])
-            weak = len([sector for sector in track_sectors.sectors if sector.data and sector.confidence < WEAK_CONFIDENCE_THRESHOLD])
-            good = len([sector for sector in track_sectors.sectors if sector.data and sector.crc_ok])
-            bad = missing + len([sector for sector in track_sectors.sectors if not sector.data])
-            confidence = (
-                sum(sector.confidence for sector in track_sectors.sectors) / len(track_sectors.sectors)
-                if track_sectors.sectors
-                else 0.0
-            )
+            bitstream = decoder.decode_revolution(track_flux.revolutions[0])
+            if layout and layout.encoding == "gcr":
+                expected = layout.expected_sectors_for_track(logical_track)
+                good = 0
+                weak = 0
+                bad = 0
+                crc_errors = 0
+                confidence = bitstream.metrics.confidence or 0.0
+            else:
+                track_sectors = build_track_sectors(
+                    track_flux.revolutions[0],
+                    decoder,
+                    cylinder=track_flux.track,
+                    head=track_flux.side,
+                    expected_sectors=layout.expected_sectors_for_track(logical_track) if layout else expected_hint or None,
+                )
+                expected = _infer_expected_sector_count(track_sectors.sectors) or expected_hint
+                decoded_ids = {sector.sector_id for sector in track_sectors.sectors if sector.data}
+                missing = max(expected - len(decoded_ids), 0)
+                crc_errors = len([sector for sector in track_sectors.sectors if sector.data and not sector.crc_ok])
+                weak = len(
+                    [
+                        sector
+                        for sector in track_sectors.sectors
+                        if sector.data and sector.confidence < WEAK_CONFIDENCE_THRESHOLD
+                    ]
+                )
+                good = len([sector for sector in track_sectors.sectors if sector.data and sector.crc_ok])
+                bad = missing + len([sector for sector in track_sectors.sectors if not sector.data])
+                confidence = (
+                    sum(sector.confidence for sector in track_sectors.sectors) / len(track_sectors.sectors)
+                    if track_sectors.sectors
+                    else 0.0
+                )
         except Exception:
-            expected = expected_hint
+            expected = layout.expected_sectors_for_track(logical_track) if layout else expected_hint
             good = 0
             weak = 0
             bad = expected or 1
@@ -185,11 +214,11 @@ def build_qc_report(image: SCPImage, decoder: Decoder) -> DiskQCReport:
     overall_confidence = (
         sum(track.confidence for track in track_reports) / len(track_reports) if track_reports else 0.0
     )
-    missing_tracks = _compute_missing_tracks(image)
+    missing_tracks = _compute_missing_tracks(image, layout, track_step)
     return DiskQCReport(tracks=track_reports, overall_confidence=overall_confidence, missing_tracks=missing_tracks)
 
 
-def write_qc_report_text(report: DiskQCReport, path: Path) -> None:
+def write_qc_report_text(report: DiskQCReport, path: Path, layout: LayoutDescriptor | None = None) -> None:
     """Write a human-readable QC report to ``path``."""
 
     lines = [
@@ -197,9 +226,12 @@ def write_qc_report_text(report: DiskQCReport, path: Path) -> None:
         f"Tracks analysed: {len(report.tracks)}",
         f"Overall confidence: {report.overall_confidence:.2f}",
         f"Missing tracks: {report.missing_tracks}",
-        "",
-        "Per-track breakdown:",
     ]
+    if layout:
+        lines.append(f"Layout: {layout.layout_id}")
+        if layout.encoding == "gcr":
+            lines.append("Note: GCR sector parsing is limited; totals reflect expected geometry.")
+    lines.extend(["", "Per-track breakdown:"])
     for track in sorted(report.tracks, key=lambda t: (t.track, t.head)):
         lines.append(
             " "

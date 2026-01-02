@@ -13,6 +13,7 @@ import typer
 from . import __version__
 from .decoding import load_builtin_decoders
 from .decoding.mfm import mfm_decoder
+from .detection import detect_encoding, detect_layout, infer_track_step
 from .exceptions import ExportError, FluxDecodeError, FluxctlError
 from .exporters import load_builtin_exporters
 from .filesystems import Filesystem, RawSectorImage, TrackSectorImage, load_builtin_filesystems
@@ -68,28 +69,53 @@ def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
     """Run lightweight detection and print candidate layouts and decoders."""
     load_builtin_decoders()
     load_builtin_layouts()
-    candidates: list[CandidateFormat] = [
-        CandidateFormat(
-            candidate_id=layout_id,
-            encoding=descriptor.encoding,
-            layout_id=descriptor.layout_id,
-            filesystem="fat12",
-            score=0.6,
-            evidence=["builtin layout"],
-        )
-        for layout_id, descriptor in registry.layout.items()
-    ]
-    for encoding_key, plugin in registry.encoding.items():
+    image = parse_scp(path)
+    candidates: list[CandidateFormat] = []
+
+    encoding_candidate = detect_encoding(image, path=path)
+    if encoding_candidate is None:
         candidates.append(
             CandidateFormat(
-                candidate_id=f"{encoding_key}_decoder",
-                encoding=encoding_key,
+                candidate_id="unknown",
+                encoding=None,
                 layout_id=None,
                 filesystem=None,
-                score=0.3,
-                evidence=[f"builtin decoder: {plugin.name}"],
+                score=0.0,
+                evidence=["no decoder matched"],
             )
         )
+        typer.echo(json.dumps([c.__dict__ for c in candidates], indent=2))
+        raise typer.Exit(code=2)
+
+    layout_candidate = detect_layout(image, encoding_candidate.encoding, path)
+    if layout_candidate:
+        filesystem = "cpm" if "cpm" in layout_candidate.layout.layout_id else None
+        if layout_candidate.layout.layout_id.startswith("commodore_gcr"):
+            filesystem = filesystem or "commodore_dos"
+        elif layout_candidate.layout.layout_id.startswith("ibm_mfm"):
+            filesystem = filesystem or "fat12"
+        candidates.append(
+            CandidateFormat(
+                candidate_id=layout_candidate.layout.layout_id,
+                encoding=layout_candidate.layout.encoding,
+                layout_id=layout_candidate.layout.layout_id,
+                filesystem=filesystem,
+                score=layout_candidate.score,
+                evidence=encoding_candidate.evidence + layout_candidate.evidence,
+            )
+        )
+    else:
+        candidates.append(
+            CandidateFormat(
+                candidate_id=f"{encoding_candidate.encoding}_decoder",
+                encoding=encoding_candidate.encoding,
+                layout_id=None,
+                filesystem=None,
+                score=encoding_candidate.confidence,
+                evidence=encoding_candidate.evidence,
+            )
+        )
+
     typer.echo(json.dumps([c.__dict__ for c in candidates], indent=2))
 
 
@@ -206,7 +232,8 @@ def dump(
 @_handle_cli_errors
 def qc(
     path: Path = typer.Argument(..., exists=True, readable=True),
-    encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding for analysis"),
+    encoding: str = typer.Option("auto", "--encoding", help="Bitstream encoding (auto, mfm, gcr)"),
+    layout: Optional[str] = typer.Option(None, "--layout", help="Layout identifier for geometry hints"),
     json_out: Optional[Path] = typer.Option(None, "--json-out", help="Write QC results to a JSON file"),
     text_out: Optional[Path] = typer.Option(None, "--text-out", help="Write QC results to a text file"),
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Override provenance output path"),
@@ -214,15 +241,29 @@ def qc(
     """Assess image quality and emit QC reports."""
 
     scp = parse_scp(path)
-    decoder = _get_decoder(encoding)
-    report = build_qc_report(scp, decoder)
+    load_builtin_decoders()
+    load_builtin_layouts()
+    selected_encoding = encoding.lower()
+    if selected_encoding == "auto":
+        encoding_candidate = detect_encoding(scp, path=path)
+        if encoding_candidate is None:
+            raise FluxDecodeError("Unable to infer encoding; specify --encoding")
+        selected_encoding = encoding_candidate.encoding
+
+    decoder = _get_decoder(selected_encoding)
+    layout_desc = ensure_layout_loaded(layout) if layout else None
+    if layout_desc is None:
+        layout_candidate = detect_layout(scp, selected_encoding, path)
+        layout_desc = layout_candidate.layout if layout_candidate else None
+    track_step = infer_track_step([track.track for track in scp.tracks])
+    report = build_qc_report(scp, decoder, layout=layout_desc, track_step=track_step)
 
     targets: list[Path] = []
     if json_out:
         write_qc_report_json(report, json_out)
         targets.append(json_out)
     if text_out:
-        write_qc_report_text(report, text_out)
+        write_qc_report_text(report, text_out, layout=layout_desc)
         targets.append(text_out)
     if not targets:
         typer.echo(
@@ -240,9 +281,14 @@ def qc(
             input_sha256=sha256_file(path),
             output_path=target_path,
             output_sha256=ProvenanceRecord.sha256_file(target_path),
-            parameters={"encoding": encoding, "json_out": str(json_out or ""), "text_out": str(text_out or "")},
-            plugins={"decoder": encoding},
-            decoder=encoding,
+            parameters={
+                "encoding": selected_encoding,
+                "layout": layout_desc.layout_id if layout_desc else "",
+                "json_out": str(json_out or ""),
+                "text_out": str(text_out or ""),
+            },
+            plugins={"decoder": selected_encoding},
+            decoder=selected_encoding,
         )
         write_provenance(record, prov_target)
 
