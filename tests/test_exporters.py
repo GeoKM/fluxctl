@@ -9,6 +9,7 @@ from fluxctl.cli import app
 from fluxctl.exporters import load_builtin_exporters
 from fluxctl.exporters.imd import IMDExporter
 from fluxctl.exporters.raw_img import RawIMGExporter
+from fluxctl.exceptions import ExportError
 from fluxctl.filesystems import RawSectorImage, TrackSectorImage
 from fluxctl.layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from fluxctl.scp import sha256_file
@@ -95,3 +96,67 @@ def test_exporters_support_track_image(img_fixture: Path, layout_720k) -> None:
 
 def test_imd_rejects_flat_image() -> None:
     assert not IMDExporter().supports(RawSectorImage(b""))
+
+
+def test_raw_export_rejects_mixed_sector_sizes() -> None:
+    tracks = [
+        TrackSectors(
+            track=0,
+            head=0,
+            sectors=[
+                Sector(
+                    cylinder=0,
+                    head=0,
+                    sector_id=1,
+                    size_code=2,
+                    data=b"\x00" * 512,
+                    crc_ok=True,
+                    confidence=1.0,
+                ),
+                Sector(
+                    cylinder=0,
+                    head=0,
+                    sector_id=2,
+                    size_code=3,
+                    data=b"\x00" * 1024,
+                    crc_ok=True,
+                    confidence=1.0,
+                ),
+            ],
+        )
+    ]
+
+    with pytest.raises(ExportError):
+        RawIMGExporter().export(TrackSectorImage(tracks, bytes_per_sector=512))
+
+
+def test_imd_export_rejects_mixed_sector_sizes() -> None:
+    tracks = [
+        TrackSectors(
+            track=1,
+            head=0,
+            sectors=[
+                Sector(
+                    cylinder=1,
+                    head=0,
+                    sector_id=1,
+                    size_code=2,
+                    data=b"\x00" * 512,
+                    crc_ok=True,
+                    confidence=1.0,
+                ),
+                Sector(
+                    cylinder=1,
+                    head=0,
+                    sector_id=2,
+                    size_code=1,
+                    data=b"\x00" * 256,
+                    crc_ok=True,
+                    confidence=1.0,
+                ),
+            ],
+        )
+    ]
+
+    with pytest.raises(ExportError):
+        IMDExporter().export(TrackSectorImage(tracks, bytes_per_sector=512))
