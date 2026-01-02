@@ -11,4 +11,5 @@ def test_probe_includes_gcr_candidates() -> None:
     runner = CliRunner()
     result = runner.invoke(cli.app, ["probe", str(FIXTURE)])
     assert result.exit_code == 0
-    assert '"gcr"' in result.stdout
+    assert "commodore_gcr_1541_170k" in result.stdout
+    assert "ibm_mfm_1440k" not in result.stdout

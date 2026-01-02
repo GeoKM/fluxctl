@@ -28,6 +28,7 @@ def load_layout_descriptor(path: Path) -> LayoutDescriptor:
         id_rules=data["id_rules"],
         crc=data["crc"],
         address_marks=data["address_marks"],
+        track_sectors=data.get("track_sectors"),
     )
 
 
