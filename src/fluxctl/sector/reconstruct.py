@@ -14,6 +14,7 @@ from typing import List, Optional
 from ..decoding import Decoder
 from ..models import Bitstream, RevolutionFlux
 from .models import Sector, TrackSectors
+from .reconstruct_gcr import reconstruct_gcr_track
 
 
 SYNC_WORD = 0x4489
@@ -185,10 +186,14 @@ def build_track_sectors(
     cylinder: int = 0,
     head: int = 0,
     expected_sectors: Optional[int] = None,
+    encoding: Optional[str] = None,
 ) -> TrackSectors:
     """Decode a revolution and reconstruct sectors using the supplied decoder."""
 
     bitstream = decoder.decode_revolution(rev)
+    effective_encoding = encoding or getattr(decoder, "encoding", None)
+    if effective_encoding == "gcr":
+        return reconstruct_gcr_track(bitstream, cylinder=cylinder, head=head, expected_sectors=expected_sectors)
     return reconstruct_track(bitstream, cylinder=cylinder, head=head, expected_sectors=expected_sectors)
 
 
