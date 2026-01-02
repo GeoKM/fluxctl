@@ -31,6 +31,7 @@ fluxctl convert disk.scp --to adf --out disk.adf --encoding gcr
 ## Testing
 - Execute `.venv/bin/python -m pytest` after activating the venv to cover CLI helpers, decoding, exporters, and filesystems.
 - The repository also includes `tests/fixtures` with annotated samples so you can run targeted commands against known media.
+- For full CLI validation across SCP fixtures (with longer GCR timeouts), run `scripts/fixture_cli_smoke.py`.
 
 ## Contributor guide
 See [AGENTS.md](AGENTS.md) for coding standards, workflows, and review expectations.
