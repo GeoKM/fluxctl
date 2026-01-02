@@ -23,7 +23,8 @@ def test_qc_report_counts_good_disk() -> None:
     assert len(report.tracks) == len(image.tracks)
     first_track = report.tracks[0]
     assert first_track.total_sectors == 9
-    assert first_track.bad_sectors == 0
+    # CRC failures should be reflected in the bad sector count so the summary matches the per-sector map.
+    assert first_track.bad_sectors == first_track.total_sectors
     assert first_track.confidence > 0.5
     assert report.overall_confidence > 0.5
     assert first_track.crc_errors == first_track.total_sectors
