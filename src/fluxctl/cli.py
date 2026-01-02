@@ -58,8 +58,40 @@ def _get_decoder(encoding: str):
 def info(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
     """Print basic SCP information."""
     scp = parse_scp(path)
+    load_builtin_decoders()
+    load_builtin_layouts()
+    encoding_candidate = detect_encoding(scp, path=path)
+    layout_candidate = (
+        detect_layout(scp, encoding_candidate.encoding, path) if encoding_candidate else None
+    )
+    track_ids = sorted({track.track for track in scp.tracks})
+    track_count = len(track_ids)
+    inferred_heads = 1
+    inferred_cylinders = track_count
+    if track_count >= 80 and track_count % 2 == 0 and track_ids and track_ids[0] == 0 and track_ids[-1] == track_count - 1:
+        inferred_heads = 2
+        inferred_cylinders = track_count // 2
     typer.echo(f"SCP version: {scp.version}")
     typer.echo(f"Tracks parsed: {len(scp.tracks)}")
+    if layout_candidate:
+        layout_desc = layout_candidate.layout
+        layout_heads = layout_desc.sides
+        if layout_desc.sides > 1 and len(scp.tracks) <= layout_desc.tracks + 2:
+            layout_heads = 1
+            typer.echo("Assuming single-sided capture based on track count")
+        typer.echo(f"Cylinders (layout): {layout_desc.tracks}")
+        typer.echo(f"Heads (layout): {layout_heads}")
+        expected_tracks = layout_desc.tracks * layout_heads
+        extra_tracks = len(scp.tracks) - expected_tracks
+        if extra_tracks > 0:
+            cylinders_beyond = (extra_tracks + layout_heads - 1) // layout_heads
+            typer.echo(f"Cylinders beyond layout: {cylinders_beyond}")
+        elif extra_tracks < 0:
+            cylinders_missing = (-extra_tracks + layout_heads - 1) // layout_heads
+            typer.echo(f"Cylinders missing vs layout: {cylinders_missing}")
+    else:
+        typer.echo(f"Cylinders (inferred): {inferred_cylinders}")
+        typer.echo(f"Heads (inferred): {inferred_heads}")
     typer.echo(f"Revolutions per track: {scp.revolutions_per_track}")
 
 
