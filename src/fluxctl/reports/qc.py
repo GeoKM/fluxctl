@@ -183,6 +183,7 @@ def build_qc_report(
 
     track_reports: List[TrackQC] = []
     expected_hint = _estimate_sectors_per_track(image)
+    encoding = layout.encoding if layout else getattr(decoder, "encoding", None)
     for track_flux in image.tracks:
         logical_track = track_flux.track // max(track_step, 1)
         if layout and logical_track >= layout.tracks * layout.sides:
@@ -190,34 +191,24 @@ def build_qc_report(
         try:
             if not track_flux.revolutions:
                 raise FluxDecodeError("No revolutions present for track")
-            bitstream = decoder.decode_revolution(track_flux.revolutions[0])
-            if layout and layout.encoding == "gcr":
-                expected = layout.expected_sectors_for_track(logical_track)
-                good = 0
-                weak = 0
-                bad = 0
-                crc_errors = 0
-                missing = 0
-                no_data = 0
-                confidence = bitstream.metrics.confidence or 0.0
-            else:
-                track_sectors = build_track_sectors(
-                    track_flux.revolutions[0],
-                    decoder,
-                    cylinder=track_flux.track,
-                    head=track_flux.side,
-                    expected_sectors=layout.expected_sectors_for_track(logical_track) if layout else expected_hint or None,
-                )
-                expected = _infer_expected_sector_count(track_sectors.sectors) or expected_hint
-                decoded_ids = {sector.sector_id for sector in track_sectors.sectors if sector.data}
-                missing = max(expected - len(decoded_ids), 0)
-                summary = _summarize_track_sectors(track_sectors, missing)
-                good = summary["good"]
-                weak = summary["weak"]
-                bad = summary["bad"]
-                crc_errors = summary["crc_errors"]
-                no_data = summary["no_data"]
-                confidence = summary["confidence"]
+            track_sectors = build_track_sectors(
+                track_flux.revolutions[0],
+                decoder,
+                cylinder=track_flux.track,
+                head=track_flux.side,
+                expected_sectors=layout.expected_sectors_for_track(logical_track) if layout else expected_hint or None,
+                encoding=encoding,
+            )
+            expected = _infer_expected_sector_count(track_sectors.sectors) or expected_hint
+            decoded_ids = {sector.sector_id for sector in track_sectors.sectors if sector.data}
+            missing = max(expected - len(decoded_ids), 0)
+            summary = _summarize_track_sectors(track_sectors, missing)
+            good = summary["good"]
+            weak = summary["weak"]
+            bad = summary["bad"]
+            crc_errors = summary["crc_errors"]
+            no_data = summary["no_data"]
+            confidence = summary["confidence"]
         except Exception:
             expected = layout.expected_sectors_for_track(logical_track) if layout else expected_hint
             good = 0
@@ -271,7 +262,7 @@ def write_qc_report_text(report: DiskQCReport, path: Path, layout: LayoutDescrip
     if layout:
         lines.append(f"Layout: {layout.layout_id}")
         if layout.encoding == "gcr":
-            lines.append("Note: GCR sector parsing is limited; totals reflect expected geometry.")
+            lines.append("Note: Commodore GCR checksums are validated when present.")
     lines.extend(["", "Per-track breakdown:"])
     for track in sorted(report.tracks, key=lambda t: (t.track, t.head)):
         lines.append(

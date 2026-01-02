@@ -157,17 +157,12 @@ def _decode_tracks(
     scp = parse_scp(path)
     layout = ensure_layout_loaded(layout_id) if layout_id else None
     track_data: list[TrackSectors] = []
-    decoder = _get_decoder(layout.encoding if layout else (encoding or "mfm"))
+    selected_encoding = layout.encoding if layout else (encoding or "mfm")
+    decoder = _get_decoder(selected_encoding)
     for ts in scp.tracks[: limit_tracks or None]:
         # Skip tracks with no captured revolutions.
         if not ts.revolutions:
             continue
-        # Prevent silent MFM decode of GCR images by raising an error.
-        if layout and layout.encoding == "gcr":
-            raise FluxDecodeError(
-                "GCR reconstruction is not supported for this operation; use the 'probe' or 'qc' commands instead."
-            )
-        bitstream = decoder.decode_revolution(ts.revolutions[0])
         # Respect per-track sector counts when available.
         expected_sectors = None
         if layout:
@@ -179,11 +174,13 @@ def _decode_tracks(
                 # Fallback to a constant if the layout does not define per-track counts.
                 expected_sectors = layout.sectors_per_track
         track_data.append(
-            reconstruct_track(
-                bitstream,
+            build_track_sectors(
+                ts.revolutions[0],
+                decoder,
                 cylinder=ts.track,
                 head=ts.side,
                 expected_sectors=expected_sectors,
+                encoding=selected_encoding,
             )
         )
     return track_data
@@ -200,14 +197,20 @@ def _detect_filesystem(image) -> Optional[Filesystem]:
 
 
 def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
+    layout_desc = ensure_layout_loaded(layout_id) if layout_id else None
     if path.suffix.lower() == ".img":
         return RawSectorImage(path.read_bytes())
     if path.suffix.lower() == ".scp":
         track_data = _decode_tracks(path, layout_id, encoding=encoding)
-        return TrackSectorImage(track_data)
-    if layout_id:
+        image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size if layout_desc else None)
+        if layout_desc:
+            image.layout = layout_desc
+        return image
+    if layout_desc:
         track_data = _decode_tracks(path, layout_id, encoding=encoding)
-        return TrackSectorImage(track_data)
+        image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
+        image.layout = layout_desc
+        return image
     return RawSectorImage(path.read_bytes())
 
 
@@ -400,7 +403,7 @@ def visualize(
 @_handle_cli_errors
 def convert(
     path: Path = typer.Argument(..., exists=True, readable=True),
-    to: str = typer.Option(..., "--to", help="Exporter key (raw, imd)"),
+    to: str = typer.Option(..., "--to", help="Exporter key (raw, imd, adf, d64)"),
     out: Path = typer.Option(..., "--out"),
     layout: Optional[str] = typer.Option(None, "--layout", help="Layout identifier for reconstruction"),
     encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding for SCP sources"),
@@ -415,6 +418,7 @@ def convert(
         track_data = _decode_tracks(path, layout, encoding=decoder_used)
         image_obj = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size if layout_desc else None)
         if layout_desc:
+            image_obj.layout = layout_desc
             # Use per-track sector counts for geometry when available; reconstruction already
             # handles layouts that vary across cylinders.
             geometry_sectors = None
