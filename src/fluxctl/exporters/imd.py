@@ -45,6 +45,12 @@ class IMDExporter:
         self._padded_missing = False
 
         for ts in sorted(tracks, key=lambda t: (t.track, t.head)):
+            # Ensure consistent sector sizes on this track; IMD does not support mixed sizes.
+            unique_sizes = {sector.size for sector in ts.sectors if sector.data}
+            if len(unique_sizes) != 1:
+                raise ExportError(
+                    f"Mixed sector sizes {sorted(unique_sizes)} on track {ts.track} are not supported for IMD export"
+                )
             sector_size = self._sector_size(ts.sectors)
             size_code = self._size_code(sector_size)
             sector_ids = self._sector_ids(ts.sectors)
