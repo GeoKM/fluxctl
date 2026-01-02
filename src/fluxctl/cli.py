@@ -171,10 +171,12 @@ def _decode_tracks(
         # Respect per-track sector counts when available.
         expected_sectors = None
         if layout:
+            # Determine the logical track index (no track_step here, so it is just ts.track).
+            logical_track = ts.track
             try:
-                logical_track = ts.track
                 expected_sectors = layout.expected_sectors_for_track(logical_track)
             except Exception:
+                # Fallback to a constant if the layout does not define per-track counts.
                 expected_sectors = layout.sectors_per_track
         track_data.append(
             reconstruct_track(
@@ -413,7 +415,15 @@ def convert(
         track_data = _decode_tracks(path, layout, encoding=decoder_used)
         image_obj = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size if layout_desc else None)
         if layout_desc:
-            image_obj.set_geometry(layout_desc.sectors_per_track, layout_desc.sides)
+            # Use per-track sector counts for geometry when available; reconstruction already
+            # handles layouts that vary across cylinders.
+            geometry_sectors = None
+            if track_data:
+                try:
+                    geometry_sectors = layout_desc.expected_sectors_for_track(track_data[0].track)
+                except Exception:
+                    geometry_sectors = layout_desc.sectors_per_track
+            image_obj.set_geometry(geometry_sectors or layout_desc.sectors_per_track, layout_desc.sides)
     else:
         image_obj = RawSectorImage(path.read_bytes())
 
