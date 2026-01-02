@@ -11,6 +11,7 @@ from typing import Optional
 import typer
 
 from . import __version__
+from .decoding import load_builtin_decoders
 from .decoding.mfm import mfm_decoder
 from .exceptions import ExportError, FluxDecodeError, FluxctlError
 from .exporters import load_builtin_exporters
@@ -64,9 +65,10 @@ def info(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
 @app.command()
 @_handle_cli_errors
 def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
-    """Run lightweight detection and print candidate layouts."""
+    """Run lightweight detection and print candidate layouts and decoders."""
+    load_builtin_decoders()
     load_builtin_layouts()
-    candidates = [
+    candidates: list[CandidateFormat] = [
         CandidateFormat(
             candidate_id=layout_id,
             encoding=descriptor.encoding,
@@ -77,6 +79,17 @@ def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
         )
         for layout_id, descriptor in registry.layout.items()
     ]
+    for encoding_key, plugin in registry.encoding.items():
+        candidates.append(
+            CandidateFormat(
+                candidate_id=f"{encoding_key}_decoder",
+                encoding=encoding_key,
+                layout_id=None,
+                filesystem=None,
+                score=0.3,
+                evidence=[f"builtin decoder: {plugin.name}"],
+            )
+        )
     typer.echo(json.dumps([c.__dict__ for c in candidates], indent=2))
 
 

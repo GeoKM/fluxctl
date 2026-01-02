@@ -1,9 +1,10 @@
 """Decoder interfaces and helpers."""
 from __future__ import annotations
 
-from typing import Protocol
+from typing import List, Protocol
 
 from ..models import Bitstream, RevolutionFlux
+from ..plugins import PluginInfo, registry
 
 
 class Decoder(Protocol):
@@ -11,6 +12,16 @@ class Decoder(Protocol):
 
     def decode_revolution(self, rev: RevolutionFlux) -> Bitstream:  # pragma: no cover - interface
         """Decode a single revolution's flux timings into a bitstream."""
+
+
+def load_builtin_decoders() -> List[PluginInfo]:
+    """Register bundled decoders and return their plugin metadata."""
+
+    # Importing modules triggers decoder registration with the plugin registry.
+    from . import mfm as _mfm  # noqa: F401
+    from . import gcr as _gcr  # noqa: F401
+
+    return list(registry.encoding.values())
 
 
 __all__ = ["Decoder"]
