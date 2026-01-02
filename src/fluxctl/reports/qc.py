@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import List
 
 from ..decoding import Decoder
 from ..exceptions import FluxDecodeError
 from ..models import LayoutDescriptor, SCPImage
-from ..sector.models import Sector
+from ..sector.models import Sector, TrackSectors
 from ..sector.reconstruct import build_track_sectors
 
 # Sectors with confidence lower than this threshold are treated as "weak" in the
@@ -27,13 +27,19 @@ WEAK_CONFIDENCE_THRESHOLD = 0.7
 
 @dataclass
 class TrackQC:
-    """Per-track quality metrics for a decoded disk."""
+    """Per-track quality metrics for a decoded disk.
+
+    ``bad_sectors`` includes missing sectors, sectors with no data, and sectors
+    with CRC failures.
+    """
 
     track: int
     head: int
     total_sectors: int
     good_sectors: int
     weak_sectors: int
+    missing_sectors: int
+    no_data_sectors: int
     bad_sectors: int
     crc_errors: int
     confidence: float
@@ -51,6 +57,7 @@ class DiskQCReport:
     tracks: List[TrackQC]
     overall_confidence: float
     missing_tracks: int
+    notes: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Return the QC report as a JSON-friendly dictionary."""
@@ -59,6 +66,7 @@ class DiskQCReport:
             "tracks": [track.to_dict() for track in self.tracks],
             "overall_confidence": self.overall_confidence,
             "missing_tracks": self.missing_tracks,
+            "notes": self.notes,
         }
 
     def to_json(self) -> str:
@@ -76,6 +84,7 @@ class DiskQCReport:
             tracks=tracks,
             overall_confidence=data.get("overall_confidence", 0.0),
             missing_tracks=data.get("missing_tracks", 0),
+            notes=data.get("notes", []),
         )
 
 
@@ -132,6 +141,31 @@ def _estimate_sectors_per_track(image: SCPImage) -> int:
     return 9
 
 
+def _summarize_track_sectors(track_sectors: TrackSectors, missing: int) -> dict:
+    """Compute per-track QC counts from reconstructed sectors."""
+
+    sectors = track_sectors.sectors
+    data_sectors = [sector for sector in sectors if sector.data]
+    no_data = len([sector for sector in sectors if not sector.data])
+    crc_errors = len([sector for sector in data_sectors if not sector.crc_ok])
+    good = len([sector for sector in data_sectors if sector.crc_ok])
+    weak = len(
+        [sector for sector in data_sectors if sector.confidence < WEAK_CONFIDENCE_THRESHOLD]
+    )
+    bad = missing + no_data + crc_errors
+    confidence = sum(sector.confidence for sector in data_sectors) / len(data_sectors) if data_sectors else 0.0
+
+    return {
+        "good": good,
+        "weak": weak,
+        "no_data": no_data,
+        "crc_errors": crc_errors,
+        "bad": bad,
+        "confidence": confidence,
+        "missing": missing,
+    }
+
+
 def build_qc_report(
     image: SCPImage,
     decoder: Decoder,
@@ -163,6 +197,8 @@ def build_qc_report(
                 weak = 0
                 bad = 0
                 crc_errors = 0
+                missing = 0
+                no_data = 0
                 confidence = bitstream.metrics.confidence or 0.0
             else:
                 track_sectors = build_track_sectors(
@@ -175,35 +211,21 @@ def build_qc_report(
                 expected = _infer_expected_sector_count(track_sectors.sectors) or expected_hint
                 decoded_ids = {sector.sector_id for sector in track_sectors.sectors if sector.data}
                 missing = max(expected - len(decoded_ids), 0)
-                crc_errors = len([sector for sector in track_sectors.sectors if sector.data and not sector.crc_ok])
-                weak = len(
-                    [
-                        sector
-                        for sector in track_sectors.sectors
-                        if sector.data and sector.confidence < WEAK_CONFIDENCE_THRESHOLD
-                    ]
-                )
-                # Count sectors with CRC failures as bad so the summary aligns with the map.
-                good = len([sector for sector in track_sectors.sectors if sector.data and sector.crc_ok])
-                bad = missing + len(
-                    [
-                        sector
-                        for sector in track_sectors.sectors
-                        if not sector.data or not sector.crc_ok
-                    ]
-                )
-                # Average confidence across sectors with data.
-                confidence = (
-                    sum(sector.confidence for sector in track_sectors.sectors if sector.data) / len(track_sectors.sectors)
-                    if track_sectors.sectors
-                    else 0.0
-                )
+                summary = _summarize_track_sectors(track_sectors, missing)
+                good = summary["good"]
+                weak = summary["weak"]
+                bad = summary["bad"]
+                crc_errors = summary["crc_errors"]
+                no_data = summary["no_data"]
+                confidence = summary["confidence"]
         except Exception:
             expected = layout.expected_sectors_for_track(logical_track) if layout else expected_hint
             good = 0
             weak = 0
             bad = expected or 1
             crc_errors = bad
+            missing = 0
+            no_data = 0
             confidence = 0.0
 
         track_reports.append(
@@ -213,6 +235,8 @@ def build_qc_report(
                 total_sectors=expected,
                 good_sectors=good,
                 weak_sectors=weak,
+                missing_sectors=missing,
+                no_data_sectors=no_data,
                 bad_sectors=bad,
                 crc_errors=crc_errors,
                 confidence=confidence,
@@ -223,7 +247,13 @@ def build_qc_report(
         sum(track.confidence for track in track_reports) / len(track_reports) if track_reports else 0.0
     )
     missing_tracks = _compute_missing_tracks(image, layout, track_step)
-    return DiskQCReport(tracks=track_reports, overall_confidence=overall_confidence, missing_tracks=missing_tracks)
+    notes = ["bad_sectors includes missing + no_data + crc_errors"]
+    return DiskQCReport(
+        tracks=track_reports,
+        overall_confidence=overall_confidence,
+        missing_tracks=missing_tracks,
+        notes=notes,
+    )
 
 
 def write_qc_report_text(report: DiskQCReport, path: Path, layout: LayoutDescriptor | None = None) -> None:
@@ -235,6 +265,9 @@ def write_qc_report_text(report: DiskQCReport, path: Path, layout: LayoutDescrip
         f"Overall confidence: {report.overall_confidence:.2f}",
         f"Missing tracks: {report.missing_tracks}",
     ]
+    if report.notes:
+        lines.append("Notes:")
+        lines.extend([f"- {note}" for note in report.notes])
     if layout:
         lines.append(f"Layout: {layout.layout_id}")
         if layout.encoding == "gcr":
@@ -245,6 +278,7 @@ def write_qc_report_text(report: DiskQCReport, path: Path, layout: LayoutDescrip
             " "
             f"Track {track.track:02d} Head {track.head}: "
             f"total={track.total_sectors} good={track.good_sectors} weak={track.weak_sectors} "
+            f"missing={track.missing_sectors} no_data={track.no_data_sectors} "
             f"bad={track.bad_sectors} crc_errors={track.crc_errors} conf={track.confidence:.2f}"
         )
     path.write_text("\n".join(lines), encoding="utf-8")
