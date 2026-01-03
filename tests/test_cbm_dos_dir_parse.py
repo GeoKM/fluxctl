@@ -1,5 +1,5 @@
-from fluxctl.filesystems.cbm_dos import CBMDOS
 from fluxctl.filesystems import TrackSectorImage
+from fluxctl.filesystems.cbm_dos import CBMDOS
 from fluxctl.models import LayoutDescriptor
 from fluxctl.sector.models import Sector, TrackSectors
 
@@ -76,3 +76,31 @@ def test_cbm_dos_lists_directory_and_extracts_file():
     assert entries[0].name.startswith("HELLO")
     content = fs.extract_file("HELLO")
     assert content == b"HELLO"
+
+
+def test_cbm_dos_accepts_empty_directory():
+    layout = _make_layout()
+
+    bam = bytearray(256)
+    bam[0] = 18
+    bam[1] = 1
+    bam[0xA2:0xA4] = b"2A"
+
+    dir_sector = bytearray(256)
+    dir_sector[0] = 0
+    dir_sector[1] = 0
+
+    track_17 = TrackSectors(
+        track=17,
+        head=0,
+        sectors=[
+            Sector(cylinder=17, head=0, sector_id=0, size_code=1, data=bytes(bam), crc_ok=True, confidence=1.0),
+            Sector(cylinder=17, head=0, sector_id=1, size_code=1, data=bytes(dir_sector), crc_ok=True, confidence=1.0),
+        ],
+    )
+    image = TrackSectorImage([track_17], bytes_per_sector=256)
+    image.layout = layout
+
+    fs = CBMDOS()
+    assert fs.probe(image) is True
+    assert fs.list_directory("/") == []

@@ -207,6 +207,8 @@ def _decode_tracks(
                 # Fallback to a constant if the layout does not define per-track counts.
                 expected_sectors = layout.sectors_per_track
         if selected_encoding == "gcr":
+            if hasattr(decoder, "set_track"):
+                decoder.set_track(ts.track)
             primary_bitstream = decoder.decode_revolution(ts.revolutions[0])
             track_data.append(
                 reconstruct_gcr_track(
@@ -219,6 +221,8 @@ def _decode_tracks(
             if capture_nibbles:
                 bitstreams = [primary_bitstream]
                 for rev in ts.revolutions[1:]:
+                    if hasattr(decoder, "set_track"):
+                        decoder.set_track(ts.track)
                     bitstreams.append(decoder.decode_revolution(rev))
                 nibble_candidate = _select_best_gcr_nibbles(bitstreams, ts.track, ts.side)
                 if nibble_candidate:
