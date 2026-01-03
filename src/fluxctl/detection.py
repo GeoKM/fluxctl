@@ -47,6 +47,8 @@ def _decode_once(decoder: Decoder, image: SCPImage) -> Optional[Bitstream]:
         if not track.revolutions:
             continue
         try:
+            if getattr(decoder, "encoding", None) == "gcr" and hasattr(decoder, "set_track"):
+                decoder.set_track(track.track)
             return decoder.decode_revolution(track.revolutions[0])
         except FluxDecodeError:
             continue

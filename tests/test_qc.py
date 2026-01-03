@@ -2,7 +2,8 @@ from pathlib import Path
 
 from fluxctl.decoding.mfm import mfm_decoder
 from fluxctl.exceptions import FluxDecodeError
-from fluxctl.reports.qc import DiskQCReport, build_qc_report
+from fluxctl.reports.qc import DiskQCReport, build_qc_report, _resolve_expected_and_missing
+from fluxctl.sector.models import Sector, TrackSectors
 from fluxctl.scp import parse_scp
 
 
@@ -42,3 +43,21 @@ def test_qc_json_roundtrip_and_failure_detection() -> None:
     restored = DiskQCReport.from_json(report.to_json())
     assert restored.tracks[0].bad_sectors == first_track.bad_sectors
     assert restored.overall_confidence == report.overall_confidence
+
+
+def test_qc_expected_counts_respect_layout() -> None:
+    class DummyLayout:
+        def expected_sectors_for_track(self, track: int) -> int:  # pragma: no cover - simple stub
+            return 3
+
+    track_sectors = TrackSectors(
+        track=0,
+        head=0,
+        sectors=[
+            Sector(cylinder=0, head=0, sector_id=1, size_code=0, data=b"\x00", crc_ok=True, confidence=1.0)
+        ],
+        missing=2,
+    )
+    expected, missing = _resolve_expected_and_missing(track_sectors, DummyLayout(), logical_track=0, expected_hint=0)
+    assert expected == 3
+    assert missing == 2

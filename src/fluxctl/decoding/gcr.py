@@ -10,6 +10,26 @@ from ..plugins import PluginInfo, registry
 from . import Decoder
 
 
+def cell_ns_for_1541_track(track_1based: int) -> float:
+    """Return the nominal bit cell time for a 1541 track.
+
+    Commodore 1541 drives vary the rotation speed by zone to maintain roughly
+    constant linear density. Tracks are 1-based in the physical format; callers
+    using 0-based cylinder numbers should adjust accordingly.
+    """
+
+    zones = (
+        (1, 17, 3250.0),
+        (18, 24, 3500.0),
+        (25, 30, 3750.0),
+        (31, 40, 4000.0),
+    )
+    for start, end, cell_ns in zones:
+        if start <= track_1based <= end:
+            return cell_ns
+    return zones[-1][2]
+
+
 class GCRDecoder(Decoder):
     """Translate flux intervals into Commodore GCR bitstreams."""
 
@@ -17,6 +37,12 @@ class GCRDecoder(Decoder):
 
     def __init__(self, cell_ns: float = 4000.0) -> None:
         self.cell_ns = cell_ns
+
+    def set_track(self, cylinder: int) -> None:
+        """Update the PLL cell timing based on the target cylinder."""
+
+        track_1based = cylinder + 1
+        self.cell_ns = cell_ns_for_1541_track(track_1based)
 
     def _intervals_to_bits(self, intervals_ns: Sequence[int]) -> List[int]:
         bits: List[int] = []
