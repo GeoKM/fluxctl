@@ -79,6 +79,7 @@ class SCPImage:
     revolutions_per_track: int
     timebase_ns: float
     tracks: List[TrackFlux]
+    warnings: List[str] = field(default_factory=list)
 
 
 @dataclass
