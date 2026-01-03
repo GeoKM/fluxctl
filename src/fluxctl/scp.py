@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import hashlib
 import struct
-from array import array
 from pathlib import Path
-from typing import List, Sequence
+from typing import List
 
 from .exceptions import SCPFormatError
 from .models import RevolutionFlux, SCPImage, TrackFlux
 
 MAGIC = b"SCP"
+DEFAULT_TIMEBASE_NS = 25
 
 
 def _read_header(data: bytes) -> tuple[int, int, int, int, int]:
@@ -25,10 +25,11 @@ def _read_header(data: bytes) -> tuple[int, int, int, int, int]:
     end_track = data[7]
 
     # The published format reserves bytes 8-11 for timing metadata. Real images
-    # sometimes leave the field zeroed, so fall back to the default 25ns tick
-    # time when the value looks implausible or absent.
+    # sometimes leave the field zeroed or populate it with capture frequency
+    # rather than nanoseconds-per-tick. Default to the documented 25ns tick
+    # length unless the header already encodes a plausible nanosecond value.
     timebase_raw = int.from_bytes(data[8:12], "little", signed=False)
-    timebase = timebase_raw if 5 <= timebase_raw <= 1_000 else 25
+    timebase = timebase_raw if 5 <= timebase_raw <= 1_000 else DEFAULT_TIMEBASE_NS
 
     if revolutions <= 0:
         raise SCPFormatError("SCP header reports no revolutions")
@@ -37,7 +38,7 @@ def _read_header(data: bytes) -> tuple[int, int, int, int, int]:
     return version, revolutions, start_track, end_track, timebase
 
 
-def _parse_flux_bytes(flux_bytes: bytes, timebase_ns: int) -> Sequence[int]:
+def _parse_flux_bytes(flux_bytes: bytes, timebase_ns: int) -> List[int]:
     """Convert raw flux bytes into interval timings.
 
     SuperCard Pro stores flux intervals as big-endian 16-bit tick counts. The
@@ -51,7 +52,7 @@ def _parse_flux_bytes(flux_bytes: bytes, timebase_ns: int) -> Sequence[int]:
     if interval_count == 0:
         return []
     intervals_ticks = struct.unpack(f">{interval_count}H", flux_bytes[: interval_count * 2])
-    return array("I", (tick * timebase_ns for tick in intervals_ticks if tick))
+    return [tick * timebase_ns for tick in intervals_ticks if tick]
 
 
 def parse_scp(path: Path) -> SCPImage:
@@ -100,12 +101,17 @@ def parse_scp(path: Path) -> SCPImage:
 
             flux_start = block_offset + offset_bytes
             flux_end = flux_start + word_count * 2
-            if offset_bytes == 0 or flux_start < 0 or flux_end > len(data):
+            if (
+                offset_bytes == 0
+                or flux_start < 0
+                or flux_start > len(data)
+                or flux_end > len(data)
+            ):
                 revolution_flux.append(
                     RevolutionFlux(
                         index=rev_index,
                         interval_ns=[],
-                        index_time_ns=index_ticks * timebase,
+                        index_time_ns=index_ticks * DEFAULT_TIMEBASE_NS,
                         data_offset=offset_bytes,
                         data_length_bytes=word_count * 2,
                     )
@@ -118,7 +124,7 @@ def parse_scp(path: Path) -> SCPImage:
                 RevolutionFlux(
                     index=rev_index,
                     interval_ns=list(intervals),
-                    index_time_ns=index_ticks * timebase,
+                    index_time_ns=index_ticks * DEFAULT_TIMEBASE_NS,
                     data_offset=offset_bytes,
                     data_length_bytes=word_count * 2,
                 )
