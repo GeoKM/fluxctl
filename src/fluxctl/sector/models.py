@@ -60,3 +60,18 @@ class TrackSectors:
     @property
     def side(self) -> int:  # backward compatibility
         return self.head
+
+
+@dataclass
+class TrackNibbles:
+    """Raw GCR nibble stream for a single track/head pair."""
+
+    track: int
+    head: int
+    gcr_bytes: bytes
+    source: str
+    confidence: float
+
+    @property
+    def side(self) -> int:  # backward compatibility
+        return self.head

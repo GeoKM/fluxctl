@@ -37,6 +37,7 @@ def load_builtin_exporters() -> list[PluginInfo]:
     from .imd import IMDExporter
     from .adf import ADFExporter
     from .d64 import D64Exporter
+    from .g64 import G64Exporter
 
     registry.register_exporter(
         "raw",
@@ -72,6 +73,15 @@ def load_builtin_exporters() -> list[PluginInfo]:
             version="0.1",
             entry=D64Exporter(),
             description="Commodore 1541/1571 disk image (.d64)",
+        ),
+    )
+    registry.register_exporter(
+        "g64",
+        PluginInfo(
+            name="G64 exporter",
+            version="0.1",
+            entry=G64Exporter(),
+            description="Commodore 1541 GCR nibble image (.g64)",
         ),
     )
     return list(registry.exporter.values())
