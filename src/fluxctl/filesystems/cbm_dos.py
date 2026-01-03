@@ -121,7 +121,7 @@ class CBMDOS(Filesystem):
             self._parse_directory()
         except FilesystemError:
             return False
-        return bool(self.directory)
+        return True
 
     def _read_chain(self, start_track: int, start_sector: int) -> bytes:
         chunks: List[bytes] = []

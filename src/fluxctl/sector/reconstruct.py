@@ -190,8 +190,10 @@ def build_track_sectors(
 ) -> TrackSectors:
     """Decode a revolution and reconstruct sectors using the supplied decoder."""
 
-    bitstream = decoder.decode_revolution(rev)
     effective_encoding = encoding or getattr(decoder, "encoding", None)
+    if effective_encoding == "gcr" and hasattr(decoder, "set_track"):
+        decoder.set_track(cylinder)
+    bitstream = decoder.decode_revolution(rev)
     if effective_encoding == "gcr":
         return reconstruct_gcr_track(bitstream, cylinder=cylinder, head=head, expected_sectors=expected_sectors)
     return reconstruct_track(bitstream, cylinder=cylinder, head=head, expected_sectors=expected_sectors)

@@ -166,6 +166,23 @@ def _summarize_track_sectors(track_sectors: TrackSectors, missing: int) -> dict:
     }
 
 
+def _resolve_expected_and_missing(
+    track_sectors: TrackSectors,
+    layout: LayoutDescriptor | None,
+    logical_track: int,
+    expected_hint: int,
+) -> tuple[int, int]:
+    decoded_ids = {sector.sector_id for sector in track_sectors.sectors if sector.data}
+    expected_layout = layout.expected_sectors_for_track(logical_track) if layout else None
+    inferred = _infer_expected_sector_count(track_sectors.sectors)
+    expected = expected_layout or (inferred or expected_hint or 0)
+    missing = max(expected - len(decoded_ids), 0) if expected else 0
+    if expected_layout and track_sectors.missing:
+        if track_sectors.missing == missing:
+            missing = track_sectors.missing
+    return expected, missing
+
+
 def build_qc_report(
     image: SCPImage,
     decoder: Decoder,
@@ -199,9 +216,12 @@ def build_qc_report(
                 expected_sectors=layout.expected_sectors_for_track(logical_track) if layout else expected_hint or None,
                 encoding=encoding,
             )
-            expected = _infer_expected_sector_count(track_sectors.sectors) or expected_hint
-            decoded_ids = {sector.sector_id for sector in track_sectors.sectors if sector.data}
-            missing = max(expected - len(decoded_ids), 0)
+            expected, missing = _resolve_expected_and_missing(
+                track_sectors,
+                layout,
+                logical_track,
+                expected_hint,
+            )
             summary = _summarize_track_sectors(track_sectors, missing)
             good = summary["good"]
             weak = summary["weak"]
