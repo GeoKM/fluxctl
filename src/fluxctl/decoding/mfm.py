@@ -1,7 +1,7 @@
 """Magnetic Flux Modulation (MFM) decoder."""
 from __future__ import annotations
 
-from math import fabs
+from math import ceil, fabs
 from typing import List, Sequence
 
 from ..exceptions import FluxDecodeError
@@ -34,7 +34,7 @@ class MFMDecoder(Decoder):
         for interval in intervals_ns:
             if interval <= 0:
                 continue
-            cells = max(1, min(round(interval / self.cell_ns), self.max_cells))
+            cells = max(1, min(int(ceil(interval / self.cell_ns)), self.max_cells))
             if cells == 1:
                 bits.append(1)
             else:
