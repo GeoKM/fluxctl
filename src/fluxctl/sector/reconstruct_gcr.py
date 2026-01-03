@@ -64,6 +64,52 @@ def _read_block(bits: Sequence[int], start_bit: int, byte_count: int) -> GCRBloc
     return GCRBlock(start_bit=start_bit, end_bit=start_bit + consumed, bytes=decoded, errors=errors)
 
 
+def _decode_aligned_stream(bits: Sequence[int], offset: int) -> tuple[bytes, int, int]:
+    symbol_count = (len(bits) - offset) // 5
+    symbols = extract_gcr_symbols_from_bitstream(bits, offset, symbol_count)
+    decoded, errors = decode_gcr_symbols_to_bytes(symbols)
+    valid_symbols = len(symbols) - errors
+    return decoded, valid_symbols, errors
+
+
+def score_gcr_alignment(bits: Sequence[int]) -> tuple[int, int]:
+    """Return the best-case valid symbol count and error tally for ``bits``.
+
+    Alignment is tested across the five possible starting offsets within a
+    5-bit GCR cell. The highest valid symbol count wins; ties fall back to the
+    lowest error count.
+    """
+
+    best_valid = -1
+    best_errors = float("inf")
+    for offset in range(5):
+        _, valid_symbols, errors = _decode_aligned_stream(bits, offset)
+        if valid_symbols > best_valid or (valid_symbols == best_valid and errors < best_errors):
+            best_valid = valid_symbols
+            best_errors = errors
+    return best_valid, int(best_errors if best_errors != float("inf") else 0)
+
+
+def extract_best_gcr_nibble_stream(bitstream: Bitstream) -> bytes:
+    """Return a decoded byte stream representing one GCR revolution.
+
+    The helper scans all possible bit-cell alignments and decodes symbols to
+    bytes, choosing the alignment with the highest number of valid symbols.
+    """
+
+    bits = bitstream.bits
+    best_payload = b""
+    best_valid = -1
+    best_errors = float("inf")
+    for offset in range(5):
+        decoded, valid_symbols, errors = _decode_aligned_stream(bits, offset)
+        if valid_symbols > best_valid or (valid_symbols == best_valid and errors < best_errors):
+            best_valid = valid_symbols
+            best_errors = errors
+            best_payload = decoded
+    return best_payload
+
+
 def _xor_checksum(values: bytes) -> int:
     checksum = 0
     for value in values:
@@ -143,4 +189,4 @@ def reconstruct_gcr_track(
     return TrackSectors(track=cylinder, head=head, sectors=sector_list, weak=weak, missing=missing)
 
 
-__all__ = ["reconstruct_gcr_track"]
+__all__ = ["extract_best_gcr_nibble_stream", "reconstruct_gcr_track", "score_gcr_alignment"]

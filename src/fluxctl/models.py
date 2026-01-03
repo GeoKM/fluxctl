@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 # Sector-level models are defined in ``fluxctl.sector.models`` but re-exported
 # here for convenience to avoid cascading import changes.
-from .sector.models import Sector, TrackSectors
+from .sector.models import Sector, TrackNibbles, TrackSectors
 
 
 @dataclass
