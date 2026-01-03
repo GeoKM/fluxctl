@@ -4,23 +4,26 @@ from pathlib import Path
 from fluxctl.scp import parse_scp
 
 
-def _pack_flux(intervals: list[int]) -> bytes:
-    return struct.pack(f"<{len(intervals)}H", *intervals)
+def _pack_flux_be(intervals: list[int]) -> bytes:
+    return struct.pack(f">{len(intervals)}H", *intervals)
 
 
-def _build_track_header(track_index: int, side: int, revolution_blobs: list[bytes], flux_offset: int) -> tuple[bytes, int]:
-    header = bytearray(16 + 8 * len(revolution_blobs))
-    header[:3] = b"TRK"
-    header[3] = track_index
-    header[4] = side
+def _build_trk_block(track_index: int, revolutions: list[list[int]]) -> bytes:
+    """Return a TRK block matching the SuperCard Pro per-revolution layout."""
 
-    current_offset = flux_offset
-    for idx, blob in enumerate(revolution_blobs):
-        header[16 + idx * 4 : 20 + idx * 4] = current_offset.to_bytes(4, "little")
-        header[16 + 4 * len(revolution_blobs) + idx * 4 : 20 + 4 * len(revolution_blobs) + idx * 4] = len(blob).to_bytes(4, "little")
-        current_offset += len(blob)
+    table = bytearray(4 + len(revolutions) * 12)
+    table[:3] = b"TRK"
+    table[3] = track_index
 
-    return bytes(header), current_offset
+    flux_segments: list[bytes] = []
+    current_offset = len(table)
+    for rev_index, ticks in enumerate(revolutions):
+        flux_bytes = _pack_flux_be(ticks)
+        struct.pack_into("<III", table, 4 + rev_index * 12, sum(ticks), len(ticks), current_offset)
+        flux_segments.append(flux_bytes)
+        current_offset += len(flux_bytes)
+
+    return bytes(table + b"".join(flux_segments))
 
 
 def _build_test_image() -> bytes:
@@ -28,34 +31,14 @@ def _build_test_image() -> bytes:
     revolutions = 2
     start_track = 0
     end_track = 1
-    timebase = 25
 
-    flux_side0 = [_pack_flux([1, 2]), _pack_flux([3])]
-    flux_side1 = [_pack_flux([4]), _pack_flux([5, 6])]
+    track0 = _build_trk_block(0, [[1, 2], [3]])
+    # Use a tick pattern that would decode differently if misread as little-endian
+    # to verify byte order.
+    track1 = _build_trk_block(1, [[0x0102], [5, 6]])
 
-    track_headers = []
-    flux_blobs: list[bytes] = []
-
-    track_count = end_track - start_track + 1
-    offsets_table = bytearray(track_count * 4)
-
-    header_size = 16 + 8 * revolutions
-    header_start = 16 + len(offsets_table)
-    flux_start = header_start + header_size * track_count
-
-    current_flux_offset = flux_start
-
-    # Build headers for each track then append the flux blobs after all headers.
-    for idx, (track_index, side, revolutions_blob) in enumerate(
-        (
-            (0, 0, flux_side0),
-            (1, 1, flux_side1),
-        )
-    ):
-        header, current_flux_offset = _build_track_header(track_index, side, revolutions_blob, current_flux_offset)
-        track_headers.append(header)
-        offsets_table[idx * 4 : (idx + 1) * 4] = (header_start + idx * header_size).to_bytes(4, "little")
-        flux_blobs.extend(revolutions_blob)
+    track_offsets = [16 + 4 * (end_track - start_track + 1)]
+    track_offsets.append(track_offsets[0] + len(track0))
 
     header = bytearray(16)
     header[:3] = b"SCP"
@@ -63,9 +46,9 @@ def _build_test_image() -> bytes:
     header[5] = revolutions
     header[6] = start_track
     header[7] = end_track
-    header[12:14] = timebase.to_bytes(2, "little")
 
-    return bytes(header + offsets_table + b"".join(track_headers) + b"".join(flux_blobs))
+    offsets_blob = b"".join(struct.pack("<I", off) for off in track_offsets)
+    return bytes(header + offsets_blob + track0 + track1)
 
 
 def test_parse_scp_preserves_per_revolution_flux(tmp_path: Path) -> None:
@@ -82,9 +65,21 @@ def test_parse_scp_preserves_per_revolution_flux(tmp_path: Path) -> None:
     assert track0.track == 0
     assert track0.side == 0
     assert [list(rev.interval_ns) for rev in track0.revolutions] == [[25, 50], [75]]
+    assert [rev.data_offset for rev in track0.revolutions] == [28, 32]
 
     assert track1.track == 0
     assert track1.side == 1
-    assert [list(rev.interval_ns) for rev in track1.revolutions] == [[100], [125, 150]]
+    assert [list(rev.interval_ns) for rev in track1.revolutions] == [[6450], [125, 150]]
+    assert track1.revolutions[0].data_offset != track1.revolutions[1].data_offset
 
-    assert track0.revolutions[0].data_offset != track0.revolutions[1].data_offset
+
+def test_tick_words_use_big_endian(tmp_path: Path) -> None:
+    image_path = tmp_path / "endian.scp"
+    image_path.write_bytes(_build_test_image())
+
+    image = parse_scp(image_path)
+
+    first_tick = image.tracks[1].revolutions[0].interval_ns[0]
+    # If the tick word were read as little-endian, the interval would be much
+    # larger (0x0201 * 25ns). Confirm the parser keeps the big-endian ordering.
+    assert first_tick == 0x0102 * 25
