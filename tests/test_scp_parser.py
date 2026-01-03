@@ -4,37 +4,23 @@ from pathlib import Path
 from fluxctl.scp import parse_scp
 
 
-def _build_revolution_block(track: int, side: int, intervals: list[int]) -> bytes:
-    header = bytearray(32)
+def _pack_flux(intervals: list[int]) -> bytes:
+    return struct.pack(f"<{len(intervals)}H", *intervals)
+
+
+def _build_track_header(track_index: int, side: int, revolution_blobs: list[bytes], flux_offset: int) -> tuple[bytes, int]:
+    header = bytearray(16 + 8 * len(revolution_blobs))
     header[:3] = b"TRK"
-    header[3] = track
+    header[3] = track_index
     header[4] = side
 
-    flux = struct.pack(f">{len(intervals)}H", *intervals)
-    return bytes(header) + flux
+    current_offset = flux_offset
+    for idx, blob in enumerate(revolution_blobs):
+        header[16 + idx * 4 : 20 + idx * 4] = current_offset.to_bytes(4, "little")
+        header[16 + 4 * len(revolution_blobs) + idx * 4 : 20 + 4 * len(revolution_blobs) + idx * 4] = len(blob).to_bytes(4, "little")
+        current_offset += len(blob)
 
-
-def _build_track_block(track: int, side: int, revolutions: list[list[int]], base_offset: int) -> tuple[bytes, int]:
-    header = bytearray(32)
-    header[:3] = b"TRK"
-    header[3] = track
-    header[4] = side
-
-    current_offset = base_offset + len(header)
-    revolution_blocks = []
-    offsets = []
-
-    for rev_intervals in revolutions:
-        offsets.append(current_offset)
-        block = _build_revolution_block(track, side, rev_intervals)
-        revolution_blocks.append(block)
-        current_offset += len(block)
-
-    for idx, offset in enumerate(offsets):
-        header[6 + idx * 4 : 10 + idx * 4] = offset.to_bytes(4, "little")
-
-    track_data = bytes(header) + b"".join(revolution_blocks)
-    return track_data, current_offset
+    return bytes(header), current_offset
 
 
 def _build_test_image() -> bytes:
@@ -44,18 +30,32 @@ def _build_test_image() -> bytes:
     end_track = 1
     timebase = 25
 
+    flux_side0 = [_pack_flux([1, 2]), _pack_flux([3])]
+    flux_side1 = [_pack_flux([4]), _pack_flux([5, 6])]
+
+    track_headers = []
+    flux_blobs: list[bytes] = []
+
     track_count = end_track - start_track + 1
     offsets_table = bytearray(track_count * 4)
 
-    current_offset = 16 + len(offsets_table)
-    track0_offset = current_offset
-    track0_block, current_offset = _build_track_block(0, 0, [[1, 2], [3]], current_offset)
+    header_size = 16 + 8 * revolutions
+    header_start = 16 + len(offsets_table)
+    flux_start = header_start + header_size * track_count
 
-    track1_offset = current_offset
-    track1_block, current_offset = _build_track_block(0, 1, [[4], [5, 6]], current_offset)
+    current_flux_offset = flux_start
 
-    offsets_table[0:4] = track0_offset.to_bytes(4, "little")
-    offsets_table[4:8] = track1_offset.to_bytes(4, "little")
+    # Build headers for each track then append the flux blobs after all headers.
+    for idx, (track_index, side, revolutions_blob) in enumerate(
+        (
+            (0, 0, flux_side0),
+            (1, 1, flux_side1),
+        )
+    ):
+        header, current_flux_offset = _build_track_header(track_index, side, revolutions_blob, current_flux_offset)
+        track_headers.append(header)
+        offsets_table[idx * 4 : (idx + 1) * 4] = (header_start + idx * header_size).to_bytes(4, "little")
+        flux_blobs.extend(revolutions_blob)
 
     header = bytearray(16)
     header[:3] = b"SCP"
@@ -65,7 +65,7 @@ def _build_test_image() -> bytes:
     header[7] = end_track
     header[12:14] = timebase.to_bytes(2, "little")
 
-    return bytes(header + offsets_table + track0_block + track1_block)
+    return bytes(header + offsets_table + b"".join(track_headers) + b"".join(flux_blobs))
 
 
 def test_parse_scp_preserves_per_revolution_flux(tmp_path: Path) -> None:
@@ -81,8 +81,10 @@ def test_parse_scp_preserves_per_revolution_flux(tmp_path: Path) -> None:
 
     assert track0.track == 0
     assert track0.side == 0
-    assert [rev.interval_ns for rev in track0.revolutions] == [[25, 50], [75]]
+    assert [list(rev.interval_ns) for rev in track0.revolutions] == [[25, 50], [75]]
 
     assert track1.track == 0
     assert track1.side == 1
-    assert [rev.interval_ns for rev in track1.revolutions] == [[100], [125, 150]]
+    assert [list(rev.interval_ns) for rev in track1.revolutions] == [[100], [125, 150]]
+
+    assert track0.revolutions[0].data_offset != track0.revolutions[1].data_offset
