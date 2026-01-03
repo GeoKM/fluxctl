@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import struct
+from array import array
 from pathlib import Path
 from typing import List, Sequence
 
@@ -21,7 +22,11 @@ def _read_header(data: bytes) -> tuple[int, int, int, int, int]:
     revolutions = data[5]
     start_track = data[6]
     end_track = data[7]
-    timebase = int.from_bytes(data[12:14], "little", signed=False) or 25
+    raw_timebase = int.from_bytes(data[12:14], "little", signed=False)
+    if raw_timebase and raw_timebase > 1000:
+        timebase = int(1_000_000 / raw_timebase)
+    else:
+        timebase = raw_timebase or 25
     if revolutions <= 0:
         raise SCPFormatError("SCP header reports no revolutions")
     if start_track > end_track:
@@ -29,28 +34,21 @@ def _read_header(data: bytes) -> tuple[int, int, int, int, int]:
     return version, revolutions, start_track, end_track, timebase
 
 
-def _parse_track_flux(block: bytes, timebase_ns: int) -> Sequence[int]:
-    """Extract raw flux intervals from a single track block.
+def _parse_flux_bytes(flux_bytes: bytes, timebase_ns: int) -> Sequence[int]:
+    """Convert raw flux bytes into interval timings.
 
-    The parser supports the SuperCard Pro track structure used by the bundled
-    fixtures: each block begins with the ASCII marker ``TRK`` followed by a
-    small header. Flux intervals are stored immediately after a 32-byte header
-    as big-endian 16-bit tick counts, scaled by the image timebase.
+    SuperCard Pro stores flux intervals as 16-bit little-endian tick counts.
+    This helper keeps the parsing logic localised so the higher-level track
+    parsing code can focus on correctly slicing per-revolution blobs.
     """
 
-    if not block.startswith(b"TRK"):
-        raise SCPFormatError("Track block missing TRK header")
-    header_len = 32
-    if len(block) <= header_len:
+    if not flux_bytes:
         return []
-    raw_intervals = block[header_len:]
-    # Flux timings are stored as 16-bit values representing multiples of the
-    # image's timebase. The bundled fixtures use big-endian ordering.
-    interval_count = len(raw_intervals) // 2
+    interval_count = len(flux_bytes) // 2
     if interval_count == 0:
         return []
-    intervals_ticks = struct.unpack(f">{interval_count}H", raw_intervals[: interval_count * 2])
-    return [tick * timebase_ns for tick in intervals_ticks if tick]
+    intervals_ticks = struct.unpack(f"<{interval_count}H", flux_bytes[: interval_count * 2])
+    return array("I", (tick * timebase_ns for tick in intervals_ticks if tick))
 
 
 def parse_scp(path: Path) -> SCPImage:
@@ -66,41 +64,89 @@ def parse_scp(path: Path) -> SCPImage:
     for idx, offset in enumerate(offsets):
         if offset == 0:
             continue
-        next_offset = next((o for o in offsets[idx + 1 :] if o != 0), len(data))
-        header_len = 32
+        next_track_offset = next((o for o in offsets[idx + 1 :] if o != 0), len(data))
+        header_len = 16 + revolutions * 8
         header = data[offset : offset + header_len]
-        if len(header) < header_len:
+        if len(header) < header_len or not header.startswith(b"TRK"):
             raise SCPFormatError("Track block missing TRK header")
-        track_num = header[3]
-        head_num = header[4] if header[4] in (0, 1) else 0
 
-        revolution_offsets = [
-            int.from_bytes(header[6 + 4 * rev : 10 + 4 * rev], "little", signed=False)
-            for rev in range(revolutions)
-        ]
+        track_index = header[3]
+        head_hint = header[4] if header[4] in (0, 1) else None
+
+        # The TRK header stores absolute offsets to each revolution beginning at
+        # byte 16, followed by optional per-revolution byte counts. Earlier
+        # revisions flattened tracks by slicing a single blob; keep offsets and
+        # lengths distinct so multi-revolution captures remain independent.
+        revolution_offsets = [struct.unpack_from("<I", header, 16 + 4 * rev)[0] for rev in range(revolutions)]
+        revolution_lengths = [struct.unpack_from("<I", header, 16 + 4 * revolutions + 4 * rev)[0] for rev in range(revolutions)]
+
+        def _valid_offset_table(values: List[int]) -> bool:
+            filtered = [val for val in values if 0 < val < len(data)]
+            return len(filtered) == revolutions and all(a < b for a, b in zip(filtered, filtered[1:]))
+
+        valid_lengths = [val for val in revolution_lengths if 0 < val < len(data)]
+        base_length = min(valid_lengths) if valid_lengths else None
+
+        if _valid_offset_table(revolution_offsets):
+            rev_starts: List[int | None] = revolution_offsets
+        elif _valid_offset_table(revolution_lengths):
+            rev_starts = revolution_lengths
+        else:
+            candidates = {val for val in revolution_offsets + revolution_lengths if 0 < val < len(data)}
+            rev_starts = sorted(candidates)[:revolutions]
+
+        while len(rev_starts) < revolutions:
+            rev_starts.append(None)
+
+        ordered_starts = sorted([start for start in rev_starts if start is not None])
+
+        # Map linear track index to cylinder/head. SCP files enumerate tracks as
+        # (track * sides) + head, so we derive the side from the least
+        # significant bit when explicit head metadata is absent or invalid.
+        track_num = track_index // 2
+        head_num = head_hint if head_hint is not None else track_index % 2
 
         revolution_flux: List[RevolutionFlux] = []
-        has_valid_offsets = any(offset <= rev_offset < next_offset for rev_offset in revolution_offsets)
 
-        if not has_valid_offsets:
-            intervals = _parse_track_flux(data[offset:next_offset], timebase)
-            revolution_flux = [RevolutionFlux(index=i, interval_ns=list(intervals)) for i in range(revolutions)]
-        else:
-            for rev_index, rev_offset in enumerate(revolution_offsets):
-                if not (offset <= rev_offset < next_offset):
-                    interval_ns = []
-                else:
-                    following = [o for o in revolution_offsets[rev_index + 1 :] if offset <= o < next_offset and o > rev_offset]
-                    rev_end = following[0] if following else next_offset
-                    if rev_end <= rev_offset:
-                        interval_ns = []
-                    else:
-                        rev_block = data[rev_offset:rev_end]
-                        if not rev_block.startswith(b"TRK"):
-                            rev_block = header + rev_block
-                        intervals = _parse_track_flux(rev_block, timebase)
-                        interval_ns = list(intervals)
-                revolution_flux.append(RevolutionFlux(index=rev_index, interval_ns=interval_ns))
+        for rev_index, rev_offset in enumerate(rev_starts):
+            if rev_offset is None or rev_offset <= 0 or rev_offset >= len(data):
+                revolution_flux.append(RevolutionFlux(index=rev_index, interval_ns=[], data_offset=None, data_length_bytes=None))
+                continue
+
+            length_hint = revolution_lengths[rev_index]
+            length_is_valid = 0 < length_hint <= len(data) - rev_offset
+            following_offsets = [o for o in ordered_starts if rev_offset < o]
+            candidate_end: int | None = None
+
+            if following_offsets:
+                candidate_end = min(following_offsets)
+            if length_is_valid:
+                candidate_end = min(candidate_end, rev_offset + length_hint) if candidate_end else rev_offset + length_hint
+
+            if candidate_end is None:
+                candidate_end = next_track_offset if next_track_offset > rev_offset else len(data)
+            elif next_track_offset > rev_offset:
+                candidate_end = min(candidate_end, next_track_offset)
+
+            if candidate_end is None and base_length:
+                candidate_end = min(len(data), rev_offset + base_length)
+
+            if candidate_end is None or candidate_end <= rev_offset:
+                revolution_flux.append(
+                    RevolutionFlux(index=rev_index, interval_ns=[], data_offset=rev_offset, data_length_bytes=None)
+                )
+                continue
+
+            flux_bytes = data[rev_offset:candidate_end]
+            intervals = _parse_flux_bytes(flux_bytes, timebase)
+            revolution_flux.append(
+                RevolutionFlux(
+                    index=rev_index,
+                    interval_ns=list(intervals),
+                    data_offset=rev_offset,
+                    data_length_bytes=len(flux_bytes),
+                )
+            )
 
         tracks.append(TrackFlux(track=track_num, side=head_num, revolutions=revolution_flux))
 

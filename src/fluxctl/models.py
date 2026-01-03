@@ -59,7 +59,10 @@ class ProvenanceRecord:
 @dataclass
 class RevolutionFlux:
     index: int
-    interval_ns: List[int]
+    interval_ns: Sequence[int]
+    index_time_ns: Optional[int] = None
+    data_length_bytes: Optional[int] = None
+    data_offset: Optional[int] = None
 
 
 @dataclass
