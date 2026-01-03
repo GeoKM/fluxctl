@@ -18,14 +18,19 @@ from .exceptions import ExportError, FluxDecodeError, FluxctlError
 from .exporters import load_builtin_exporters
 from .filesystems import Filesystem, RawSectorImage, TrackSectorImage, load_builtin_filesystems
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
-from .models import CandidateFormat, ProvenanceRecord
+from .models import Bitstream, CandidateFormat, ProvenanceRecord
 from .plugins import registry
 from .provenance import write_provenance
 from .reports.map import build_disk_map, render_ascii, render_svg
 from .reports.qc import build_qc_report, write_qc_report_json, write_qc_report_text
 from .scp import parse_scp, sha256_file
-from .sector.models import TrackSectors
-from .sector.reconstruct import build_track_sectors, reconstruct_track
+from .sector.models import TrackNibbles, TrackSectors
+from .sector.reconstruct import build_track_sectors
+from .sector.reconstruct_gcr import (
+    extract_best_gcr_nibble_stream,
+    reconstruct_gcr_track,
+    score_gcr_alignment,
+)
 
 app = typer.Typer(add_completion=False, help="Fluxctl modular SCP toolkit")
 provenance_app = typer.Typer(help="Inspect provenance records")
@@ -151,12 +156,40 @@ def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
     typer.echo(json.dumps([c.__dict__ for c in candidates], indent=2))
 
 
+def _select_best_gcr_nibbles(bitstreams: list[Bitstream], track: int, head: int) -> Optional[TrackNibbles]:
+    """Pick the highest-confidence nibble stream from decoded revolutions."""
+
+    best: Optional[TrackNibbles] = None
+    best_score: tuple[int, float, int] = (-1, -1.0, 0)
+    for bitstream in bitstreams:
+        nibble_bytes = extract_best_gcr_nibble_stream(bitstream)
+        valid_symbols, _ = score_gcr_alignment(bitstream.bits)
+        confidence = bitstream.metrics.confidence or 0.0
+        candidate_score = (valid_symbols, confidence, len(nibble_bytes))
+        if candidate_score > best_score:
+            source_label = ",".join(str(idx) for idx in bitstream.source_revs) or "rev0"
+            best = TrackNibbles(
+                track=track,
+                head=head,
+                gcr_bytes=nibble_bytes,
+                source=source_label,
+                confidence=confidence,
+            )
+            best_score = candidate_score
+    return best
+
+
 def _decode_tracks(
-    path: Path, layout_id: Optional[str], limit_tracks: Optional[int] = None, encoding: Optional[str] = None
-) -> list[TrackSectors]:
+    path: Path,
+    layout_id: Optional[str],
+    limit_tracks: Optional[int] = None,
+    encoding: Optional[str] = None,
+    capture_nibbles: bool = False,
+):
     scp = parse_scp(path)
     layout = ensure_layout_loaded(layout_id) if layout_id else None
     track_data: list[TrackSectors] = []
+    nibble_data: list[TrackNibbles] = []
     selected_encoding = layout.encoding if layout else (encoding or "mfm")
     decoder = _get_decoder(selected_encoding)
     for ts in scp.tracks[: limit_tracks or None]:
@@ -173,16 +206,36 @@ def _decode_tracks(
             except Exception:
                 # Fallback to a constant if the layout does not define per-track counts.
                 expected_sectors = layout.sectors_per_track
-        track_data.append(
-            build_track_sectors(
-                ts.revolutions[0],
-                decoder,
-                cylinder=ts.track,
-                head=ts.side,
-                expected_sectors=expected_sectors,
-                encoding=selected_encoding,
+        if selected_encoding == "gcr":
+            primary_bitstream = decoder.decode_revolution(ts.revolutions[0])
+            track_data.append(
+                reconstruct_gcr_track(
+                    primary_bitstream,
+                    cylinder=ts.track,
+                    head=ts.side,
+                    expected_sectors=expected_sectors,
+                )
             )
-        )
+            if capture_nibbles:
+                bitstreams = [primary_bitstream]
+                for rev in ts.revolutions[1:]:
+                    bitstreams.append(decoder.decode_revolution(rev))
+                nibble_candidate = _select_best_gcr_nibbles(bitstreams, ts.track, ts.side)
+                if nibble_candidate:
+                    nibble_data.append(nibble_candidate)
+        else:
+            track_data.append(
+                build_track_sectors(
+                    ts.revolutions[0],
+                    decoder,
+                    cylinder=ts.track,
+                    head=ts.side,
+                    expected_sectors=expected_sectors,
+                    encoding=selected_encoding,
+                )
+            )
+    if capture_nibbles and selected_encoding == "gcr":
+        return track_data, nibble_data
     return track_data
 
 
@@ -403,7 +456,7 @@ def visualize(
 @_handle_cli_errors
 def convert(
     path: Path = typer.Argument(..., exists=True, readable=True),
-    to: str = typer.Option(..., "--to", help="Exporter key (raw, imd, adf, d64)"),
+    to: str = typer.Option(..., "--to", help="Exporter key (raw, imd, adf, d64, g64)"),
     out: Path = typer.Option(..., "--out"),
     layout: Optional[str] = typer.Option(None, "--layout", help="Layout identifier for reconstruction"),
     encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding for SCP sources"),
@@ -413,10 +466,17 @@ def convert(
     layout_desc = ensure_layout_loaded(layout) if layout else None
     decoder_used = layout_desc.encoding if layout_desc else encoding
     track_data: Optional[list[TrackSectors]] = None
+    track_nibbles: list[TrackNibbles] = []
 
     if path.suffix.lower() == ".scp":
-        track_data = _decode_tracks(path, layout, encoding=decoder_used)
+        decode_result = _decode_tracks(path, layout, encoding=decoder_used, capture_nibbles=to == "g64")
+        if isinstance(decode_result, tuple):
+            track_data, track_nibbles = decode_result
+        else:
+            track_data = decode_result
         image_obj = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size if layout_desc else None)
+        if track_nibbles:
+            image_obj.tracks_nibbles = track_nibbles
         if layout_desc:
             image_obj.layout = layout_desc
             # Use per-track sector counts for geometry when available; reconstruction already

@@ -12,7 +12,7 @@ fluxctl is a modular toolkit for inspecting and converting floppy disk flux capt
 - **qc**: generate quality control reports (JSON or text).
 - **visualize**: render ASCII or SVG disk maps.
 - **extract**: detect filesystems (FAT12, simplified Amiga OFS) and extract files or raw sectors.
-- **convert**: export to raw, IMD, and ADF images.
+- **convert**: export to raw, IMD, ADF, D64, and G64 images.
 
 ## Encodings and filesystems
 - Encodings: MFM, GCR (Commodore) via plugin registry.
@@ -26,7 +26,18 @@ fluxctl convert disk.img --to raw --out copy.img
 fluxctl extract disk.img --list
 fluxctl extract disk.img --path FILE.TXT --out output.bin
 fluxctl convert disk.scp --to adf --out disk.adf --encoding gcr
+fluxctl convert disk.scp --to g64 --out disk.g64 --layout commodore_gcr_1541_170k
 ```
+
+### Commodore exports
+
+- **D64**: reconstructed 256-byte logical sectors written to a flat image. This
+  is convenient for filesystem access but loses per-track GCR details and any
+  copy-protection data.
+- **G64**: preserves the decoded GCR nibble stream for each track in a
+  half-track container. This format retains gaps and sync marks for better
+  fidelity in emulators, but currently derives half-tracks from full-track
+  captures only (no separate half-track decoding yet).
 
 ## Testing
 - Execute `.venv/bin/python -m pytest` after activating the venv to cover CLI helpers, decoding, exporters, and filesystems.
