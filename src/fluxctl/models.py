@@ -77,7 +77,7 @@ class SCPImage:
     path: Path
     version: int
     revolutions_per_track: int
-    timebase_ns: int
+    timebase_ns: float
     tracks: List[TrackFlux]
 
 
