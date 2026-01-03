@@ -2,7 +2,9 @@
 
 The implementation matches the TRK layout and timing interpretation used by
 Keir Fraser's Greaseweazle project to maximise compatibility with real-world
-SCP dumps.
+SCP dumps. To sanity-check behaviour against Greaseweazle, run
+``python -m greaseweazle.tools.info sample.scp`` and compare the reported
+revolution timings and tick count totals to :func:`parse_scp`.
 """
 from __future__ import annotations
 
@@ -66,17 +68,27 @@ def _parse_flux_bytes(flux_bytes: bytes, timebase_ns: float) -> Sequence[int]:
     """Convert raw flux bytes into nanosecond intervals.
 
     SuperCard Pro stores 16-bit big-endian tick words; each word is multiplied
-    by ``timebase_ns`` and rounded to the nearest integer nanosecond. Zero tick
-    words are ignored, matching the Greaseweazle interpretation.
+    by ``timebase_ns`` and rounded to the nearest integer nanosecond. Long
+    intervals are encoded using overflow sentinels: a ``0`` word adds ``0x10000``
+    ticks to the following non-zero word, repeating for consecutive zeroes.
+    The behaviour mirrors Greaseweazle's SCP reader and reconstructs the full
+    interval instead of dropping the overflow markers.
     """
 
     intervals_ns: array[int] = array("I")
     if not flux_bytes:
         return intervals_ns
 
+    overflow = 0
     for (tick,) in struct.iter_unpack(">H", flux_bytes[: (len(flux_bytes) // 2) * 2]):
-        if tick:
-            intervals_ns.append(int(round(tick * timebase_ns)))
+        if tick == 0:
+            overflow += 0x10000
+            continue
+
+        ticks_total = overflow + tick
+        intervals_ns.append(int(round(ticks_total * timebase_ns)))
+        overflow = 0
+
     return intervals_ns
 
 
@@ -87,40 +99,82 @@ def parse_scp(path: Path) -> SCPImage:
     if end_track >= OFFSET_TABLE_ENTRIES:
         raise SCPFormatError("Track range exceeds SCP offset table")
 
-    offsets_table_end = 16 + OFFSET_TABLE_ENTRIES * 4
-    if len(data) < offsets_table_end:
-        raise SCPFormatError("SCP file missing track offset table")
+    table_entries = min(
+        OFFSET_TABLE_ENTRIES, end_track + 1, max(0, (len(data) - 16) // 4)
+    )
+    offsets: List[int] = [
+        struct.unpack_from("<I", data, 16 + idx * 4)[0] if idx < table_entries else 0
+        for idx in range(OFFSET_TABLE_ENTRIES)
+    ]
 
-    offsets = [struct.unpack_from("<I", data, 16 + idx * 4)[0] for idx in range(OFFSET_TABLE_ENTRIES)]
+    min_offset = min(
+        (
+            off
+            for idx, off in enumerate(offsets)
+            if start_track <= idx <= end_track and off > 0
+        ),
+        default=None,
+    )
+    if min_offset is not None:
+        table_entries = min(table_entries, max(0, (min_offset - 16) // 4))
+
+    offsets_table_end = 16 + table_entries * 4
+    for idx in range(table_entries, OFFSET_TABLE_ENTRIES):
+        offsets[idx] = 0
 
     tracks: List[TrackFlux] = []
+    warnings: List[str] = []
     for idx in range(start_track, end_track + 1):
+        if idx >= len(offsets):
+            break
+
         block_offset = offsets[idx]
         if block_offset == 0:
             continue
 
+        if block_offset < offsets_table_end:
+            warnings.append(
+                f"Track {idx}: offset points into header/offset table ({block_offset})"
+            )
+            continue
+        if block_offset >= len(data):
+            warnings.append(
+                f"Track {idx}: offset past end of file ({block_offset} >= {len(data)})"
+            )
+            continue
+
         next_offset = len(data)
         for candidate in offsets[idx + 1 : end_track + 1]:
-            if candidate and candidate > block_offset:
+            if (
+                candidate
+                and candidate >= offsets_table_end
+                and candidate <= len(data)
+                and candidate > block_offset
+            ):
                 next_offset = min(next_offset, candidate)
-
-        if block_offset >= len(data):
-            raise SCPFormatError("Track offset points past end of file")
 
         track_block = data[block_offset:next_offset]
         if len(track_block) < 16:
-            raise SCPFormatError("Track block truncated before TRK header")
+            warnings.append(f"Track {idx}: block truncated before TRK header")
+            continue
         if not track_block.startswith(b"TRK"):
-            raise SCPFormatError("Track block missing TRK header")
+            warnings.append(f"Track {idx}: missing TRK header")
+            continue
 
         track_block_end = block_offset + len(track_block)
         header_length = 16 + max(0, revolutions - 1) * 12
         if len(track_block) < header_length:
-            raise SCPFormatError("TRK block truncated before revolution records")
+            warnings.append(f"Track {idx}: TRK block truncated before revolution records")
+            continue
 
         track_index_byte = track_block[3]
         track_num = idx // 2
         head_num = idx % 2
+
+        if track_index_byte != idx:
+            warnings.append(
+                f"Track {idx}: offset table index mismatches TRK byte ({track_index_byte})"
+            )
 
         revolution_flux: List[RevolutionFlux] = []
         for rev_index in range(revolutions):
@@ -163,17 +217,13 @@ def parse_scp(path: Path) -> SCPImage:
 
         tracks.append(TrackFlux(track=track_num, side=head_num, revolutions=revolution_flux))
 
-        if track_index_byte != idx:
-            # Track index byte is nominally the same as the offset table index;
-            # mismatches are tolerated but worth flagging in debugging sessions.
-            pass
-
     return SCPImage(
         path=path,
         version=version,
         revolutions_per_track=revolutions,
         timebase_ns=timebase_ns,
         tracks=tracks,
+        warnings=warnings,
     )
 
 
