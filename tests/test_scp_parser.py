@@ -1,7 +1,7 @@
 import struct
 from pathlib import Path
 
-from fluxctl.scp import parse_scp
+from fluxctl.scp import OFFSET_TABLE_ENTRIES, parse_scp
 
 
 def _pack_flux_be(intervals: list[int]) -> bytes:
@@ -53,6 +53,8 @@ def _build_scp_image(
     start_track: int,
     end_track: int,
     track_blocks: dict[int, bytes],
+    offset_table_entries: int = OFFSET_TABLE_ENTRIES,
+    explicit_offsets: dict[int, int] | None = None,
 ) -> bytes:
     header = bytearray(16)
     header[:3] = b"SCP"
@@ -62,14 +64,23 @@ def _build_scp_image(
     header[7] = end_track
     header[8:12] = raw_timebase.to_bytes(4, "little")
 
-    offsets = [0] * 168
-    current_offset = 16 + 168 * 4
+    table_entries = min(offset_table_entries, OFFSET_TABLE_ENTRIES)
+    offsets = [0] * table_entries
+    current_offset = 16 + table_entries * 4
     payload = bytearray()
 
     for idx in sorted(track_blocks):
+        if idx >= table_entries:
+            raise ValueError("Track index outside offset table")
         offsets[idx] = current_offset
         payload += track_blocks[idx]
         current_offset += len(track_blocks[idx])
+
+    if explicit_offsets:
+        for idx, value in explicit_offsets.items():
+            if idx >= table_entries:
+                raise ValueError("Explicit offset outside offset table")
+            offsets[idx] = value
 
     offsets_blob = b"".join(struct.pack("<I", off) for off in offsets)
     return bytes(header + offsets_blob + payload)
@@ -149,3 +160,93 @@ def test_timebase_and_single_sided_track_mapping(tmp_path: Path) -> None:
     assert len({rev.data_offset for rev in track.revolutions}) == len(track.revolutions)
     for rev in track.revolutions:
         assert rev.index_time_ns == sum(rev.interval_ns)
+
+
+def test_long_interval_overflow_round_trips(tmp_path: Path) -> None:
+    track_block = _build_trk_block(0, [[0, 1, 0, 0, 2], [3]])
+
+    image_path = tmp_path / "overflow.scp"
+    image_path.write_bytes(
+        _build_scp_image(
+            version=1,
+            raw_timebase=1,  # 1ns tick
+            revolutions_per_track=2,
+            start_track=0,
+            end_track=0,
+            track_blocks={0: track_block},
+            offset_table_entries=4,
+        )
+    )
+
+    image = parse_scp(image_path)
+
+    assert len(image.tracks) == 1
+    intervals = [list(rev.interval_ns) for rev in image.tracks[0].revolutions]
+    assert intervals == [[65537, 131074], [3]]
+
+
+def test_short_offset_table_clamps_to_file_length(tmp_path: Path) -> None:
+    track_block = _build_trk_block(1, [[5]])
+
+    image_path = tmp_path / "short_table.scp"
+    image_path.write_bytes(
+        _build_scp_image(
+            version=0,
+            raw_timebase=25,
+            revolutions_per_track=1,
+            start_track=0,
+            end_track=2,
+            track_blocks={1: track_block},
+            offset_table_entries=2,
+        )
+    )
+
+    image = parse_scp(image_path)
+
+    assert [t.track for t in image.tracks] == [0]
+    assert image.warnings == []
+
+
+def test_out_of_range_offsets_are_ignored(tmp_path: Path) -> None:
+    track_block = _build_trk_block(2, [[7]])
+
+    image_path = tmp_path / "range_filter.scp"
+    image_path.write_bytes(
+        _build_scp_image(
+            version=0,
+            raw_timebase=25,
+            revolutions_per_track=1,
+            start_track=1,
+            end_track=2,
+            track_blocks={2: track_block},
+            offset_table_entries=3,
+            explicit_offsets={0: 4},
+        )
+    )
+
+    image = parse_scp(image_path)
+
+    assert [t.track for t in image.tracks] == [1]
+    assert all("Track 0" not in warning for warning in image.warnings)
+
+
+def test_track_index_mismatch_surfaces_warning(tmp_path: Path) -> None:
+    track_block = _build_trk_block(9, [[4]])
+
+    image_path = tmp_path / "index_mismatch.scp"
+    image_path.write_bytes(
+        _build_scp_image(
+            version=1,
+            raw_timebase=25,
+            revolutions_per_track=1,
+            start_track=0,
+            end_track=0,
+            track_blocks={0: track_block},
+            offset_table_entries=8,
+        )
+    )
+
+    image = parse_scp(image_path)
+
+    assert image.tracks[0].track == 0
+    assert any("mismatches TRK byte" in warning for warning in image.warnings)
