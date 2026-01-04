@@ -286,7 +286,7 @@ def detect_layout(image: SCPImage, encoding: str, path: Path) -> Optional[Layout
                 if best is None or candidate.score > best.score:
                     best = candidate
                 continue
-            if desc.sector_size <= 128 and desc.sectors_per_track >= 20:
+            if desc.sector_size <= 128 and desc.sectors_per_track >= 20 and logical_tracks >= 79:
                 candidate = LayoutCandidate(layout=desc, score=score, evidence=evidence)
                 if best is None or candidate.score > best.score:
                     best = candidate
@@ -325,24 +325,18 @@ def detect_layout(image: SCPImage, encoding: str, path: Path) -> Optional[Layout
                 if bitstream_len <= 50_000 and desc.sectors_per_track == 9:
                     score += 0.1
                     evidence.append("bitstream_spt_bonus_9=1")
-                if desc.layout_id.startswith("amiga_") and bitstream_len >= 90_000 and logical_tracks >= 79:
-                    score += 0.2
-                    evidence.append("amiga_bitstream_bonus=1")
-            if flux_median is not None:
-                if flux_median >= 500:
-                    if desc.sector_size <= 256:
-                        score += 0.15
-                        evidence.append("flux_rate_bonus=low")
-                    elif desc.sector_size >= 512:
-                        score -= 0.15
-                        evidence.append("flux_rate_penalty=low")
-                elif flux_median <= 450:
-                    if desc.sector_size >= 512:
-                        score += 0.15
-                        evidence.append("flux_rate_bonus=high")
-                    elif desc.sector_size <= 256:
-                        score -= 0.15
-                        evidence.append("flux_rate_penalty=high")
+            if desc.layout_id.startswith("amiga_") and bitstream_len >= 90_000 and logical_tracks >= 79:
+                score += 0.2
+                evidence.append("amiga_bitstream_bonus=1")
+            if (
+                desc.sector_size == 128
+                and desc.sectors_per_track == 26
+                and desc.tracks <= 77
+                and logical_tracks <= 77
+            ):
+                score += 0.25
+                evidence.append("mfm_8inch_128_bonus=1")
+            # Flux median can be misleading across controllers; omit it for MFM scoring.
 
         if "cpm" in desc.layout_id and desc.encoding == "mfm":
             if logical_tracks > desc.tracks and (logical_tracks - desc.tracks) <= 5:
@@ -458,7 +452,7 @@ def detect_layout_any(image: SCPImage, path: Path) -> Optional[LayoutCandidate]:
                 if best is None or candidate.score > best.score:
                     best = candidate
                 continue
-            if desc.sector_size <= 128 and desc.sectors_per_track >= 20:
+            if desc.sector_size <= 128 and desc.sectors_per_track >= 20 and logical_tracks >= 79:
                 candidate = LayoutCandidate(layout=desc, score=score, evidence=evidence)
                 if best is None or candidate.score > best.score:
                     best = candidate
@@ -484,21 +478,15 @@ def detect_layout_any(image: SCPImage, path: Path) -> Optional[LayoutCandidate]:
                 if desc.layout_id.startswith("amiga_") and mfm_bits >= 90_000 and logical_tracks >= 79:
                     score += 0.2
                     evidence.append("amiga_bitstream_bonus=1")
-            if flux_median is not None:
-                if flux_median >= 500:
-                    if desc.sector_size <= 256:
-                        score += 0.15
-                        evidence.append("flux_rate_bonus=low")
-                    elif desc.sector_size >= 512:
-                        score -= 0.15
-                        evidence.append("flux_rate_penalty=low")
-                elif flux_median <= 450:
-                    if desc.sector_size >= 512:
-                        score += 0.15
-                        evidence.append("flux_rate_bonus=high")
-                    elif desc.sector_size <= 256:
-                        score -= 0.15
-                        evidence.append("flux_rate_penalty=high")
+                if (
+                    desc.sector_size == 128
+                    and desc.sectors_per_track == 26
+                    and desc.tracks <= 77
+                    and logical_tracks <= 77
+                ):
+                    score += 0.25
+                    evidence.append("mfm_8inch_128_bonus=1")
+            # Flux median can be misleading across controllers; omit it for MFM scoring.
         if desc.encoding == "gcr":
             geometry = gcr_geometry if (gcr_conf is None or gcr_conf >= 0.6) else {}
             if geometry.get("sectors_per_track") is not None:
@@ -590,7 +578,7 @@ def detect_layout_any(image: SCPImage, path: Path) -> Optional[LayoutCandidate]:
                     evidence.append(f"sector_size_mismatch={observed_size}")
             if flux_median is not None:
                 if flux_median >= 500 and desc.sector_size <= 256:
-                    score += 0.2
+                    score += 0.05
                     evidence.append("flux_rate_bonus=low")
 
         candidate = LayoutCandidate(layout=desc, score=score, evidence=evidence)
