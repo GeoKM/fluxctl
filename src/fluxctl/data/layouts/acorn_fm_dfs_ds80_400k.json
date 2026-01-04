@@ -1,0 +1,31 @@
+{
+  "schema_version": "layout.v1",
+  "layout_id": "acorn_fm_dfs_ds80_400k",
+  "name": "Acorn dfs.ds80 400K FM",
+  "encoding": "fm",
+  "rpm_nominal": 300,
+  "sides": 2,
+  "tracks": 80,
+  "sectors_per_track": 10,
+  "sector_size": 256,
+  "gap3_hint": 21,
+  "id_rules": {
+    "cylinder_field": "track_index",
+    "head_field": "side_index",
+    "sector_number_base": 0
+  },
+  "crc": {
+    "type": "crc16_ccitt",
+    "poly": 4129,
+    "init": 65535,
+    "refin": false,
+    "refout": false,
+    "xorout": 0
+  },
+  "address_marks": {
+    "iam": "fc",
+    "idam": "fe",
+    "dam": "fb",
+    "ddam": "f8"
+  }
+}

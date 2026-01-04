@@ -1,0 +1,26 @@
+{
+  "schema_version": "layout.v1",
+  "layout_id": "northstar_northstar_fm_ds_175k",
+  "name": "Northstar fm.ds 175K NORTHSTAR",
+  "encoding": "northstar",
+  "rpm_nominal": 300,
+  "sides": 2,
+  "tracks": 35,
+  "sectors_per_track": 10,
+  "sector_size": 256,
+  "gap3_hint": null,
+  "id_rules": {
+    "cylinder_field": "track_index",
+    "head_field": "side_index",
+    "sector_number_base": 1
+  },
+  "crc": {
+    "type": "crc16_ccitt",
+    "poly": 4129,
+    "init": 65535,
+    "refin": false,
+    "refout": false,
+    "xorout": 0
+  },
+  "address_marks": {}
+}

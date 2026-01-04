@@ -1,0 +1,26 @@
+{
+  "schema_version": "layout.v1",
+  "layout_id": "dec_dec_rx02_rx02_250k",
+  "name": "Dec rx02 250K DEC_RX02",
+  "encoding": "dec_rx02",
+  "rpm_nominal": 360,
+  "sides": 1,
+  "tracks": 77,
+  "sectors_per_track": 26,
+  "sector_size": 128,
+  "gap3_hint": 26,
+  "id_rules": {
+    "cylinder_field": "track_index",
+    "head_field": "side_index",
+    "sector_number_base": 1
+  },
+  "crc": {
+    "type": "crc16_ccitt",
+    "poly": 4129,
+    "init": 65535,
+    "refin": false,
+    "refout": false,
+    "xorout": 0
+  },
+  "address_marks": {}
+}

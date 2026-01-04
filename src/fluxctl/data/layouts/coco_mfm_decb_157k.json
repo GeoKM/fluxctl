@@ -1,0 +1,31 @@
+{
+  "schema_version": "layout.v1",
+  "layout_id": "coco_mfm_decb_157k",
+  "name": "Coco decb 157K MFM",
+  "encoding": "mfm",
+  "rpm_nominal": 300,
+  "sides": 1,
+  "tracks": 35,
+  "sectors_per_track": 18,
+  "sector_size": 256,
+  "gap3_hint": 24,
+  "id_rules": {
+    "cylinder_field": "track_index",
+    "head_field": "side_index",
+    "sector_number_base": 1
+  },
+  "crc": {
+    "type": "crc16_ccitt",
+    "poly": 4129,
+    "init": 65535,
+    "refin": false,
+    "refout": false,
+    "xorout": 0
+  },
+  "address_marks": {
+    "iam": "fcfcfcfcfcfc",
+    "idam": "a1a1a1fe",
+    "dam": "a1a1a1fb",
+    "ddam": "a1a1a1f8"
+  }
+}
