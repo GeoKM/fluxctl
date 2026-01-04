@@ -47,7 +47,9 @@ def test_qc_json_roundtrip_and_failure_detection() -> None:
 
 def test_qc_expected_counts_respect_layout() -> None:
     class DummyLayout:
-        def expected_sectors_for_track(self, track: int) -> int:  # pragma: no cover - simple stub
+        def expected_sectors_for_track(  # pragma: no cover - simple stub
+            self, track: int, head: int | None = None
+        ) -> int:
             return 3
 
     track_sectors = TrackSectors(
