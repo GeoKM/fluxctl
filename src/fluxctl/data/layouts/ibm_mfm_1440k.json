@@ -8,7 +8,7 @@
   "tracks": 80,
   "sectors_per_track": 18,
   "sector_size": 512,
-  "gap3_hint": 84,
+  "gap3_hint": 108,
   "id_rules": {
     "cylinder_field": "track_index",
     "head_field": "side_index",

@@ -20,6 +20,7 @@ def load_builtin_decoders() -> List[PluginInfo]:
     # Importing modules triggers decoder registration with the plugin registry.
     from . import mfm as _mfm  # noqa: F401
     from . import gcr as _gcr  # noqa: F401
+    from . import fm as _fm  # noqa: F401
 
     return list(registry.encoding.values())
 

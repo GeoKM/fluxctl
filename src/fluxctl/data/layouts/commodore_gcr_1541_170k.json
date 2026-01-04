@@ -5,7 +5,7 @@
   "encoding": "gcr",
   "rpm_nominal": 300,
   "sides": 1,
-  "tracks": 35,
+  "tracks": 40,
   "sectors_per_track": 21,
   "sector_size": 256,
   "gap3_hint": null,
@@ -13,7 +13,7 @@
     21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21,
     19, 19, 19, 19, 19, 19, 19,
     18, 18, 18, 18, 18, 18,
-    17, 17, 17, 17, 17
+    17, 17, 17, 17, 17, 17, 17, 17, 17, 17
   ],
   "id_rules": {
     "cylinder_field": "track_index",

@@ -139,6 +139,7 @@ def load_builtin_filesystems() -> List[PluginInfo]:
     from .fat12 import FAT12
     from .amiga import AmigaOFS
     from .cbm_dos import CBMDOS
+    from .cpm import CPMFilesystem
 
     registry.register_filesystem(
         "fat12",
@@ -165,6 +166,15 @@ def load_builtin_filesystems() -> List[PluginInfo]:
             version="0.1",
             entry=CBMDOS(),
             description="Commodore DOS 2.x filesystem",
+        ),
+    )
+    registry.register_filesystem(
+        "cpm",
+        PluginInfo(
+            name="CP/M Filesystem",
+            version="0.1",
+            entry=CPMFilesystem(),
+            description="CP/M filesystem probe",
         ),
     )
     return list(registry.filesystem.values())

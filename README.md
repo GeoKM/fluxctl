@@ -8,7 +8,7 @@ fluxctl is a modular toolkit for inspecting and converting floppy disk flux capt
 - Run `.venv/bin/fluxctl --help` to confirm the CLI loads and to explore available targets.
 
 ## Supported operations
-- **info/probe**: inspect SCP headers and candidate layouts.
+- **info/probe**: inspect SCP headers and candidate layouts (info is SCP-only).
 - **qc**: generate quality control reports (JSON or text).
 - **visualize**: render ASCII or SVG disk maps.
 - **extract**: detect filesystems (FAT12, simplified Amiga OFS) and extract files or raw sectors.

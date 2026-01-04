@@ -29,8 +29,8 @@ WEAK_CONFIDENCE_THRESHOLD = 0.7
 class TrackQC:
     """Per-track quality metrics for a decoded disk.
 
-    ``bad_sectors`` includes missing sectors, sectors with no data, and sectors
-    with CRC failures.
+    ``bad_sectors`` counts sectors with missing or invalid data (CRC failures
+    or empty data). Missing sectors are tracked separately.
     """
 
     track: int
@@ -152,7 +152,7 @@ def _summarize_track_sectors(track_sectors: TrackSectors, missing: int) -> dict:
     weak = len(
         [sector for sector in data_sectors if sector.confidence < WEAK_CONFIDENCE_THRESHOLD]
     )
-    bad = missing + no_data + crc_errors
+    bad = no_data + crc_errors
     confidence = sum(sector.confidence for sector in data_sectors) / len(data_sectors) if data_sectors else 0.0
 
     return {
@@ -258,7 +258,7 @@ def build_qc_report(
         sum(track.confidence for track in track_reports) / len(track_reports) if track_reports else 0.0
     )
     missing_tracks = _compute_missing_tracks(image, layout, track_step)
-    notes = ["bad_sectors includes missing + no_data + crc_errors"]
+    notes = ["bad_sectors includes no_data + crc_errors"]
     return DiskQCReport(
         tracks=track_reports,
         overall_confidence=overall_confidence,
