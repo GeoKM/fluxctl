@@ -114,10 +114,13 @@ def _compute_missing_tracks(image: SCPImage, layout: LayoutDescriptor | None, tr
     if not track_ids:
         return 0
     if layout:
-        expected_tracks = layout.tracks * layout.sides
-        logical_ids = {track_id // max(track_step, 1) for track_id in track_ids}
-        present = len([tid for tid in logical_ids if tid < expected_tracks])
-        missing = expected_tracks - present
+        expected_entries = layout.tracks * layout.sides
+        present = 0
+        for track in image.tracks:
+            logical_track = track.track // max(track_step, 1)
+            if logical_track < layout.tracks:
+                present += 1
+        missing = expected_entries - present
         return max(missing, 0)
     expected_tracks = track_ids[-1] - track_ids[0] + 1
     missing = expected_tracks - len(track_ids)
@@ -283,6 +286,8 @@ def write_qc_report_text(report: DiskQCReport, path: Path, layout: LayoutDescrip
         lines.extend([f"- {note}" for note in report.notes])
     if layout:
         lines.append(f"Layout: {layout.layout_id}")
+        lines.append(f"Cylinders: {layout.tracks}")
+        lines.append(f"Heads: {layout.sides}")
         if layout.encoding == "gcr":
             lines.append("Note: Commodore GCR checksums are validated when present.")
     lines.extend(["", "Per-track breakdown:"])
