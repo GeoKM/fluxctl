@@ -1,8 +1,8 @@
 {
   "schema_version": "layout.v1",
-  "layout_id": "commodore_mfm_1541_cpm_170k",
-  "name": "Commodore 1541 MFM 170K (CP/M)",
-  "encoding": "mfm",
+  "layout_id": "commodore_gcr_1541_cpm_170k",
+  "name": "Commodore 1541 GCR 170K (CP/M)",
+  "encoding": "gcr",
   "rpm_nominal": 300,
   "sides": 1,
   "tracks": 35,
