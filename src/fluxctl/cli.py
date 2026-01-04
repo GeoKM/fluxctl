@@ -13,7 +13,7 @@ import typer
 from . import __version__
 from .decoding import load_builtin_decoders
 from .decoding.mfm import mfm_decoder
-from .detection import detect_encoding, detect_layout, infer_track_step
+from .detection import detect_encoding, detect_layout, infer_track_step, logical_track_count
 from .exceptions import ExportError, FluxDecodeError, FluxctlError
 from .exporters import load_builtin_exporters
 from .filesystems import Filesystem, RawSectorImage, TrackSectorImage, load_builtin_filesystems
@@ -374,9 +374,19 @@ def qc(
         write_qc_report_text(report, text_out, layout=layout_desc)
         targets.append(text_out)
     if not targets:
+        track_ids = [track.track for track in scp.tracks]
+        heads_present = {track.side for track in scp.tracks}
+        step = infer_track_step(track_ids)
+        logical_tracks = logical_track_count(track_ids, step) if track_ids else 0
+        if layout_desc:
+            cylinders = layout_desc.tracks
+            heads = layout_desc.sides
+        else:
+            cylinders = logical_tracks
+            heads = len(heads_present) if heads_present else 0
         typer.echo(
-            f"Analysed {len(report.tracks)} tracks; overall confidence {report.overall_confidence:.2f}; "
-            f"missing tracks {report.missing_tracks}"
+            f"Analysed {len(report.tracks)} tracks; cylinders {cylinders}; heads {heads}; "
+            f"overall confidence {report.overall_confidence:.2f}; missing tracks {report.missing_tracks}"
         )
     if targets:
         target_path = targets[0]
