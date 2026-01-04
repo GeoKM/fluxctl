@@ -384,10 +384,23 @@ def qc(
         else:
             cylinders = logical_tracks
             heads = len(heads_present) if heads_present else 0
+        total_sectors = sum(track.total_sectors for track in report.tracks)
+        good_sectors = sum(track.good_sectors for track in report.tracks)
+        bad_sectors = sum(track.bad_sectors for track in report.tracks)
+        decoded_sectors = sum(
+            track.total_sectors - track.missing_sectors - track.no_data_sectors
+            for track in report.tracks
+        )
         typer.echo(
             f"Analysed {len(report.tracks)} tracks; cylinders {cylinders}; heads {heads}; "
+            f"total sectors {total_sectors}; decoded sectors {decoded_sectors}; "
+            f"good sectors {good_sectors}; "
             f"overall confidence {report.overall_confidence:.2f}; missing tracks {report.missing_tracks}"
         )
+        if good_sectors == 0 and decoded_sectors:
+            typer.echo("Note: CRC validation failed for decoded sectors. Use --text-out or --json-out for details.")
+        elif bad_sectors:
+            typer.echo("Note: Bad sectors detected. Use --text-out or --json-out for details.")
     if targets:
         target_path = targets[0]
         prov_target = prov_out or target_path.with_suffix(target_path.suffix + ".provenance.json")
