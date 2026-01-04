@@ -173,7 +173,7 @@ def _resolve_expected_and_missing(
     expected_hint: int,
 ) -> tuple[int, int]:
     decoded_ids = {sector.sector_id for sector in track_sectors.sectors if sector.data}
-    expected_layout = layout.expected_sectors_for_track(logical_track) if layout else None
+    expected_layout = layout.expected_sectors_for_track(logical_track, track_data.head) if layout else None
     inferred = _infer_expected_sector_count(track_sectors.sectors)
     expected = expected_layout or (inferred or expected_hint or 0)
     missing = max(expected - len(decoded_ids), 0) if expected else 0
@@ -213,7 +213,9 @@ def build_qc_report(
                 decoder,
                 cylinder=track_flux.track,
                 head=track_flux.side,
-                expected_sectors=layout.expected_sectors_for_track(logical_track) if layout else expected_hint or None,
+                expected_sectors=layout.expected_sectors_for_track(logical_track, track_data.head)
+                if layout
+                else expected_hint or None,
                 encoding=encoding,
             )
             expected, missing = _resolve_expected_and_missing(
@@ -230,7 +232,7 @@ def build_qc_report(
             no_data = summary["no_data"]
             confidence = summary["confidence"]
         except Exception:
-            expected = layout.expected_sectors_for_track(logical_track) if layout else expected_hint
+            expected = layout.expected_sectors_for_track(logical_track, track_data.head) if layout else expected_hint
             good = 0
             weak = 0
             bad = expected or 1

@@ -29,6 +29,8 @@ def load_layout_descriptor(path: Path) -> LayoutDescriptor:
         crc=data["crc"],
         address_marks=data["address_marks"],
         track_sectors=data.get("track_sectors"),
+        sector_sizes=data.get("sector_sizes"),
+        track_overrides=data.get("track_overrides"),
     )
 
 

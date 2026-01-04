@@ -202,7 +202,7 @@ def _decode_tracks(
             # Determine the logical track index (no track_step here, so it is just ts.track).
             logical_track = ts.track
             try:
-                expected_sectors = layout.expected_sectors_for_track(logical_track)
+                expected_sectors = layout.expected_sectors_for_track(logical_track, ts.side)
             except Exception:
                 # Fallback to a constant if the layout does not define per-track counts.
                 expected_sectors = layout.sectors_per_track
@@ -488,7 +488,9 @@ def convert(
             geometry_sectors = None
             if track_data:
                 try:
-                    geometry_sectors = layout_desc.expected_sectors_for_track(track_data[0].track)
+                    geometry_sectors = layout_desc.expected_sectors_for_track(
+                        track_data[0].track, track_data[0].head
+                    )
                 except Exception:
                     geometry_sectors = layout_desc.sectors_per_track
             image_obj.set_geometry(geometry_sectors or layout_desc.sectors_per_track, layout_desc.sides)
