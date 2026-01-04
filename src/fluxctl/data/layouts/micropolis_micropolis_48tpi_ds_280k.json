@@ -1,0 +1,26 @@
+{
+  "schema_version": "layout.v1",
+  "layout_id": "micropolis_micropolis_48tpi_ds_280k",
+  "name": "Micropolis 48tpi.ds 280K MICROPOLIS",
+  "encoding": "micropolis",
+  "rpm_nominal": 300,
+  "sides": 2,
+  "tracks": 35,
+  "sectors_per_track": 16,
+  "sector_size": 256,
+  "gap3_hint": null,
+  "id_rules": {
+    "cylinder_field": "track_index",
+    "head_field": "side_index",
+    "sector_number_base": 1
+  },
+  "crc": {
+    "type": "crc16_ccitt",
+    "poly": 4129,
+    "init": 65535,
+    "refin": false,
+    "refout": false,
+    "xorout": 0
+  },
+  "address_marks": {}
+}
