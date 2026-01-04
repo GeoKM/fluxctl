@@ -1,0 +1,31 @@
+{
+  "schema_version": "layout.v1",
+  "layout_id": "raw_fm_125",
+  "name": "Raw bitcell 125kbps (placeholder)",
+  "encoding": "fm",
+  "rpm_nominal": 300,
+  "sides": 2,
+  "tracks": 81,
+  "sectors_per_track": 0,
+  "sector_size": 0,
+  "gap3_hint": null,
+  "id_rules": {
+    "cylinder_field": "track_index",
+    "head_field": "side_index",
+    "sector_number_base": 1
+  },
+  "crc": {
+    "type": "crc16_ccitt",
+    "poly": 4129,
+    "init": 65535,
+    "refin": false,
+    "refout": false,
+    "xorout": 0
+  },
+  "address_marks": {
+    "iam": "fc",
+    "idam": "fe",
+    "dam": "fb",
+    "ddam": "f8"
+  }
+}
