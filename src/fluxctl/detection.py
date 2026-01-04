@@ -525,8 +525,9 @@ def detect_layout_any(image: SCPImage, path: Path) -> Optional[LayoutCandidate]:
             if track_samples:
                 coverage = tracks_with_sectors / track_samples
                 if coverage < 0.5 and (gcr_conf is None or gcr_conf < 0.9):
-                    score -= 0.4
-                    evidence.append("gcr_coverage_penalty=1")
+                    if gcr_conf is not None or mfm_conf is not None:
+                        score -= 0.4
+                        evidence.append("gcr_coverage_penalty=1")
         if desc.encoding == "gcr" and gcr_conf is not None:
             track_samples = gcr_geometry.get("track_samples")
             tracks_with_sectors = gcr_geometry.get("tracks_with_sectors")
