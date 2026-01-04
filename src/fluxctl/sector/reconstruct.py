@@ -15,6 +15,7 @@ from ..decoding import Decoder
 from ..models import Bitstream, RevolutionFlux
 from .models import Sector, TrackSectors
 from .reconstruct_gcr import reconstruct_gcr_track
+from .reconstruct_fm import reconstruct_fm_track
 
 
 SYNC_WORD = 0x4489
@@ -86,38 +87,37 @@ def reconstruct_track(
             break
         if expected_sectors and len(sectors) >= expected_sectors:
             break
-        if not (
-            bit_str[pos : pos + 16] == pattern
-            and bit_str[pos + 16 : pos + 32] == pattern
-            and bit_str[pos + 32 : pos + 48] == pattern
-        ):
+        sync_words = 0
+        while sync_words < 3 and bit_str[pos + sync_words * 16 : pos + (sync_words + 1) * 16] == pattern:
+            sync_words += 1
+        if sync_words == 0:
             search_pos = pos + 1
             continue
 
-        marker = _decode_data_byte(bits, pos + 3 * 16)
+        marker = _decode_data_byte(bits, pos + sync_words * 16)
         if marker is None:
             break
 
         if marker == ID_ADDRESS_MARK:
-            header_bytes = [_decode_data_byte(bits, pos + (i + 4) * 16) for i in range(4)]
+            header_bytes = [_decode_data_byte(bits, pos + (sync_words + 1 + i) * 16) for i in range(4)]
             if any(b is None for b in header_bytes):
                 break
             c, h, r, n = [int(b) for b in header_bytes]
-            crc_bytes = [_decode_data_byte(bits, pos + (i + 8) * 16) for i in range(2)]
+            crc_bytes = [_decode_data_byte(bits, pos + (sync_words + 5 + i) * 16) for i in range(2)]
             if any(b is None for b in crc_bytes):
                 break
             header_field = bytes([0xA1, 0xA1, 0xA1, marker, c, h, r, n])
             crc_calc = _crc16(header_field)
             crc_read = (int(crc_bytes[0]) << 8) | int(crc_bytes[1])
             last_header = (c, h, r, n, crc_calc == crc_read)
-            search_pos = pos + 10 * 16
+            search_pos = pos + (sync_words + 7) * 16
             continue
 
         if marker in DATA_ADDRESS_MARKS and last_header:
             c, h, r, n, header_crc_ok = last_header
             data_len = 128 << n
             data_bytes: List[int] = []
-            data_offset = pos + 4 * 16
+            data_offset = pos + (sync_words + 1) * 16
             for i in range(data_len):
                 value = _decode_data_byte(bits, data_offset + i * 16)
                 if value is None:
@@ -196,6 +196,8 @@ def build_track_sectors(
     bitstream = decoder.decode_revolution(rev)
     if effective_encoding == "gcr":
         return reconstruct_gcr_track(bitstream, cylinder=cylinder, head=head, expected_sectors=expected_sectors)
+    if effective_encoding == "fm":
+        return reconstruct_fm_track(bitstream, cylinder=cylinder, head=head, expected_sectors=expected_sectors)
     return reconstruct_track(bitstream, cylinder=cylinder, head=head, expected_sectors=expected_sectors)
 
 

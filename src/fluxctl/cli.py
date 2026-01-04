@@ -61,7 +61,7 @@ def _get_decoder(encoding: str):
 @app.command()
 @_handle_cli_errors
 def info(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
-    """Print basic SCP information."""
+    """Print basic SCP information from .scp files only."""
     scp = parse_scp(path)
     load_builtin_decoders()
     load_builtin_layouts()

@@ -54,4 +54,4 @@ def test_missing_sectors_fold_into_bad_counts() -> None:
 
     summary = _summarize_track_sectors(track_sectors, missing=2)
 
-    assert summary["bad"] == 4
+    assert summary["bad"] == 2

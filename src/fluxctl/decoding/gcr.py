@@ -44,12 +44,12 @@ class GCRDecoder(Decoder):
         track_1based = cylinder + 1
         self.cell_ns = cell_ns_for_1541_track(track_1based)
 
-    def _intervals_to_bits(self, intervals_ns: Sequence[int]) -> List[int]:
+    def _intervals_to_bits(self, intervals_ns: Sequence[int], cell_ns: float) -> List[int]:
         bits: List[int] = []
         for interval in intervals_ns:
             if interval <= 0:
                 continue
-            cells = max(1, round(interval / self.cell_ns))
+            cells = max(1, round(interval / cell_ns))
             if cells == 1:
                 bits.append(1)
             else:
@@ -69,17 +69,27 @@ class GCRDecoder(Decoder):
             total += 1
             if code in GCR_DECODE_5TO4:
                 valid += 1
-        confidence = valid / max(total, 1)
-        return confidence if confidence > 0 else 0.1
+        ratio = valid / max(total, 1)
+        if ratio <= 0.6:
+            return 0.1
+        scaled = (ratio - 0.6) / 0.4
+        return max(0.1, min(1.0, scaled))
 
     def decode_revolution(self, rev: RevolutionFlux) -> Bitstream:
         if not rev.interval_ns:
             raise FluxDecodeError("No flux data available for GCR decoding")
 
-        bits = self._intervals_to_bits(rev.interval_ns)
-        confidence = self._estimate_confidence(bits)
-        metrics = BitDecodeMetrics(pll_lock_score=confidence, rpm_estimate=None, confidence=confidence)
-        return Bitstream(bits=bits, metrics=metrics, source_revs=[rev.index])
+        candidates = [self.cell_ns, 3250.0, 3500.0, 3750.0, 4000.0]
+        best_bits: List[int] = []
+        best_confidence = -1.0
+        for cell_ns in candidates:
+            bits = self._intervals_to_bits(rev.interval_ns, cell_ns)
+            confidence = self._estimate_confidence(bits)
+            if confidence > best_confidence:
+                best_confidence = confidence
+                best_bits = bits
+        metrics = BitDecodeMetrics(pll_lock_score=best_confidence, rpm_estimate=None, confidence=best_confidence)
+        return Bitstream(bits=best_bits, metrics=metrics, source_revs=[rev.index])
 
 
 gcr_decoder = GCRDecoder()

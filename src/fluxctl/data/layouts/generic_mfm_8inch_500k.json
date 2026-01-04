@@ -1,0 +1,31 @@
+{
+  "schema_version": "layout.v1",
+  "layout_id": "generic_mfm_8inch_500k",
+  "name": "Generic 8-inch MFM 500K",
+  "encoding": "mfm",
+  "rpm_nominal": 360,
+  "sides": 2,
+  "tracks": 77,
+  "sectors_per_track": 26,
+  "sector_size": 128,
+  "gap3_hint": 26,
+  "id_rules": {
+    "cylinder_field": "track_index",
+    "head_field": "side_index",
+    "sector_number_base": 1
+  },
+  "crc": {
+    "type": "crc16_ccitt",
+    "poly": 4129,
+    "init": 65535,
+    "refin": false,
+    "refout": false,
+    "xorout": 0
+  },
+  "address_marks": {
+    "iam": "fcfcfcfcfcfc",
+    "idam": "a1a1a1fe",
+    "dam": "a1a1a1fb",
+    "ddam": "a1a1a1f8"
+  }
+}
