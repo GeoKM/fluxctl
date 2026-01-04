@@ -6,7 +6,7 @@
   "rpm_nominal": 300,
   "sides": 2,
   "tracks": 40,
-  "sectors_per_track": 16,
+  "sectors_per_track": 10,
   "sector_size": 512,
   "gap3_hint": null,
   "id_rules": {
@@ -28,46 +28,12 @@
     "dam": "a1a1a1fb",
     "ddam": "a1a1a1f8"
   },
-  "track_sectors": [
-    16,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10,
-    10
+  "track_overrides": [
+    {
+      "track_range": "0",
+      "head": 0,
+      "sectors_per_track": 16,
+      "sector_size": 256
+    }
   ]
 }

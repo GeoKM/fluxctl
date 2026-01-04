@@ -136,12 +136,66 @@ class LayoutDescriptor:
     crc: Dict[str, object]
     address_marks: Dict[str, object]
     track_sectors: Optional[List[int]] = None
+    sector_sizes: Optional[List[int]] = None
+    track_overrides: Optional[List[Dict[str, object]]] = None
 
-    def expected_sectors_for_track(self, track_index: int) -> int:
+    def expected_sectors_for_track(self, track_index: int, head_index: Optional[int] = None) -> int:
         """Return the expected sector count for a logical track."""
 
+        if self.track_overrides:
+            override = self._match_override(track_index, head_index)
+            if override and "sectors_per_track" in override:
+                return int(override["sectors_per_track"])
         if self.track_sectors:
             if 0 <= track_index < len(self.track_sectors):
                 return self.track_sectors[track_index]
             return self.track_sectors[-1]
         return self.sectors_per_track
+
+    def expected_sector_sizes_for_track(
+        self, track_index: int, head_index: Optional[int] = None
+    ) -> Optional[List[int]]:
+        """Return per-sector sizes when a track uses mixed sector sizes."""
+
+        if self.track_overrides:
+            override = self._match_override(track_index, head_index)
+            if override and "sector_sizes" in override:
+                return list(override["sector_sizes"])
+        if self.sector_sizes:
+            return list(self.sector_sizes)
+        return None
+
+    def _match_override(
+        self, track_index: int, head_index: Optional[int]
+    ) -> Optional[Dict[str, object]]:
+        if not self.track_overrides:
+            return None
+        for override in self.track_overrides:
+            head = override.get("head")
+            if head is not None and head_index is None:
+                continue
+            if head is not None and head_index is not None and int(head) != head_index:
+                continue
+            track_range = override.get("track_range")
+            if track_range is None or self._track_range_matches(track_range, track_index):
+                return override
+        return None
+
+    @staticmethod
+    def _track_range_matches(track_range: str, track_index: int) -> bool:
+        if track_range == "*":
+            return True
+        for part in track_range.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "-" in part:
+                start_str, end_str = part.split("-", 1)
+                start = int(start_str)
+                end = int(end_str)
+                if start <= track_index <= end:
+                    return True
+            else:
+                if int(part) == track_index:
+                    return True
+        return False
