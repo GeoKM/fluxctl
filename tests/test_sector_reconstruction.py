@@ -1,10 +1,17 @@
 from pathlib import Path
+from typing import List
 
 import pytest
 
 from fluxctl.decoding.mfm import mfm_decoder
+from fluxctl.models import BitDecodeMetrics, Bitstream
 from fluxctl.scp import parse_scp
-from fluxctl.sector.reconstruct import build_track_sectors
+from fluxctl.sector.reconstruct import (
+    ID_ADDRESS_MARK,
+    SYNC_WORD,
+    build_track_sectors,
+    reconstruct_track,
+)
 
 
 FIXTURES = [
@@ -38,3 +45,70 @@ def test_reconstructs_mfm_track_zero(path: Path, expected_count: int) -> None:
     sector_ids = sorted(sec.sector_id for sec in track_sectors.sectors)
     assert sector_ids == list(range(1, expected_count + 1))
     assert all(len(sec.data) == (128 << sec.size_code) for sec in track_sectors.sectors)
+
+
+def _crc16(data: bytes, poly: int = 0x1021, init: int = 0xFFFF) -> int:
+    crc = init
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = (crc << 1) ^ poly
+            else:
+                crc <<= 1
+            crc &= 0xFFFF
+    return crc & 0xFFFF
+
+
+def _encode_mfm_byte(value: int) -> List[int]:
+    bits: List[int] = []
+    for shift in range(7, -1, -1):
+        bits.append(0)
+        bits.append((value >> shift) & 1)
+    return bits
+
+
+def _sync_bits(count: int = 1) -> List[int]:
+    word_bits = [int(bit) for bit in format(SYNC_WORD, "016b")]
+    return word_bits * count
+
+
+def test_bad_header_crc_still_yields_sector_with_valid_data() -> None:
+    cylinder = head = 0
+    sector_id = 1
+    size_code = 0
+    data_bytes = bytes(range(128))
+    header_field = bytes(
+        [0xA1, 0xA1, 0xA1, ID_ADDRESS_MARK, cylinder, head, sector_id, size_code]
+    )
+    data_marker = 0xFB
+    header_crc = _crc16(header_field)
+    data_field = bytes([0xA1, 0xA1, 0xA1, data_marker, *data_bytes])
+    data_crc = _crc16(data_field)
+    corrupted_crc = header_crc ^ 0xFFFF
+
+    bits: List[int] = []
+    bits.extend(_sync_bits(3))
+    bits.extend(_encode_mfm_byte(ID_ADDRESS_MARK))
+    for value in (cylinder, head, sector_id, size_code):
+        bits.extend(_encode_mfm_byte(value))
+    # Intentionally corrupt header CRC so parser marks header_crc_ok False.
+    bits.extend(_encode_mfm_byte((corrupted_crc >> 8) & 0xFF))
+    bits.extend(_encode_mfm_byte(corrupted_crc & 0xFF))
+
+    bits.extend(_sync_bits(3))
+    bits.extend(_encode_mfm_byte(data_marker))
+    for byte in data_bytes:
+        bits.extend(_encode_mfm_byte(byte))
+    bits.extend(_encode_mfm_byte((data_crc >> 8) & 0xFF))
+    bits.extend(_encode_mfm_byte(data_crc & 0xFF))
+
+    bitstream = Bitstream(bits=bits, metrics=BitDecodeMetrics(confidence=0.5), source_revs=[0])
+    track_sectors = reconstruct_track(bitstream, cylinder=cylinder, head=head, expected_sectors=1)
+
+    assert len(track_sectors.sectors) == 1
+    sector = track_sectors.sectors[0]
+    assert sector.sector_id == sector_id
+    assert sector.data == data_bytes
+    assert sector.crc_ok is False
+    assert track_sectors.weak == 1

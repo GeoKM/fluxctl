@@ -58,6 +58,51 @@ def _get_decoder(encoding: str):
     raise FluxDecodeError(f"Unknown encoding '{encoding}'")
 
 
+def _first_diff_offset(a: bytes, b: bytes) -> Optional[int]:
+    """Return the first offset where ``a`` and ``b`` differ."""
+
+    limit = min(len(a), len(b))
+    for idx in range(limit):
+        if a[idx] != b[idx]:
+            return idx
+    if len(a) != len(b):
+        return limit
+    return None
+
+
+def _resolve_encoding_for_compare(path: Path, encoding: str) -> str:
+    """Resolve ``encoding`` for comparison, auto-detecting SCP inputs when requested."""
+
+    if encoding != "auto":
+        return encoding
+    if path.suffix.lower() != ".scp":
+        return "mfm"
+    load_builtin_decoders()
+    candidate = detect_encoding(parse_scp(path), path=path)
+    if candidate is None:
+        raise FluxDecodeError("Unable to infer encoding for SCP input; specify --encoding-a/--encoding-b")
+    return candidate.encoding
+
+
+def _image_bytes_for_compare(path: Path, layout_id: Optional[str], encoding: str) -> tuple[bytes, dict]:
+    """Decode an image to a flat byte stream suitable for comparison."""
+
+    resolved_encoding = _resolve_encoding_for_compare(path, encoding)
+    image = _prepare_image(path, layout_id, encoding=resolved_encoding)
+    if isinstance(image, RawSectorImage):
+        payload = image.data
+        kind = "raw"
+    else:
+        payload = b"".join(image.iter_sectors())
+        kind = "sectors"
+    return payload, {
+        "path": str(path),
+        "kind": kind,
+        "encoding": resolved_encoding,
+        "layout": layout_id or "",
+    }
+
+
 @app.command()
 @_handle_cli_errors
 def info(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
@@ -284,6 +329,57 @@ def provenance_show(path: Path = typer.Argument(..., exists=True, readable=True)
     """Print a provenance JSON file."""
 
     typer.echo(path.read_text(encoding="utf-8"))
+
+
+@app.command()
+@_handle_cli_errors
+def compare(
+    a: Path = typer.Argument(..., exists=True, readable=True),
+    b: Path = typer.Argument(..., exists=True, readable=True),
+    layout_a: Optional[str] = typer.Option(None, "--layout-a", help="Layout ID for decoding input A (SCP only)"),
+    layout_b: Optional[str] = typer.Option(None, "--layout-b", help="Layout ID for decoding input B (SCP only)"),
+    encoding_a: str = typer.Option("auto", "--encoding-a", help="Encoding for input A (mfm, fm, gcr, auto for SCP)"),
+    encoding_b: str = typer.Option("auto", "--encoding-b", help="Encoding for input B (mfm, fm, gcr, auto for SCP)"),
+    json_out: Optional[Path] = typer.Option(None, "--json-out", help="Write compare report to JSON"),
+):
+    """Compare two images by content; SCP inputs are decoded before comparison."""
+
+    bytes_a, meta_a = _image_bytes_for_compare(a, layout_a, encoding_a)
+    bytes_b, meta_b = _image_bytes_for_compare(b, layout_b, encoding_b)
+
+    sha_a = hashlib.sha256(bytes_a).hexdigest()
+    sha_b = hashlib.sha256(bytes_b).hexdigest()
+    diff = _first_diff_offset(bytes_a, bytes_b)
+    identical = diff is None and len(bytes_a) == len(bytes_b)
+
+    report = {
+        "path_a": str(a),
+        "path_b": str(b),
+        "len_a": len(bytes_a),
+        "len_b": len(bytes_b),
+        "sha256_a": sha_a,
+        "sha256_b": sha_b,
+        "identical": identical,
+        "first_diff_offset": diff,
+        "meta_a": meta_a,
+        "meta_b": meta_b,
+    }
+
+    typer.echo(f"A: {a} ({len(bytes_a)} bytes) sha256={sha_a}")
+    typer.echo(f"B: {b} ({len(bytes_b)} bytes) sha256={sha_b}")
+    if identical:
+        typer.secho("Result: MATCH (byte-identical)", fg=typer.colors.GREEN)
+    else:
+        typer.secho("Result: DIFFER", fg=typer.colors.YELLOW)
+        if diff is not None:
+            typer.echo(f"First difference at offset {diff}")
+
+    if json_out:
+        json_out.parent.mkdir(parents=True, exist_ok=True)
+        json_out.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        typer.echo(f"Wrote compare report to {json_out}")
+
+    raise typer.Exit(code=0 if identical else 1)
 
 
 @app.command()

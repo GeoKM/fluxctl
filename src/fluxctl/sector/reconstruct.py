@@ -90,9 +90,10 @@ def reconstruct_track(
         sync_words = 0
         while sync_words < 3 and bit_str[pos + sync_words * 16 : pos + (sync_words + 1) * 16] == pattern:
             sync_words += 1
-        if sync_words == 0:
+        if sync_words < 3:
             search_pos = pos + 1
             continue
+        sync_words = 3
 
         marker = _decode_data_byte(bits, pos + sync_words * 16)
         if marker is None:
@@ -109,7 +110,8 @@ def reconstruct_track(
             header_field = bytes([0xA1, 0xA1, 0xA1, marker, c, h, r, n])
             crc_calc = _crc16(header_field)
             crc_read = (int(crc_bytes[0]) << 8) | int(crc_bytes[1])
-            last_header = (c, h, r, n, crc_calc == crc_read)
+            header_crc_ok = crc_calc == crc_read
+            last_header = (c, h, r, n, header_crc_ok)
             search_pos = pos + (sync_words + 7) * 16
             continue
 
