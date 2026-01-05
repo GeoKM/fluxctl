@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -9,9 +10,11 @@ FIXTURE_720K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.
 FIXTURE_1440K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSHD-MFM-IBMPC-1440K.scp")
 FIXTURE_1200K = Path("tests/fixtures/5.25inch/IBM/IBM-Generic-DSHD-MFM-IBMPC-1200K.scp")
 FIXTURE_CPM_340K = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-MFM-C128CPM-340K.scp")
+FIXTURE_CPM_170K = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-SSDD-MFM-C128CPM-170K.scp")
 FIXTURE_8IN_500K = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM-RT11-500K.scp")
 FIXTURE_8IN_1200K = Path("tests/fixtures/8inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-1200K.scp")
 FIXTURE_8IN_FM_284K = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWriter-284K.scp")
+FIXTURE_AMIGA_880K = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.scp")
 
 
 def test_probe_includes_gcr_candidates() -> None:
@@ -48,7 +51,16 @@ def test_probe_prefers_commodore_cpm_layout() -> None:
     runner = CliRunner()
     result = runner.invoke(cli.app, ["probe", str(FIXTURE_CPM_340K)])
     assert result.exit_code == 0
-    assert "commodore_mfm_1571_cpm_340k" in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload[0]["encoding"] == "gcr"
+
+
+def test_probe_uses_gcr_when_mfm_has_no_sectors() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_CPM_170K)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["encoding"] == "gcr"
 
 
 def test_probe_prefers_8inch_500k_layout() -> None:
@@ -70,3 +82,11 @@ def test_probe_prefers_8inch_fm_284k_layout() -> None:
     result = runner.invoke(cli.app, ["probe", str(FIXTURE_8IN_FM_284K)])
     assert result.exit_code == 0
     assert "ibm_fm_8inch_284k" in result.stdout
+
+
+def test_probe_prefers_amiga_880k_over_hd() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_AMIGA_880K)])
+    assert result.exit_code == 0
+    assert "amiga_mfm_880k" in result.stdout
+    assert "amiga_mfm_amigados_hd_1760k" not in result.stdout
