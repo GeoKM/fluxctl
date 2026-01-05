@@ -108,6 +108,9 @@ def _image_bytes_for_compare(path: Path, layout_id: Optional[str], encoding: str
 def info(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
     """Print basic SCP information from .scp files only."""
     scp = parse_scp(path)
+    heads_with_flux = {
+        track.side for track in scp.tracks if any(rev.interval_ns for rev in track.revolutions)
+    }
     load_builtin_decoders()
     load_builtin_layouts()
     encoding_candidate = detect_encoding(scp, path=path)
@@ -126,7 +129,10 @@ def info(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
     if layout_candidate:
         layout_desc = layout_candidate.layout
         layout_heads = layout_desc.sides
-        if layout_desc.sides > 1 and len(scp.tracks) <= layout_desc.tracks + 2:
+        if layout_desc.sides > 1 and len(heads_with_flux) <= 1:
+            layout_heads = 1
+            typer.echo("Assuming single-sided capture based on flux presence")
+        elif layout_desc.sides > 1 and len(scp.tracks) <= layout_desc.tracks + 2:
             layout_heads = 1
             typer.echo("Assuming single-sided capture based on track count")
         typer.echo(f"Cylinders (layout): {layout_desc.tracks}")
