@@ -126,18 +126,29 @@ def reconstruct_gcr_track(
     weak = 0
 
     for idx, (sync_start, sync_end) in enumerate(sync_marks):
-        align_offset, _ = _score_alignment(bits, sync_end)
-        header_block = _read_block(bits, sync_end + align_offset, 8)
-        if len(header_block.bytes) < 8 or header_block.bytes[0] != HEADER_ID:
+        best_header: Optional[tuple[GCRBlock, int, int, int, int, bool]] = None
+        best_score: Optional[tuple[int, int]] = None
+        for offset in range(5):
+            header_block = _read_block(bits, sync_end + offset, 8)
+            if len(header_block.bytes) < 8 or header_block.bytes[0] != HEADER_ID:
+                continue
+            header_checksum = header_block.bytes[1]
+            sector_id = header_block.bytes[2]
+            header_track = header_block.bytes[3]
+            id_lo = header_block.bytes[4]
+            id_hi = header_block.bytes[5]
+            trailer = header_block.bytes[6:8]
+            header_ok = (_xor_checksum(bytes([sector_id, header_track, id_lo, id_hi])) == header_checksum)
+            header_ok = header_ok and trailer == b"\x0f\x0f"
+            score = (0 if header_ok else 1, header_block.errors)
+            if best_score is None or score < best_score:
+                best_score = score
+                best_header = (header_block, sector_id, header_track, id_lo, id_hi, header_ok)
+                if header_ok:
+                    break
+        if best_header is None:
             continue
-        header_checksum = header_block.bytes[1]
-        sector_id = header_block.bytes[2]
-        header_track = header_block.bytes[3]
-        id_lo = header_block.bytes[4]
-        id_hi = header_block.bytes[5]
-        trailer = header_block.bytes[6:8]
-        header_ok = (_xor_checksum(bytes([sector_id, header_track, id_lo, id_hi])) == header_checksum)
-        header_ok = header_ok and trailer == b"\x0f\x0f"
+        header_block, sector_id, header_track, id_lo, id_hi, header_ok = best_header
 
         next_sync: Optional[Tuple[int, int]] = None
         for candidate_start, candidate_end in sync_marks[idx + 1 :]:
@@ -147,17 +158,28 @@ def reconstruct_gcr_track(
         if next_sync is None:
             continue
 
-        data_align, _ = _score_alignment(bits, next_sync[1])
         total_bytes = 1 + DATA_LENGTH + 1 + TAIL_BYTES
-        data_block = _read_block(bits, next_sync[1] + data_align, total_bytes)
-        if len(data_block.bytes) < total_bytes:
+        best_data: Optional[tuple[GCRBlock, bytes, bool]] = None
+        best_data_score: Optional[tuple[int, int]] = None
+        for offset in range(5):
+            data_block = _read_block(bits, next_sync[1] + offset, total_bytes)
+            if len(data_block.bytes) < total_bytes:
+                continue
+            if data_block.bytes[0] != DATA_ID:
+                continue
+            data_bytes = data_block.bytes[1 : 1 + DATA_LENGTH]
+            checksum = data_block.bytes[1 + DATA_LENGTH]
+            trailer_bytes = data_block.bytes[1 + DATA_LENGTH + 1 : 1 + DATA_LENGTH + 1 + TAIL_BYTES]
+            data_ok = _xor_checksum(data_bytes) == checksum and trailer_bytes == b"\x0f\x0f"
+            score = (0 if data_ok else 1, data_block.errors)
+            if best_data_score is None or score < best_data_score:
+                best_data_score = score
+                best_data = (data_block, data_bytes, data_ok)
+                if data_ok:
+                    break
+        if best_data is None:
             continue
-        if data_block.bytes[0] != DATA_ID:
-            continue
-        data_bytes = data_block.bytes[1 : 1 + DATA_LENGTH]
-        checksum = data_block.bytes[1 + DATA_LENGTH]
-        trailer_bytes = data_block.bytes[1 + DATA_LENGTH + 1 : 1 + DATA_LENGTH + 1 + TAIL_BYTES]
-        data_ok = _xor_checksum(data_bytes) == checksum and trailer_bytes == b"\x00\x00"
+        _, data_bytes, data_ok = best_data
 
         crc_ok = data_ok and header_ok
         confidence = bitstream.metrics.confidence or 0.0
@@ -190,3 +212,7 @@ def reconstruct_gcr_track(
 
 
 __all__ = ["extract_best_gcr_nibble_stream", "reconstruct_gcr_track", "score_gcr_alignment"]
+
+# TODO: 1571 CP/M non-boot disks can be MFM-formatted data while boot media
+# remain GCR; once such fixtures exist, confirm probe/detect handling and
+# document mixed-encoding workflows.
