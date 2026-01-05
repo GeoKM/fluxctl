@@ -15,6 +15,7 @@ FIXTURE_8IN_500K = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM-RT11-500K.sc
 FIXTURE_8IN_1200K = Path("tests/fixtures/8inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-1200K.scp")
 FIXTURE_8IN_FM_284K = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWriter-284K.scp")
 FIXTURE_AMIGA_880K = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.scp")
+FIXTURE_1541_CPM_170K = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64CPM-170K.scp")
 
 
 def test_probe_includes_gcr_candidates() -> None:
@@ -90,3 +91,11 @@ def test_probe_prefers_amiga_880k_over_hd() -> None:
     assert result.exit_code == 0
     assert "amiga_mfm_880k" in result.stdout
     assert "amiga_mfm_amigados_hd_1760k" not in result.stdout
+
+
+def test_probe_prefers_commodore_cpm_over_apple_gcr() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_1541_CPM_170K)])
+    assert result.exit_code == 0
+    assert "commodore_gcr_1541_cpm_170k" in result.stdout
+    assert "apple2_gcr_nofs_140_140k" not in result.stdout

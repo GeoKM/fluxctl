@@ -119,6 +119,8 @@ def _estimate_geometry(image: SCPImage, decoder: Decoder, sample_tracks: int = 6
             continue
         track_samples += 1
         try:
+            if getattr(decoder, "encoding", None) == "gcr" and hasattr(decoder, "set_track"):
+                decoder.set_track(track_flux.track)
             track_sectors = build_track_sectors(
                 track_flux.revolutions[0],
                 decoder,
@@ -234,6 +236,7 @@ def detect_layout(image: SCPImage, encoding: str, path: Path) -> Optional[Layout
     geometry = _estimate_geometry(image, plugin.entry)
     bitstream_len = _estimate_bitstream_length(image, plugin.entry)
     flux_median = _estimate_flux_median(image)
+    decoder_conf = _average_confidence(plugin.entry, image)
 
     best: Optional[LayoutCandidate] = None
     for desc in layouts:
@@ -279,6 +282,29 @@ def detect_layout(image: SCPImage, encoding: str, path: Path) -> Optional[Layout
             else:
                 score -= 0.1
                 evidence.append(f"sector_size_mismatch={observed_size}")
+
+        if encoding == "gcr":
+            if geometry.get("track_samples") and geometry.get("tracks_with_sectors") == 0:
+                score -= 0.4
+                evidence.append("gcr_no_sectors_penalty=1")
+            if logical_tracks and logical_tracks <= 40 and desc.sides == 1:
+                score += 0.2
+                evidence.append("gcr_low_density_bonus=1")
+            if desc.layout_id.startswith("commodore_gcr_1541") and 30 <= logical_tracks <= 42:
+                score += 0.25
+                evidence.append("commodore_1541_bonus=1")
+            if desc.layout_id == "commodore_gcr_1541_cpm_170k":
+                score += 0.2
+                evidence.append("commodore_cpm_bonus=1")
+            if desc.layout_id == "apple2_gcr_nofs_140_140k" and geometry.get("track_samples") and geometry.get("tracks_with_sectors") == 0:
+                score -= 0.2
+                evidence.append("apple2_no_sector_penalty=1")
+            if desc.layout_id.startswith("commodore_gcr_1541") and geometry.get("track_samples") and geometry.get("tracks_with_sectors") == 0:
+                score += 0.2
+                evidence.append("commodore_no_sector_bonus=1")
+            if decoder_conf is not None:
+                score += 0.2 * decoder_conf
+                evidence.append(f"gcr_conf={decoder_conf:.2f}")
 
         if bitstream_len is not None and encoding == "mfm":
             if logical_tracks <= 77 and desc.tracks >= 80:
@@ -530,6 +556,30 @@ def detect_layout_any(image: SCPImage, path: Path) -> Optional[LayoutCandidate]:
                     if gcr_conf is not None or mfm_conf is not None:
                         score -= 0.4
                         evidence.append("gcr_coverage_penalty=1")
+            if logical_tracks and logical_tracks <= 40 and desc.sides == 1:
+                score += 0.2
+                evidence.append("gcr_low_density_bonus=1")
+            if desc.layout_id.startswith("commodore_gcr_1541") and 30 <= logical_tracks <= 42:
+                score += 0.25
+                evidence.append("commodore_1541_bonus=1")
+            if desc.layout_id == "commodore_gcr_1541_cpm_170k":
+                score += 0.2
+                evidence.append("commodore_cpm_bonus=1")
+            if desc.layout_id == "apple2_gcr_nofs_140_140k" and track_samples and tracks_with_sectors == 0:
+                score -= 0.2
+                evidence.append("apple2_no_sector_penalty=1")
+            if desc.layout_id.startswith("commodore_gcr_1541") and track_samples and tracks_with_sectors == 0:
+                score += 0.2
+                evidence.append("commodore_no_sector_bonus=1")
+            if logical_tracks and logical_tracks <= 40 and desc.sides == 1:
+                score += 0.2
+                evidence.append("gcr_low_density_bonus=1")
+            if desc.layout_id.startswith("commodore_gcr_1541") and 30 <= logical_tracks <= 42:
+                score += 0.25
+                evidence.append("commodore_1541_bonus=1")
+            if desc.layout_id == "commodore_gcr_1541_cpm_170k":
+                score += 0.2
+                evidence.append("commodore_cpm_bonus=1")
         if desc.encoding == "gcr" and gcr_conf is not None:
             track_samples = gcr_geometry.get("track_samples")
             tracks_with_sectors = gcr_geometry.get("tracks_with_sectors")
@@ -546,6 +596,11 @@ def detect_layout_any(image: SCPImage, path: Path) -> Optional[LayoutCandidate]:
                 evidence.append(f"gcr_coverage_factor={coverage_factor:.2f}")
             evidence.append(f"gcr_conf={gcr_conf:.2f}")
 
+        if desc.encoding == "fm":
+            geometry = fm_geometry
+            if geometry.get("track_samples") and geometry.get("tracks_with_sectors") == 0:
+                score -= 0.4
+                evidence.append("fm_no_sectors_penalty=1")
         if desc.encoding == "fm" and fm_bits is not None:
             if logical_tracks > 77:
                 continue
