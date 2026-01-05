@@ -291,7 +291,9 @@ def detect_layout(image: SCPImage, encoding: str, path: Path) -> Optional[Layout
                 if best is None or candidate.score > best.score:
                     best = candidate
                 continue
-            rate_factor = 0.5 if desc.sectors_per_track >= 15 else 1.0
+            rate_factor = 1.0
+            if desc.sectors_per_track >= 15 and not desc.layout_id.startswith("amiga_"):
+                rate_factor = 0.5
             expected_bits = int(desc.sectors_per_track * desc.sector_size * 16 * rate_factor)
             diff = abs(expected_bits - bitstream_len)
             score += 0.15 * (1.0 - (diff / max(expected_bits, bitstream_len, 1)))
@@ -299,7 +301,7 @@ def detect_layout(image: SCPImage, encoding: str, path: Path) -> Optional[Layout
             evidence.append(f"expected_bits={expected_bits}")
             if rate_factor != 1.0:
                 evidence.append(f"rate_factor={rate_factor}")
-            apply_bitstream_bonus = geometry.get("sectors_per_track") is None
+            apply_bitstream_bonus = geometry.get("sectors_per_track") is None and not desc.layout_id.startswith("amiga_")
             if apply_bitstream_bonus:
                 if bitstream_len >= 100_000:
                     if desc.sectors_per_track >= 18:
@@ -412,6 +414,8 @@ def detect_layout_any(image: SCPImage, path: Path) -> Optional[LayoutCandidate]:
 
     best: Optional[LayoutCandidate] = None
     for desc in registry.layout.values():
+        if desc.encoding not in registry.encoding:
+            continue
         score = _layout_geometry_score(desc, image, logical_tracks, heads_present)
         evidence = [
             f"expected_entries={desc.tracks * desc.sides}",
@@ -422,6 +426,9 @@ def detect_layout_any(image: SCPImage, path: Path) -> Optional[LayoutCandidate]:
 
         if desc.encoding == "mfm":
             geometry = mfm_geometry
+            if geometry.get("track_samples") and geometry.get("tracks_with_sectors") == 0:
+                score -= 0.4
+                evidence.append("mfm_no_sectors_penalty=1")
             if geometry.get("sectors_per_track") is not None:
                 observed_sectors = geometry["sectors_per_track"]
                 if _sectors_match(desc, observed_sectors):
@@ -446,6 +453,11 @@ def detect_layout_any(image: SCPImage, path: Path) -> Optional[LayoutCandidate]:
             ):
                 score += 0.3
                 evidence.append("cpm_track_bonus=1")
+        if desc.encoding == "gcr":
+            geometry = gcr_geometry
+            if geometry.get("track_samples") and geometry.get("tracks_with_sectors") == 0:
+                score -= 0.4
+                evidence.append("gcr_no_sectors_penalty=1")
         if desc.encoding == "mfm" and mfm_bits is not None:
             if logical_tracks <= 77 and desc.tracks >= 80:
                 candidate = LayoutCandidate(layout=desc, score=score, evidence=evidence)
@@ -457,13 +469,15 @@ def detect_layout_any(image: SCPImage, path: Path) -> Optional[LayoutCandidate]:
                 if best is None or candidate.score > best.score:
                     best = candidate
                 continue
-            rate_factor = 0.5 if desc.sectors_per_track >= 15 else 1.0
+            rate_factor = 1.0
+            if desc.sectors_per_track >= 15 and not desc.layout_id.startswith("amiga_"):
+                rate_factor = 0.5
             expected_bits = int(desc.sectors_per_track * desc.sector_size * 16 * rate_factor)
             diff = abs(expected_bits - mfm_bits)
             score += 0.15 * (1.0 - (diff / max(expected_bits, mfm_bits, 1)))
             evidence.append(f"bitstream_len={mfm_bits:.0f}")
             evidence.append(f"expected_bits={expected_bits}")
-            apply_bitstream_bonus = mfm_geometry.get("sectors_per_track") is None
+            apply_bitstream_bonus = mfm_geometry.get("sectors_per_track") is None and not desc.layout_id.startswith("amiga_")
             if apply_bitstream_bonus:
                 if 60_000 <= mfm_bits <= 80_000:
                     if desc.tracks >= 70 and desc.sectors_per_track in {9, 15}:
