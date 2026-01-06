@@ -104,9 +104,10 @@ class TrackSectorImage:
 
     def _chs_for_lba(self, lba: int) -> Tuple[int, int, int]:
         if self._geometry is None:
-            if lba == 0:
-                return (0, 0, 1)
-            raise FilesystemError("Geometry unknown; cannot translate LBA without FAT parameters")
+            keys = sorted(self._sector_lookup.keys())
+            if lba < 0 or lba >= len(keys):
+                raise FilesystemError("Geometry unknown; LBA exceeds available sectors")
+            return keys[lba]
         sectors_per_track, heads = self._geometry
         track = lba // (sectors_per_track * heads)
         rem = lba % (sectors_per_track * heads)
