@@ -177,11 +177,20 @@ def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
 
     layout_candidate = detect_layout(image, encoding_candidate.encoding, path)
     if layout_candidate:
-        filesystem = "cpm" if "cpm" in layout_candidate.layout.layout_id else None
-        if layout_candidate.layout.layout_id.startswith("commodore_gcr"):
-            filesystem = filesystem or "commodore_dos"
-        elif layout_candidate.layout.layout_id.startswith("ibm_mfm"):
-            filesystem = filesystem or "fat12"
+        # Try to identify filesystem by probing reconstructed image when we have a layout.
+        filesystem: Optional[str] = None
+        try:
+            image_obj = _prepare_image(path, layout_candidate.layout.layout_id, encoding_candidate.encoding)
+            fs = _detect_filesystem(image_obj)
+            if fs:
+                # Resolve filesystem plugin key
+                for key, plugin in registry.filesystem.items():
+                    if plugin.entry is fs:
+                        filesystem = key
+                        break
+                filesystem = filesystem or fs.__class__.__name__.lower()
+        except Exception:
+            filesystem = None
         candidates.append(
             CandidateFormat(
                 candidate_id=layout_candidate.layout.layout_id,
