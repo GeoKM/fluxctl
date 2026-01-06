@@ -242,6 +242,9 @@ def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
         # RX02 RT-11 fixture default.
         if lid == "generic_mfm_8inch_500k":
             filesystem = filesystem or "rt11"
+        # IBM Displaywriter FM single-sided.
+        if lid == "ibm_fm_8inch_284k":
+            filesystem = filesystem or "displaywriter"
         if filesystem == "cpm":
             if lid == "commodore_gcr_1541_cpm_170k":
                 filesystem = "c64_cpm_2_2"
