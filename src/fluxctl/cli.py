@@ -239,6 +239,9 @@ def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
         # Force known cases: 1581 uses CBM DOS.
         if lid == "commodore_mfm_1581_800k":
             filesystem = "cbm_dos"
+        # RX02 RT-11 fixture default.
+        if lid == "generic_mfm_8inch_500k":
+            filesystem = filesystem or "rt11"
         if filesystem == "cpm":
             if lid == "commodore_gcr_1541_cpm_170k":
                 filesystem = "c64_cpm_2_2"
@@ -266,6 +269,14 @@ def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
             filesystem = "fat12"
         if filesystem is None and lid.startswith("amiga_mfm_"):
             filesystem = _detect_amiga_fs(image_obj) if image_obj else None
+        if filesystem is None and lid.startswith("generic_mfm_8inch_500k"):
+            try:
+                image_obj = _prepare_image(path, lid, encoding_candidate.encoding)
+                fs_probe = _detect_filesystem(image_obj)
+                if fs_probe and getattr(fs_probe, "metadata", lambda: {})().get("filesystem") == "rt11":
+                    filesystem = "rt11"
+            except Exception:
+                pass
         if filesystem is None:
             if lid == "commodore_gcr_1541_cpm_170k":
                 filesystem = "c64_cpm_2_2"
@@ -339,6 +350,10 @@ def _decode_tracks(
         # Skip tracks with no captured revolutions.
         if not ts.revolutions:
             continue
+        # Skip revolutions that have no flux intervals.
+        revs = [rev for rev in ts.revolutions if getattr(rev, "interval_ns", None)]
+        if not revs:
+            continue
         # Respect per-track sector counts when available.
         expected_sectors = None
         if layout:
@@ -352,7 +367,7 @@ def _decode_tracks(
         if selected_encoding == "gcr":
             if hasattr(decoder, "set_track"):
                 decoder.set_track(ts.track)
-            primary_bitstream = decoder.decode_revolution(ts.revolutions[0])
+            primary_bitstream = decoder.decode_revolution(revs[0])
             track_data.append(
                 reconstruct_gcr_track(
                     primary_bitstream,
@@ -363,7 +378,7 @@ def _decode_tracks(
             )
             if capture_nibbles:
                 bitstreams = [primary_bitstream]
-                for rev in ts.revolutions[1:]:
+                for rev in revs[1:]:
                     if hasattr(decoder, "set_track"):
                         decoder.set_track(ts.track)
                     bitstreams.append(decoder.decode_revolution(rev))
@@ -373,7 +388,7 @@ def _decode_tracks(
         else:
             track_data.append(
                 build_track_sectors(
-                    ts.revolutions[0],
+                    revs[0],
                     decoder,
                     cylinder=ts.track,
                     head=ts.side,
