@@ -8,25 +8,45 @@ fluxctl is a modular toolkit for inspecting and converting floppy disk flux capt
 - Run `.venv/bin/fluxctl --help` to confirm the CLI loads and to explore available targets.
 
 ## Supported operations
-- **info/probe**: inspect SCP headers and candidate layouts (info is SCP-only).
+- **info**: inspect SCP headers and inferred geometry.
+- **probe**: detect encoding, layout, and filesystem (where detectable) for SCP and flat images.
+- **compare**: hash + byte diff two images; SCP inputs are decoded first.
 - **qc**: generate quality control reports (JSON or text).
 - **visualize**: render ASCII or SVG disk maps.
-- **extract**: detect filesystems (FAT12, simplified Amiga OFS) and extract files or raw sectors.
+- **extract**: detect filesystems and extract files or raw sectors.
 - **convert**: export to raw, IMD, ADF, D64, and G64 images.
+- **sectors/dump/patch**: per-track listing, hex dump, and simple patching helpers.
 
 ## Encodings and filesystems
-- Encodings: MFM, GCR (Commodore) via plugin registry.
-- Filesystems: FAT12, simplified Amiga OFS; raw sector dumps supported.
+- Encodings: MFM, FM, GCR (Commodore) via plugin registry.
+- Filesystems detected: FAT12, CBM DOS, CP/M (C64 CP/M 2.2, C128 CP/M 3.0), Amiga OFS/FFS, RT-11 (RX02), Displaywriter probe; raw sector dumps always supported.
 
 ## Usage examples
 ```bash
+# Quick identification
+fluxctl info disk.scp
+fluxctl probe disk.scp
+
+# Compare two images (SCP decoded on the fly)
+fluxctl compare a.scp b.img --json-out diff.json
+
+# Quality reports and maps
 fluxctl qc disk.scp --json-out qc.json
 fluxctl visualize disk.scp --format ascii --out map.txt
+
+# Export / convert
+fluxctl convert disk.scp --to d64 --out disk.d64 --layout commodore_gcr_1541_170k
+fluxctl convert disk.scp --to g64 --out disk.g64 --layout commodore_gcr_1541_170k
 fluxctl convert disk.img --to raw --out copy.img
+
+# Extraction
 fluxctl extract disk.img --list
 fluxctl extract disk.img --path FILE.TXT --out output.bin
-fluxctl convert disk.scp --to adf --out disk.adf --encoding gcr
-fluxctl convert disk.scp --to g64 --out disk.g64 --layout commodore_gcr_1541_170k
+fluxctl extract disk.scp --layout ibm_mfm_720k --path README.TXT --out readme.bin
+
+# Per-track inspection
+fluxctl sectors disk.scp --track 0 --head 0 --encoding mfm
+fluxctl dump disk.scp --layout ibm_mfm_720k --track 0 --side 0 --sector 1
 ```
 
 ### Commodore exports
