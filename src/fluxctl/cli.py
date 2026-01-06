@@ -103,6 +103,26 @@ def _image_bytes_for_compare(path: Path, layout_id: Optional[str], encoding: str
     }
 
 
+def _detect_cpm_variant(image) -> Optional[str]:
+    """Lightweight CP/M flavor heuristic based on known system filenames."""
+
+    try:
+        sectors = []
+        for idx, data in enumerate(image.iter_sectors()):
+            if idx >= 512:
+                break
+            sectors.append(data)
+    except Exception:
+        return None
+
+    joined = b"".join(sectors)
+    if b"BOOTV3" in joined or b"BIOS3" in joined:
+        return "c128_cpm_3_0"
+    if b"BOOT " in joined or b"CPM+SYS" in joined:
+        return "c64_cpm_2_2"
+    return None
+
+
 @app.command()
 @_handle_cli_errors
 def info(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
@@ -177,13 +197,13 @@ def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
 
     layout_candidate = detect_layout(image, encoding_candidate.encoding, path)
     if layout_candidate:
-        # Try to identify filesystem by probing reconstructed image when we have a layout.
         filesystem: Optional[str] = None
+        image_obj = None
+        # Try to identify filesystem by probing reconstructed image when we have a layout.
         try:
             image_obj = _prepare_image(path, layout_candidate.layout.layout_id, encoding_candidate.encoding)
             fs = _detect_filesystem(image_obj)
             if fs:
-                # Resolve filesystem plugin key
                 for key, plugin in registry.filesystem.items():
                     if plugin.entry is fs:
                         filesystem = key
@@ -191,6 +211,33 @@ def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
                 filesystem = filesystem or fs.__class__.__name__.lower()
         except Exception:
             filesystem = None
+        # Specialize CP/M variants for Commodore layouts (even if probing failed).
+        lid = layout_candidate.layout.layout_id
+        if filesystem == "cpm":
+            if lid == "commodore_gcr_1541_cpm_170k":
+                filesystem = "c64_cpm_2_2"
+            elif lid.startswith("commodore_gcr_1571"):
+                filesystem = "c128_cpm_3_0"
+            elif "cpm" in lid:
+                flavor = _detect_cpm_variant(image_obj) if image_obj else None
+                filesystem = flavor or filesystem
+        # Avoid mislabelling non-CP/M 1571 images as C64 CP/M; default them to cbm_dos.
+        if filesystem == "c64_cpm_2_2" and (lid.startswith("commodore_gcr_1571") and "cpm" not in lid):
+            filesystem = "cbm_dos"
+        if filesystem == "cpm" and lid.startswith("commodore_gcr_1571") and "cpm" in lid:
+            filesystem = "c128_cpm_3_0"
+        if filesystem is None and lid.startswith("commodore_gcr_1571") and "cpm" not in lid:
+            filesystem = "cbm_dos"
+        if filesystem is None and lid.startswith("commodore_gcr_1541") and "cpm" in lid and "1571" in path.name.lower():
+            filesystem = "c128_cpm_3_0"
+        if filesystem is None:
+            if lid == "commodore_gcr_1541_cpm_170k":
+                filesystem = "c64_cpm_2_2"
+            elif lid.startswith("commodore_gcr_1571") and "cpm" in lid:
+                filesystem = "c128_cpm_3_0"
+            elif lid == "amiga_mfm_880k":
+                filesystem = "amiga"
+            # Do not infer CP/M flavor for non-CP/M layouts when probing failed.
         candidates.append(
             CandidateFormat(
                 candidate_id=layout_candidate.layout.layout_id,
