@@ -123,6 +123,29 @@ def _detect_cpm_variant(image) -> Optional[str]:
     return None
 
 
+def _detect_amiga_fs(image) -> Optional[str]:
+    """Detect Amiga OFS vs FFS from boot block DOS type."""
+
+    try:
+        data = b""
+        for idx, sector in enumerate(image.iter_sectors()):
+            data += sector
+            if len(data) >= 4 or idx >= 1:
+                break
+        if len(data) < 4:
+            return None
+        if data[:3] != b"DOS":
+            return None
+        dostype = data[3]
+        if dostype == 0:
+            return "amiga_ofs"
+        if dostype == 1:
+            return "amiga_ffs"
+        return None
+    except Exception:
+        return None
+
+
 @app.command()
 @_handle_cli_errors
 def info(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
@@ -213,6 +236,9 @@ def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
             filesystem = None
         # Specialize CP/M variants for Commodore layouts (even if probing failed).
         lid = layout_candidate.layout.layout_id
+        # Force known cases: 1581 uses CBM DOS.
+        if lid == "commodore_mfm_1581_800k":
+            filesystem = "cbm_dos"
         if filesystem == "cpm":
             if lid == "commodore_gcr_1541_cpm_170k":
                 filesystem = "c64_cpm_2_2"
@@ -221,6 +247,14 @@ def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
             elif "cpm" in lid:
                 flavor = _detect_cpm_variant(image_obj) if image_obj else None
                 filesystem = flavor or filesystem
+        # If layout looks like 1541 CP/M but CP/M signatures are CP/M 3.0, map accordingly.
+        if filesystem == "cpm" and lid == "commodore_gcr_1541_170k":
+            flavor = _detect_cpm_variant(image_obj) if image_obj else None
+            if flavor:
+                filesystem = flavor
+        # 1571 single-sided CP/M images reuse the 1541 layout id but should be tagged as C128 CP/M.
+        if filesystem in (None, "cpm") and lid == "commodore_gcr_1541_170k" and "cpm" in path.name.lower():
+            filesystem = "c128_cpm_3_0"
         # Avoid mislabelling non-CP/M 1571 images as C64 CP/M; default them to cbm_dos.
         if filesystem == "c64_cpm_2_2" and (lid.startswith("commodore_gcr_1571") and "cpm" not in lid):
             filesystem = "cbm_dos"
@@ -228,15 +262,17 @@ def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
             filesystem = "c128_cpm_3_0"
         if filesystem is None and lid.startswith("commodore_gcr_1571") and "cpm" not in lid:
             filesystem = "cbm_dos"
-        if filesystem is None and lid.startswith("commodore_gcr_1541") and "cpm" in lid and "1571" in path.name.lower():
-            filesystem = "c128_cpm_3_0"
+        if filesystem is None and lid.startswith("ibm_mfm"):
+            filesystem = "fat12"
+        if filesystem is None and lid.startswith("amiga_mfm_"):
+            filesystem = _detect_amiga_fs(image_obj) if image_obj else None
         if filesystem is None:
             if lid == "commodore_gcr_1541_cpm_170k":
                 filesystem = "c64_cpm_2_2"
             elif lid.startswith("commodore_gcr_1571") and "cpm" in lid:
                 filesystem = "c128_cpm_3_0"
             elif lid == "amiga_mfm_880k":
-                filesystem = "amiga"
+                filesystem = "amiga_ofs"
             # Do not infer CP/M flavor for non-CP/M layouts when probing failed.
         candidates.append(
             CandidateFormat(

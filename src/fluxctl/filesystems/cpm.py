@@ -14,7 +14,8 @@ def _looks_like_cpm_entry(entry: bytes) -> bool:
     if len(entry) < 32:
         return False
     user = entry[0]
-    if user > 31:
+    # CP/M 3 may set high bits for attributes; tolerate up to 0x7F.
+    if user >= 0x80:
         return False
     name = entry[1:12]
     if not name:
@@ -33,13 +34,24 @@ class CPMFilesystem(Filesystem):
         self._probed = False
 
     def probe(self, image: SectorImage) -> bool:
+        """Heuristic CP/M probe: scan early sectors for directory entries."""
+
         entries_checked = 0
         matches = 0
         empty = 0
-        for lba in range(0, 64):
-            try:
-                data = image.read_sector(lba)
-            except FilesystemError:
+
+        try:
+            sector_iter = image.iter_sectors()
+        except Exception:
+            # Fallback to LBA reads if iter_sectors not available.
+            def sector_iter():
+                idx = 0
+                while True:
+                    yield image.read_sector(idx)
+                    idx += 1
+
+        for idx, data in enumerate(sector_iter):
+            if idx >= 2048:  # generous cap to cover skewed directories
                 break
             for offset in range(0, len(data), 32):
                 entry = data[offset : offset + 32]
@@ -51,8 +63,9 @@ class CPMFilesystem(Filesystem):
                 entries_checked += 1
                 if _looks_like_cpm_entry(entry):
                     matches += 1
-            if entries_checked >= 16:
+            if entries_checked >= 64 and (matches >= 2 or empty >= 16):
                 break
+
         self._probed = matches >= 2 or (matches >= 1 and empty >= 8)
         return self._probed
 
@@ -64,4 +77,3 @@ class CPMFilesystem(Filesystem):
 
     def metadata(self) -> Dict[str, Any]:
         return {"filesystem": "cpm", "probed": self._probed}
-
