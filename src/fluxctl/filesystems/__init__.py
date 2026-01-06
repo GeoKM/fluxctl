@@ -142,6 +142,8 @@ def load_builtin_filesystems() -> List[PluginInfo]:
     from .cbm_dos import CBMDOS
     from .cpm import CPMFilesystem
     from .rt11 import RT11Filesystem
+    from .displaywriter import DisplaywriterFS
+    from .rt11 import RT11Filesystem
 
     registry.register_filesystem(
         "fat12",
@@ -180,12 +182,30 @@ def load_builtin_filesystems() -> List[PluginInfo]:
         ),
     )
     registry.register_filesystem(
+        "displaywriter",
+        PluginInfo(
+            name="Displaywriter Filesystem",
+            version="0.1",
+            entry=DisplaywriterFS(),
+            description="IBM Displaywriter mixed-sector FM format probe",
+        ),
+    )
+    registry.register_filesystem(
         "cpm",
         PluginInfo(
             name="CP/M Filesystem",
             version="0.1",
             entry=CPMFilesystem(),
             description="CP/M filesystem probe",
+        ),
+    )
+    registry.register_filesystem(
+        "rt11",
+        PluginInfo(
+            name="RT-11 Filesystem",
+            version="0.1",
+            entry=RT11Filesystem(),
+            description="DEC RT-11 filesystem probe",
         ),
     )
     return list(registry.filesystem.values())
