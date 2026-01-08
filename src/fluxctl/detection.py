@@ -8,6 +8,7 @@ from typing import Iterable, Optional
 
 from .decoding import Decoder
 from .exceptions import FluxDecodeError
+from .geohints import LayoutHint
 from .models import Bitstream, LayoutDescriptor, SCPImage
 from .plugins import registry
 from .sector.reconstruct import build_track_sectors
@@ -81,10 +82,12 @@ def _average_confidence(decoder: Decoder, image: SCPImage, sample_tracks: int = 
     return sum(confidences) / len(confidences)
 
 
-def detect_encoding(image: SCPImage, path: Optional[Path] = None) -> Optional[EncodingCandidate]:
+def detect_encoding(
+    image: SCPImage, path: Optional[Path] = None, hint: LayoutHint | None = None
+) -> Optional[EncodingCandidate]:
     """Return the best matching decoder based on layout scoring and confidence."""
 
-    layout_candidate = detect_layout_any(image, path or Path(""))
+    layout_candidate = detect_layout_any(image, path or Path(""), hint=hint)
     if layout_candidate:
         return EncodingCandidate(
             encoding=layout_candidate.layout.encoding,
@@ -172,6 +175,38 @@ def _layout_geometry_score(
     return max(0.0, min(1.0, score + 0.05 * heads_score))
 
 
+def _apply_layout_hint(desc: LayoutDescriptor, hint: LayoutHint | None, score: float, evidence: list[str]) -> float:
+    """Adjust matching score based on externally provided geometry hints."""
+
+    if not hint:
+        return score
+    if hint.tracks is not None:
+        if desc.tracks == hint.tracks:
+            score += 0.25
+            evidence.append(f"hint_tracks_match={hint.tracks}")
+        else:
+            score -= 0.05
+            evidence.append(f"hint_tracks_mismatch={hint.tracks}")
+    if hint.sides is not None:
+        if desc.sides == hint.sides:
+            score += 0.15
+            evidence.append(f"hint_sides_match={hint.sides}")
+        else:
+            score -= 0.05
+            evidence.append(f"hint_sides_mismatch={hint.sides}")
+    if hint.interface:
+        evidence.append(f"hint_interface={hint.interface}")
+    if hint.loader:
+        evidence.append(f"hint_loader={hint.loader}")
+    if hint.total_size is not None:
+        evidence.append(f"hint_total_size={hint.total_size}")
+    if hint.total_sectors is not None:
+        evidence.append(f"hint_total_sectors={hint.total_sectors}")
+    for key, value in hint.metadata.items():
+        evidence.append(f"{key}={value}")
+    return score
+
+
 def _sectors_match(desc: LayoutDescriptor, observed: int) -> bool:
     if desc.track_sectors:
         return observed in desc.track_sectors
@@ -218,7 +253,9 @@ def _estimate_flux_median(image: SCPImage, sample_tracks: int = 3) -> Optional[f
     return medians[len(medians) // 2]
 
 
-def detect_layout(image: SCPImage, encoding: str, path: Path) -> Optional[LayoutCandidate]:
+def detect_layout(
+    image: SCPImage, encoding: str, path: Path, hint: LayoutHint | None = None
+) -> Optional[LayoutCandidate]:
     """Pick the most likely layout for an image and encoding."""
 
     layouts = [desc for desc in registry.layout.values() if desc.encoding == encoding]
@@ -308,12 +345,14 @@ def detect_layout(image: SCPImage, encoding: str, path: Path) -> Optional[Layout
 
         if bitstream_len is not None and encoding == "mfm":
             if logical_tracks <= 77 and desc.tracks >= 80:
-                candidate = LayoutCandidate(layout=desc, score=score, evidence=evidence)
+                adjusted_score = _apply_layout_hint(desc, hint, score, evidence)
+                candidate = LayoutCandidate(layout=desc, score=adjusted_score, evidence=evidence)
                 if best is None or candidate.score > best.score:
                     best = candidate
                 continue
             if desc.sector_size <= 128 and desc.sectors_per_track >= 20 and logical_tracks >= 79:
-                candidate = LayoutCandidate(layout=desc, score=score, evidence=evidence)
+                adjusted_score = _apply_layout_hint(desc, hint, score, evidence)
+                candidate = LayoutCandidate(layout=desc, score=adjusted_score, evidence=evidence)
                 if best is None or candidate.score > best.score:
                     best = candidate
                 continue
@@ -374,7 +413,8 @@ def detect_layout(image: SCPImage, encoding: str, path: Path) -> Optional[Layout
                 score += 0.25
                 evidence.append("cpm_fs_probe=1")
 
-        candidate = LayoutCandidate(layout=desc, score=score, evidence=evidence)
+        adjusted_score = _apply_layout_hint(desc, hint, score, evidence)
+        candidate = LayoutCandidate(layout=desc, score=adjusted_score, evidence=evidence)
         if best is None or candidate.score > best.score:
             best = candidate
 
@@ -411,7 +451,7 @@ def _probe_cpm_filesystem(image: SCPImage, decoder: Decoder, desc: LayoutDescrip
     return CPMFilesystem().probe(image_view)
 
 
-def detect_layout_any(image: SCPImage, path: Path) -> Optional[LayoutCandidate]:
+def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = None) -> Optional[LayoutCandidate]:
     """Pick the most likely layout across all encodings."""
 
     if not registry.layout:
@@ -486,12 +526,14 @@ def detect_layout_any(image: SCPImage, path: Path) -> Optional[LayoutCandidate]:
                 evidence.append("gcr_no_sectors_penalty=1")
         if desc.encoding == "mfm" and mfm_bits is not None:
             if logical_tracks <= 77 and desc.tracks >= 80:
-                candidate = LayoutCandidate(layout=desc, score=score, evidence=evidence)
+                adjusted_score = _apply_layout_hint(desc, hint, score, evidence)
+                candidate = LayoutCandidate(layout=desc, score=adjusted_score, evidence=evidence)
                 if best is None or candidate.score > best.score:
                     best = candidate
                 continue
             if desc.sector_size <= 128 and desc.sectors_per_track >= 20 and logical_tracks >= 79:
-                candidate = LayoutCandidate(layout=desc, score=score, evidence=evidence)
+                adjusted_score = _apply_layout_hint(desc, hint, score, evidence)
+                candidate = LayoutCandidate(layout=desc, score=adjusted_score, evidence=evidence)
                 if best is None or candidate.score > best.score:
                     best = candidate
                 continue
@@ -650,7 +692,8 @@ def detect_layout_any(image: SCPImage, path: Path) -> Optional[LayoutCandidate]:
                     score += 0.05
                     evidence.append("flux_rate_bonus=low")
 
-        candidate = LayoutCandidate(layout=desc, score=score, evidence=evidence)
+        adjusted_score = _apply_layout_hint(desc, hint, score, evidence)
+        candidate = LayoutCandidate(layout=desc, score=adjusted_score, evidence=evidence)
         if best is None or candidate.score > best.score:
             best = candidate
 
