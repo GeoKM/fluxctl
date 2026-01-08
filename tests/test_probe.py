@@ -19,6 +19,8 @@ FIXTURE_1541_CPM_170K = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-S
 FIXTURE_D64 = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64-170K.d64")
 FIXTURE_IMG_720K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.img")
 FIXTURE_ADF = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.adf")
+FIXTURE_IMD_RX02 = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM-RT11-500K.imd")
+FIXTURE_IMD_8IN_1200K = Path("tests/fixtures/8inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-1200K.imd")
 
 
 def test_probe_includes_gcr_candidates() -> None:
@@ -130,3 +132,21 @@ def test_probe_supports_flat_adf_images() -> None:
     payload = json.loads(result.stdout)
     assert payload[0]["layout_id"] == "amiga_mfm_880k"
     assert payload[0]["filesystem"] is not None
+
+
+def test_probe_supports_imd_rx02() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_IMD_RX02)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "generic_mfm_8inch_500k"
+    assert payload[0]["filesystem"] == "rt11"
+
+
+def test_probe_supports_imd_ibm_1200k() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_IMD_8IN_1200K)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "ibm_mfm_8inch_1200k"
+    assert payload[0]["filesystem"] == "fat12"
