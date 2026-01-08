@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import typer
 
@@ -18,19 +18,21 @@ from .exceptions import ExportError, FluxDecodeError, FluxctlError
 from .exporters import load_builtin_exporters
 from .filesystems import Filesystem, RawSectorImage, TrackSectorImage, load_builtin_filesystems
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
-from .models import Bitstream, CandidateFormat, ProvenanceRecord
+from .models import Bitstream, CandidateFormat, LayoutDescriptor, ProvenanceRecord
 from .plugins import registry
 from .provenance import write_provenance
 from .reports.map import build_disk_map, render_ascii, render_svg
 from .reports.qc import build_qc_report, write_qc_report_json, write_qc_report_text
 from .scp import parse_scp, sha256_file
-from .sector.models import TrackNibbles, TrackSectors
+from .sector.models import Sector, TrackNibbles, TrackSectors
 from .sector.reconstruct import build_track_sectors
 from .sector.reconstruct_gcr import (
     extract_best_gcr_nibble_stream,
     reconstruct_gcr_track,
     score_gcr_alignment,
 )
+from .external.hxc import probe_hxcfe
+from .geohints import LayoutHint
 
 app = typer.Typer(add_completion=False, help="Fluxctl modular SCP toolkit")
 provenance_app = typer.Typer(help="Inspect provenance records")
@@ -82,6 +84,15 @@ def _resolve_encoding_for_compare(path: Path, encoding: str) -> str:
     if candidate is None:
         raise FluxDecodeError("Unable to infer encoding for SCP input; specify --encoding-a/--encoding-b")
     return candidate.encoding
+
+
+def _maybe_hxc_hint(path: Path, hxcfe: Optional[Path]) -> LayoutHint | None:
+    """Run HxC CLI when requested and convert the result into a layout hint."""
+
+    if not hxcfe:
+        return None
+    metadata = probe_hxcfe(path, hxcfe)
+    return metadata.to_layout_hint()
 
 
 def _image_bytes_for_compare(path: Path, layout_id: Optional[str], encoding: str) -> tuple[bytes, dict]:
@@ -148,7 +159,10 @@ def _detect_amiga_fs(image) -> Optional[str]:
 
 @app.command()
 @_handle_cli_errors
-def info(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
+def info(
+    path: Path = typer.Argument(..., exists=True, readable=True),
+    hxcfe: Optional[Path] = typer.Option(None, "--hxcfe", help="Path to an hxcfe binary for hints."),
+) -> None:
     """Print basic SCP information from .scp files only."""
     scp = parse_scp(path)
     heads_with_flux = {
@@ -156,9 +170,12 @@ def info(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
     }
     load_builtin_decoders()
     load_builtin_layouts()
-    encoding_candidate = detect_encoding(scp, path=path)
+    hxc_hint = _maybe_hxc_hint(path, hxcfe)
+    encoding_candidate = detect_encoding(scp, path=path, hint=hxc_hint)
     layout_candidate = (
-        detect_layout(scp, encoding_candidate.encoding, path) if encoding_candidate else None
+        detect_layout(scp, encoding_candidate.encoding, path, hint=hxc_hint)
+        if encoding_candidate
+        else None
     )
     track_ids = sorted({track.track for track in scp.tracks})
     track_count = len(track_ids)
@@ -196,14 +213,23 @@ def info(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
 
 @app.command()
 @_handle_cli_errors
-def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
+def probe(
+    path: Path = typer.Argument(..., exists=True, readable=True),
+    hxcfe: Optional[Path] = typer.Option(None, "--hxcfe", help="Path to an hxcfe binary for hints."),
+) -> None:
     """Run lightweight detection and print candidate layouts and decoders."""
     load_builtin_decoders()
     load_builtin_layouts()
+    ext = path.suffix.lower()
+    if ext != ".scp":
+        candidates = _probe_flat_image(path)
+        typer.echo(json.dumps([c.__dict__ for c in candidates], indent=2))
+        return
     image = parse_scp(path)
+    hxc_hint = _maybe_hxc_hint(path, hxcfe)
     candidates: list[CandidateFormat] = []
 
-    encoding_candidate = detect_encoding(image, path=path)
+    encoding_candidate = detect_encoding(image, path=path, hint=hxc_hint)
     if encoding_candidate is None:
         candidates.append(
             CandidateFormat(
@@ -218,7 +244,9 @@ def probe(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
         typer.echo(json.dumps([c.__dict__ for c in candidates], indent=2))
         raise typer.Exit(code=2)
 
-    layout_candidate = detect_layout(image, encoding_candidate.encoding, path)
+    layout_candidate = detect_layout(
+        image, encoding_candidate.encoding, path, hint=hxc_hint
+    )
     if layout_candidate:
         filesystem: Optional[str] = None
         image_obj = None
@@ -432,6 +460,157 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
     return RawSectorImage(path.read_bytes())
 
 
+FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
+    ".d64": ("commodore_gcr_1541_170k", "commodore_gcr_1541_cpm_170k"),
+    ".d71": ("commodore_gcr_1571_341k",),
+    ".d81": ("commodore_mfm_1581_800k",),
+    ".adf": ("amiga_mfm_880k",),
+    ".img": (
+        "ibm_mfm_1440k",
+        "ibm_mfm_720k",
+        "ibm_mfm_360k",
+        "ibm_mfm_1200k",
+    ),
+}
+
+SECTOR_SIZE_TO_CODE = {128: 0, 256: 1, 512: 2, 1024: 3, 2048: 4, 4096: 5}
+
+
+def _flat_layout_candidates(extension: str) -> list[LayoutDescriptor]:
+    order: list[LayoutDescriptor] = []
+    seen: set[str] = set()
+    preferred_ids = FLAT_LAYOUT_PREFERENCES.get(extension, ())
+    for lid in preferred_ids:
+        layout = registry.layout.get(lid)
+        if layout:
+            order.append(layout)
+            seen.add(layout.layout_id)
+    if extension in {".d64", ".d71"}:
+        extras = [layout for layout in registry.layout.values() if layout.encoding == "gcr" and layout.sector_size == 256]
+    elif extension in {".d81", ".img", ".adf"}:
+        extras = [layout for layout in registry.layout.values() if layout.encoding == "mfm" and layout.sector_size == 512]
+    else:
+        extras = []
+    for layout in extras:
+        if layout.layout_id not in seen:
+            order.append(layout)
+            seen.add(layout.layout_id)
+    return order
+
+
+def _default_bytes_per_sector(extension: str) -> int:
+    if extension in {".d64", ".d71"}:
+        return 256
+    return 512
+
+
+def _sectors_from_blob(layout: LayoutDescriptor, data: bytes) -> Optional[list[TrackSectors]]:
+    if layout.sector_size <= 0:
+        return None
+    size_code = SECTOR_SIZE_TO_CODE.get(layout.sector_size)
+    if size_code is None:
+        return None
+    if layout.tracks <= 0 or layout.sides <= 0:
+        return None
+    sectors_per_cylinder = list(layout.track_sectors) if layout.track_sectors else [layout.sectors_per_track] * layout.tracks
+    if len(sectors_per_cylinder) < layout.tracks:
+        sectors_per_cylinder.extend([layout.sectors_per_track] * (layout.tracks - len(sectors_per_cylinder)))
+    total_sectors = sum(sectors_per_cylinder) * layout.sides
+    expected_bytes = total_sectors * layout.sector_size
+    if len(data) < expected_bytes:
+        return None
+    tracks: list[TrackSectors] = []
+    offset = 0
+    for cylinder in range(layout.tracks):
+        sectors_on_track = sectors_per_cylinder[cylinder]
+        for head in range(layout.sides):
+            sectors: list[Sector] = []
+            for sector_id in range(1, sectors_on_track + 1):
+                chunk = data[offset : offset + layout.sector_size]
+                if len(chunk) < layout.sector_size:
+                    return None
+                sectors.append(
+                    Sector(
+                        cylinder=cylinder,
+                        head=head,
+                        sector_id=sector_id,
+                        size_code=size_code,
+                        data=chunk,
+                        crc_ok=True,
+                        confidence=1.0,
+                        deleted=False,
+                    )
+                )
+                offset += layout.sector_size
+            tracks.append(TrackSectors(track=cylinder, head=head, sectors=sectors))
+    return tracks
+
+
+def _filesystem_name_for_image(image) -> Optional[str]:
+    probe_fs = _detect_filesystem(image)
+    if probe_fs is None:
+        return None
+    for key, plugin in registry.filesystem.items():
+        if plugin.entry is probe_fs:
+            return key
+    return probe_fs.__class__.__name__.lower()
+
+
+def _probe_flat_image(path: Path) -> list[CandidateFormat]:
+    ext = path.suffix.lower()
+    data = path.read_bytes()
+    size = len(data)
+    if ext == ".imd":
+        evidence = [f"format=imd", f"size={size}"]
+        return [
+            CandidateFormat(
+                candidate_id="imd",
+                encoding=None,
+                layout_id=None,
+                filesystem=None,
+                score=0.0,
+                evidence=evidence,
+            )
+        ]
+
+    evidence: list[str] = [f"size={size}"]
+    for layout in _flat_layout_candidates(ext):
+        track_data = _sectors_from_blob(layout, data)
+        if track_data is None:
+            continue
+        image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
+        image_obj.layout = layout
+        if not layout.track_sectors:
+            image_obj.set_geometry(layout.sectors_per_track, layout.sides)
+        filesystem_name = _filesystem_name_for_image(image_obj)
+        if filesystem_name:
+            return [
+                CandidateFormat(
+                    candidate_id=layout.layout_id,
+                    encoding=layout.encoding,
+                    layout_id=layout.layout_id,
+                    filesystem=filesystem_name,
+                    score=1.0,
+                    evidence=evidence + [
+                        f"layout={layout.layout_id}",
+                        f"filesystem={filesystem_name}",
+                    ],
+                )
+            ]
+
+    fallback_fs = _filesystem_name_for_image(RawSectorImage(data, bytes_per_sector=_default_bytes_per_sector(ext)))
+    fallback_evidence = evidence + ([f"filesystem={fallback_fs}"] if fallback_fs else [])
+    fallback_candidate = CandidateFormat(
+        candidate_id=f"flat_{ext.lstrip('.')}",
+        encoding=None,
+        layout_id=None,
+        filesystem=fallback_fs,
+        score=0.0,
+        evidence=fallback_evidence,
+    )
+    return [fallback_candidate]
+
+
 def _is_lossy(track_data: Optional[list[TrackSectors]], exporter_metadata: dict) -> bool:
     if not track_data:
         return bool(exporter_metadata.get("padded_missing"))
@@ -554,6 +733,7 @@ def qc(
     path: Path = typer.Argument(..., exists=True, readable=True),
     encoding: str = typer.Option("auto", "--encoding", help="Bitstream encoding (auto, mfm, gcr)"),
     layout: Optional[str] = typer.Option(None, "--layout", help="Layout identifier for geometry hints"),
+    hxcfe: Optional[Path] = typer.Option(None, "--hxcfe", help="Path to an hxcfe binary for hints."),
     json_out: Optional[Path] = typer.Option(None, "--json-out", help="Write QC results to a JSON file"),
     text_out: Optional[Path] = typer.Option(None, "--text-out", help="Write QC results to a text file"),
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Override provenance output path"),
@@ -564,8 +744,9 @@ def qc(
     load_builtin_decoders()
     load_builtin_layouts()
     selected_encoding = encoding.lower()
+    hxc_hint = _maybe_hxc_hint(path, hxcfe)
     if selected_encoding == "auto":
-        encoding_candidate = detect_encoding(scp, path=path)
+        encoding_candidate = detect_encoding(scp, path=path, hint=hxc_hint)
         if encoding_candidate is None:
             raise FluxDecodeError("Unable to infer encoding; specify --encoding")
         selected_encoding = encoding_candidate.encoding
@@ -573,7 +754,7 @@ def qc(
     decoder = _get_decoder(selected_encoding)
     layout_desc = ensure_layout_loaded(layout) if layout else None
     if layout_desc is None:
-        layout_candidate = detect_layout(scp, selected_encoding, path)
+        layout_candidate = detect_layout(scp, selected_encoding, path, hint=hxc_hint)
         layout_desc = layout_candidate.layout if layout_candidate else None
     track_step = infer_track_step([track.track for track in scp.tracks])
     report = build_qc_report(scp, decoder, layout=layout_desc, track_step=track_step)
