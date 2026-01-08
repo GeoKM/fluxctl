@@ -28,6 +28,18 @@ def test_discover_fixtures_rejects_unknown_root(tmp_path: Path) -> None:
         discover_fixtures(tmp_path / "missing")
 
 
+def test_discover_fixtures_ignores_malformed_entries(tmp_path: Path) -> None:
+    malformed = tmp_path / "DEC-RX02-DSDD-MFM.scp"
+    malformed.write_bytes(b"dummy")
+    good = tmp_path / "IBM-Generic-DSDD-MFM-IBMPC-360K.scp"
+    good.write_bytes(b"dummy")
+
+    fixtures = discover_fixtures(tmp_path)
+
+    assert len(fixtures) == 1
+    assert fixtures[0].path == good
+
+
 def test_fixture_parsing_rejects_short_names(tmp_path: Path) -> None:
     bad = tmp_path / "bad.scp"
     bad.write_bytes(b"dummy")

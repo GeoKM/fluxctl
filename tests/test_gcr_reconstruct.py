@@ -28,7 +28,7 @@ def _build_sector_bits(sector_id: int, data: bytes, corrupt_checksum: bool = Fal
         data_checksum ^= value
     if corrupt_checksum:
         data_checksum ^= 0xFF
-    data_block = bytes([0x07]) + data + bytes([data_checksum, 0x00, 0x00])
+    data_block = bytes([0x07]) + data + bytes([data_checksum, 0x0F, 0x0F])
 
     bits: list[int] = []
     bits.extend([1] * 45)  # header sync
