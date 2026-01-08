@@ -125,5 +125,9 @@ def discover_fixtures(base_dir: Path) -> List[FixtureDescriptor]:
             continue
         if path.suffix.lower() not in FIXTURE_EXTENSIONS:
             continue
-        descriptors.append(FixtureDescriptor.from_path(path))
+        try:
+            descriptors.append(FixtureDescriptor.from_path(path))
+        except FixtureDiscoveryError:
+            # Ignore files that don't follow the expected naming pattern so well-formed fixtures still load
+            continue
     return descriptors
