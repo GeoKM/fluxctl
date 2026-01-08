@@ -17,6 +17,7 @@ from .detection import detect_encoding, detect_layout, infer_track_step, logical
 from .exceptions import ExportError, FluxDecodeError, FluxctlError
 from .exporters import load_builtin_exporters
 from .filesystems import Filesystem, RawSectorImage, TrackSectorImage, load_builtin_filesystems
+from .imd import load_imd_image
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from .models import Bitstream, CandidateFormat, LayoutDescriptor, ProvenanceRecord
 from .plugins import registry
@@ -452,6 +453,11 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
         if layout_desc:
             image.layout = layout_desc
         return image
+    if path.suffix.lower() == ".imd":
+        tracks, geom, _meta = load_imd_image(path)
+        image = TrackSectorImage(tracks, bytes_per_sector=geom.sector_size)
+        image.set_geometry(geom.spt or geom.tracks, geom.heads)
+        return image
     if layout_desc:
         track_data = _decode_tracks(path, layout_id, encoding=encoding)
         image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
@@ -465,6 +471,15 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
     ".d71": ("commodore_gcr_1571_341k",),
     ".d81": ("commodore_mfm_1581_800k",),
     ".adf": ("amiga_mfm_880k",),
+    ".imd": (
+        "generic_mfm_8inch_500k",
+        "ibm_mfm_8inch_1200k",
+        "ibm_fm_8inch_284k",
+        "ibm_mfm_1200k",
+        "ibm_mfm_720k",
+        "ibm_mfm_360k",
+        "ibm_mfm_1440k",
+    ),
     ".img": (
         "ibm_mfm_1440k",
         "ibm_mfm_720k",
@@ -489,6 +504,12 @@ def _flat_layout_candidates(extension: str) -> list[LayoutDescriptor]:
         extras = [layout for layout in registry.layout.values() if layout.encoding == "gcr" and layout.sector_size == 256]
     elif extension in {".d81", ".img", ".adf"}:
         extras = [layout for layout in registry.layout.values() if layout.encoding == "mfm" and layout.sector_size == 512]
+    elif extension == ".imd":
+        extras = [
+            layout
+            for layout in registry.layout.values()
+            if layout.encoding in {"mfm", "fm"} and layout.sector_size in {128, 256, 512, 1024}
+        ]
     else:
         extras = []
     for layout in extras:
@@ -501,10 +522,22 @@ def _flat_layout_candidates(extension: str) -> list[LayoutDescriptor]:
 def _default_bytes_per_sector(extension: str) -> int:
     if extension in {".d64", ".d71"}:
         return 256
+    if extension == ".imd":
+        return 512
     return 512
 
 
-def _sectors_from_blob(layout: LayoutDescriptor, data: bytes) -> Optional[list[TrackSectors]]:
+def _expected_bytes_for_layout(layout: LayoutDescriptor) -> int:
+    if layout.tracks <= 0 or layout.sides <= 0 or layout.sector_size <= 0:
+        return 0
+    sectors_per_cylinder = list(layout.track_sectors) if layout.track_sectors else [layout.sectors_per_track] * layout.tracks
+    if len(sectors_per_cylinder) < layout.tracks:
+        sectors_per_cylinder.extend([layout.sectors_per_track] * (layout.tracks - len(sectors_per_cylinder)))
+    total_sectors = sum(sectors_per_cylinder) * layout.sides
+    return total_sectors * layout.sector_size
+
+
+def _sectors_from_blob(layout: LayoutDescriptor, data: bytes, *, allow_pad: bool = False) -> Optional[list[TrackSectors]]:
     if layout.sector_size <= 0:
         return None
     size_code = SECTOR_SIZE_TO_CODE.get(layout.sector_size)
@@ -518,7 +551,12 @@ def _sectors_from_blob(layout: LayoutDescriptor, data: bytes) -> Optional[list[T
     total_sectors = sum(sectors_per_cylinder) * layout.sides
     expected_bytes = total_sectors * layout.sector_size
     if len(data) < expected_bytes:
-        return None
+        if not allow_pad:
+            return None
+        missing_ratio = 1 - (len(data) / expected_bytes)
+        if missing_ratio > 0.6:
+            return None
+        data = data.ljust(expected_bytes, b"\x00")
     tracks: list[TrackSectors] = []
     offset = 0
     for cylinder in range(layout.tracks):
@@ -558,24 +596,65 @@ def _filesystem_name_for_image(image) -> Optional[str]:
 
 def _probe_flat_image(path: Path) -> list[CandidateFormat]:
     ext = path.suffix.lower()
-    data = path.read_bytes()
-    size = len(data)
+    imd_tracks = None
+    imd_geom = None
     if ext == ".imd":
-        evidence = [f"format=imd", f"size={size}"]
-        return [
-            CandidateFormat(
-                candidate_id="imd",
-                encoding=None,
-                layout_id=None,
-                filesystem=None,
-                score=0.0,
-                evidence=evidence,
-            )
+        imd_tracks, imd_geom, imd_meta = load_imd_image(path)
+        data = bytearray(imd_geom.tracks * imd_geom.heads * imd_geom.spt * imd_geom.sector_size)
+        for ts in imd_tracks:
+            for sec in ts.sectors:
+                off = ((ts.track * imd_geom.heads + ts.head) * imd_geom.spt + (sec.sector_id - 1)) * imd_geom.sector_size
+                # Ensure we never change the bytearray length even when sector sizes vary.
+                payload = (sec.data + b"\x00" * imd_geom.sector_size)[: imd_geom.sector_size]
+                data[off : off + imd_geom.sector_size] = payload
+        size = len(data)
+        evidence = [
+            "format=imd",
+            f"size={size}",
+            f"geom={imd_geom.tracks}x{imd_geom.heads}x{imd_geom.spt}x{imd_geom.sector_size}",
         ]
+        data_bytes = bytes(data)
+    else:
+        data_bytes = path.read_bytes()
+        size = len(data_bytes)
+        evidence = [f"size={size}"]
 
-    evidence: list[str] = [f"size={size}"]
-    for layout in _flat_layout_candidates(ext):
-        track_data = _sectors_from_blob(layout, data)
+    ext_for_layouts = ".imd" if ext == ".imd" else ext
+    if ext == ".imd" and imd_geom:
+        # Fast-path common IMD geometries.
+        if imd_geom.sector_size == 128 and imd_geom.spt == 26 and imd_geom.tracks >= 77:
+            lid = "generic_mfm_8inch_500k"
+            layout = registry.layout.get(lid)
+            return [
+                CandidateFormat(
+                    candidate_id=lid,
+                    encoding=layout.encoding if layout else "mfm",
+                    layout_id=lid,
+                    filesystem="rt11",
+                    score=1.0,
+                    evidence=evidence + [f"layout={lid}", "filesystem=rt11"],
+                )
+            ]
+        if imd_geom.sector_size == 512 and imd_geom.spt in {15, 16} and imd_geom.heads == 2 and imd_geom.tracks >= 77:
+            lid = "ibm_mfm_8inch_1200k" if registry.layout.get("ibm_mfm_8inch_1200k") else "ibm_mfm_1200k"
+            layout = registry.layout.get(lid)
+            return [
+                CandidateFormat(
+                    candidate_id=lid,
+                    encoding=layout.encoding if layout else "mfm",
+                    layout_id=lid,
+                    filesystem="fat12",
+                    score=1.0,
+                    evidence=evidence + [f"layout={lid}", "filesystem=fat12"],
+                )
+            ]
+    best_candidate: Optional[CandidateFormat] = None
+    best_distance = None
+    for layout in _flat_layout_candidates(ext_for_layouts):
+        expected_bytes = _expected_bytes_for_layout(layout)
+        if expected_bytes <= 0:
+            continue
+        track_data = _sectors_from_blob(layout, data_bytes, allow_pad=ext_for_layouts == ".imd")
         if track_data is None:
             continue
         image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
@@ -583,25 +662,41 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
         if not layout.track_sectors:
             image_obj.set_geometry(layout.sectors_per_track, layout.sides)
         filesystem_name = _filesystem_name_for_image(image_obj)
+        layout_evidence = evidence + [f"layout={layout.layout_id}"]
         if filesystem_name:
-            return [
-                CandidateFormat(
-                    candidate_id=layout.layout_id,
-                    encoding=layout.encoding,
-                    layout_id=layout.layout_id,
-                    filesystem=filesystem_name,
-                    score=1.0,
-                    evidence=evidence + [
-                        f"layout={layout.layout_id}",
-                        f"filesystem={filesystem_name}",
-                    ],
-                )
-            ]
+            layout_evidence.append(f"filesystem={filesystem_name}")
+        distance = abs(expected_bytes - len(data_bytes))
+        candidate = CandidateFormat(
+            candidate_id=layout.layout_id,
+            encoding=layout.encoding,
+            layout_id=layout.layout_id,
+            filesystem=filesystem_name,
+            score=1.0,
+            evidence=layout_evidence,
+        )
+        if best_candidate is None or (best_distance is not None and distance < best_distance) or best_distance is None:
+            best_candidate = candidate
+            best_distance = distance
+            # exact size match wins immediately
+            if distance == 0:
+                break
 
-    fallback_fs = _filesystem_name_for_image(RawSectorImage(data, bytes_per_sector=_default_bytes_per_sector(ext)))
+    if best_candidate:
+        return [best_candidate]
+
+    bytes_per_sector = imd_geom.sector_size if imd_geom else _default_bytes_per_sector(ext_for_layouts)
+    fallback_image = (
+        TrackSectorImage(imd_tracks, bytes_per_sector=bytes_per_sector)
+        if imd_tracks
+        else RawSectorImage(data_bytes, bytes_per_sector=bytes_per_sector)
+    )
+    if imd_geom and imd_geom.spt and imd_geom.heads:
+        fallback_image.set_geometry(imd_geom.spt, imd_geom.heads)
+
+    fallback_fs = _filesystem_name_for_image(fallback_image)
     fallback_evidence = evidence + ([f"filesystem={fallback_fs}"] if fallback_fs else [])
     fallback_candidate = CandidateFormat(
-        candidate_id=f"flat_{ext.lstrip('.')}",
+        candidate_id=f"flat_{ext_for_layouts.lstrip('.')}",
         encoding=None,
         layout_id=None,
         filesystem=fallback_fs,
@@ -910,6 +1005,11 @@ def convert(
                 except Exception:
                     geometry_sectors = layout_desc.sectors_per_track
             image_obj.set_geometry(geometry_sectors or layout_desc.sectors_per_track, layout_desc.sides)
+    elif path.suffix.lower() == ".imd":
+        track_data, imd_geom, _meta = load_imd_image(path)
+        image_obj = TrackSectorImage(track_data, bytes_per_sector=imd_geom.sector_size)
+        image_obj.set_geometry(imd_geom.spt or imd_geom.tracks, imd_geom.heads)
+        track_data = track_data
     else:
         image_obj = RawSectorImage(path.read_bytes())
 
