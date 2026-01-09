@@ -74,12 +74,13 @@ class FAT12(Filesystem):
             return False
         if len(boot) < 512:
             return False
-        if boot[510:512] != b"\x55\xAA":
-            return False
 
+        has_signature = boot[510:512] == b"\x55\xAA"
         try:
             self._parse_boot_sector(boot)
         except FilesystemError:
+            return False
+        if not has_signature and self.total_clusters <= 0:
             return False
 
         try:

@@ -473,11 +473,13 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
     ".adf": ("amiga_mfm_880k",),
     ".imd": (
         "generic_mfm_8inch_500k",
+        "ibm_displaywriter_fm_284k",
         "ibm_mfm_8inch_1200k",
         "ibm_fm_8inch_284k",
         "ibm_mfm_1200k",
         "ibm_mfm_720k",
         "ibm_mfm_360k",
+        "ibm_mfm_180k",
         "ibm_mfm_1440k",
     ),
     ".img": (
@@ -598,8 +600,14 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
     ext = path.suffix.lower()
     imd_tracks = None
     imd_geom = None
+    imd_image = None
+    imd_filesystem_name = None
     if ext == ".imd":
         imd_tracks, imd_geom, imd_meta = load_imd_image(path)
+        imd_image = TrackSectorImage(imd_tracks)
+        if imd_geom and imd_geom.spt and imd_geom.heads:
+            imd_image.set_geometry(imd_geom.spt, imd_geom.heads)
+        imd_total_bytes = sum(len(sec.data) for ts in imd_tracks for sec in ts.sectors)
         data = bytearray(imd_geom.tracks * imd_geom.heads * imd_geom.spt * imd_geom.sector_size)
         for ts in imd_tracks:
             for sec in ts.sectors:
@@ -607,12 +615,13 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
                 # Ensure we never change the bytearray length even when sector sizes vary.
                 payload = (sec.data + b"\x00" * imd_geom.sector_size)[: imd_geom.sector_size]
                 data[off : off + imd_geom.sector_size] = payload
-        size = len(data)
+        size = imd_total_bytes
         evidence = [
             "format=imd",
             f"size={size}",
             f"geom={imd_geom.tracks}x{imd_geom.heads}x{imd_geom.spt}x{imd_geom.sector_size}",
         ]
+        imd_filesystem_name = _filesystem_name_for_image(imd_image) if imd_image else None
         data_bytes = bytes(data)
     else:
         data_bytes = path.read_bytes()
@@ -648,8 +657,20 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
                     evidence=evidence + [f"layout={lid}", "filesystem=fat12"],
                 )
             ]
+    def _imd_penalty(layout: LayoutDescriptor) -> int:
+        if not imd_geom:
+            return 0
+        penalty = 0
+        penalty += abs(layout.sectors_per_track - imd_geom.spt)
+        penalty += abs(layout.sides - imd_geom.heads)
+        penalty += abs(layout.sector_size - imd_geom.sector_size) // 16
+        if imd_tracks:
+            mismatch = sum(1 for ts in imd_tracks for sec in ts.sectors if len(sec.data) != layout.sector_size)
+            penalty += mismatch
+        return penalty
+
     best_candidate: Optional[CandidateFormat] = None
-    best_distance = None
+    best_score: Optional[tuple[int, int]] = None
     for layout in _flat_layout_candidates(ext_for_layouts):
         expected_bytes = _expected_bytes_for_layout(layout)
         if expected_bytes <= 0:
@@ -674,14 +695,17 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
             score=1.0,
             evidence=layout_evidence,
         )
-        if best_candidate is None or (best_distance is not None and distance < best_distance) or best_distance is None:
+        geometry_penalty = _imd_penalty(layout)
+        score = (geometry_penalty, distance)
+        if best_score is None or score < best_score:
             best_candidate = candidate
-            best_distance = distance
-            # exact size match wins immediately
-            if distance == 0:
-                break
+            best_score = score
 
     if best_candidate:
+        if imd_filesystem_name and best_candidate.filesystem != imd_filesystem_name:
+            best_candidate.filesystem = imd_filesystem_name
+            best_candidate.evidence = [entry for entry in best_candidate.evidence if not entry.startswith("filesystem=")]
+            best_candidate.evidence.append(f"filesystem={imd_filesystem_name}")
         return [best_candidate]
 
     bytes_per_sector = imd_geom.sector_size if imd_geom else _default_bytes_per_sector(ext_for_layouts)
