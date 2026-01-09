@@ -29,6 +29,7 @@ FIXTURE_RX02_IMG_GENERIC = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM.img"
 FIXTURE_DISPLAYWRITER_IMG = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWriter-284K.img")
 FIXTURE_D64_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64CPM-170K.d64")
 FIXTURE_D71_CBM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C128-341K.d71")
+FIXTURE_D71_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-MFM-C128CPM-340K.d71")
 FIXTURE_ADF_REAL = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.adf")
 FIXTURE_AMIGA_IMG = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.img")
 FIXTURE_1581_IMG = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MFM-C64-800K.img")
@@ -233,6 +234,15 @@ def test_probe_supports_d71_cbm_filesystem() -> None:
     payload = json.loads(result.stdout)
     assert payload[0]["layout_id"] == "commodore_gcr_1571_341k"
     assert payload[0]["filesystem"] == "cbm_dos"
+
+
+def test_probe_supports_d71_cpm_filesystem() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_D71_CPM)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "commodore_gcr_1571_341k"
+    assert payload[0]["filesystem"] == "cpm"
 
 
 def test_probe_supports_adf_amiga_filesystem() -> None:

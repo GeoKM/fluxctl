@@ -36,6 +36,9 @@ class CPMFilesystem(Filesystem):
     def probe(self, image: SectorImage) -> bool:
         """Heuristic CP/M probe: scan early sectors for directory entries."""
 
+        if getattr(image, "bytes_per_sector", 0) and image.bytes_per_sector > 256:
+            return False
+
         entries_checked = 0
         matches = 0
         empty = 0

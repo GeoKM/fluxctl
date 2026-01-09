@@ -652,18 +652,12 @@ def _filesystem_name_for_image(image) -> Optional[str]:
     probe_fs = _detect_filesystem(image)
     layout_id = getattr(getattr(image, "layout", None), "layout_id", None)
     layout_hint = LAYOUT_FILESYSTEM_HINTS.get(layout_id) if layout_id else None
-    probe_name: Optional[str] = None
     if probe_fs is not None:
         for key, plugin in registry.filesystem.items():
             if plugin.entry is probe_fs:
-                probe_name = key
-                break
-        else:
-            probe_name = probe_fs.__class__.__name__.lower()
-
-    if layout_hint and layout_hint != probe_name:
-        return layout_hint
-    return probe_name or layout_hint
+                return key
+        return probe_fs.__class__.__name__.lower()
+    return layout_hint
 
 
 def _probe_flat_image(path: Path) -> list[CandidateFormat]:
