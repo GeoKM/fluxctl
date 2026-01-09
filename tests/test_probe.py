@@ -21,6 +21,9 @@ FIXTURE_IMG_720K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-7
 FIXTURE_ADF = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.adf")
 FIXTURE_IMD_RX02 = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM-RT11-500K.imd")
 FIXTURE_IMD_8IN_1200K = Path("tests/fixtures/8inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-1200K.imd")
+FIXTURE_IMD_180K = Path("tests/fixtures/5.25inch/IBM/IBM-Generic-SSDD-MFM-IBMPC-180K.imd")
+FIXTURE_IMD_DISPLAYWRITER = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWriter-284K.imd")
+FIXTURE_IMD_1440K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSHD-MFM-IBMPC-1440K.imd")
 
 
 def test_probe_includes_gcr_candidates() -> None:
@@ -149,4 +152,31 @@ def test_probe_supports_imd_ibm_1200k() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload[0]["layout_id"] == "ibm_mfm_8inch_1200k"
+    assert payload[0]["filesystem"] == "fat12"
+
+
+def test_probe_supports_imd_ibm_180k_with_fat() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_IMD_180K)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "ibm_mfm_180k"
+    assert payload[0]["filesystem"] == "fat12"
+
+
+def test_probe_supports_imd_displaywriter() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_IMD_DISPLAYWRITER)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "ibm_displaywriter_fm_284k"
+    assert payload[0]["filesystem"] == "displaywriter"
+
+
+def test_probe_supports_imd_1440k_fat() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_IMD_1440K)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "ibm_mfm_1440k"
     assert payload[0]["filesystem"] == "fat12"
