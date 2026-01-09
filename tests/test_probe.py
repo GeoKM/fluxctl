@@ -24,6 +24,15 @@ FIXTURE_IMD_8IN_1200K = Path("tests/fixtures/8inch/IBM/IBM-Generic-DSDD-MFM-IBMP
 FIXTURE_IMD_180K = Path("tests/fixtures/5.25inch/IBM/IBM-Generic-SSDD-MFM-IBMPC-180K.imd")
 FIXTURE_IMD_DISPLAYWRITER = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWriter-284K.imd")
 FIXTURE_IMD_1440K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSHD-MFM-IBMPC-1440K.imd")
+FIXTURE_RX02_IMG = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM-RT11-500K.img")
+FIXTURE_RX02_IMG_GENERIC = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM.img")
+FIXTURE_DISPLAYWRITER_IMG = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWriter-284K.img")
+FIXTURE_D64_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64CPM-170K.d64")
+FIXTURE_D71_CBM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C128-341K.d71")
+FIXTURE_ADF_REAL = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.adf")
+FIXTURE_AMIGA_IMG = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.img")
+FIXTURE_1581_IMG = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MFM-C64-800K.img")
+FIXTURE_1581_D81 = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MFM-C64-800K.d81")
 
 
 def test_probe_includes_gcr_candidates() -> None:
@@ -180,3 +189,75 @@ def test_probe_supports_imd_1440k_fat() -> None:
     payload = json.loads(result.stdout)
     assert payload[0]["layout_id"] == "ibm_mfm_1440k"
     assert payload[0]["filesystem"] == "fat12"
+
+
+def test_probe_supports_rx02_img_rt11() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_RX02_IMG)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["filesystem"] == "rt11"
+    assert payload[0]["layout_id"] in {"dec_dec_rx02_rx02_250k", "generic_mfm_8inch_500k"}
+
+
+def test_probe_supports_rx02_img_generic() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_RX02_IMG_GENERIC)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] in {"dec_dec_rx02_rx02_250k", "generic_mfm_8inch_500k"}
+
+
+def test_probe_supports_displaywriter_img() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_DISPLAYWRITER_IMG)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "ibm_displaywriter_fm_284k"
+    assert payload[0]["filesystem"] == "displaywriter"
+
+
+def test_probe_supports_d64_cpm_filesystem() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_D64_CPM)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "commodore_gcr_1541_cpm_170k"
+    assert payload[0]["filesystem"] == "cpm"
+
+
+def test_probe_supports_d71_cbm_filesystem() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_D71_CBM)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "commodore_gcr_1571_341k"
+    assert payload[0]["filesystem"] == "cbm_dos"
+
+
+def test_probe_supports_adf_amiga_filesystem() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_ADF_REAL)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "amiga_mfm_880k"
+    assert payload[0]["filesystem"] == "amiga"
+
+
+def test_probe_supports_amiga_img() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_AMIGA_IMG)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "amiga_mfm_880k"
+    assert payload[0]["filesystem"] == "amiga"
+
+
+def test_probe_supports_1581_images_as_cbm_dos() -> None:
+    runner = CliRunner()
+    for fixture in (FIXTURE_1581_IMG, FIXTURE_1581_D81):
+        result = runner.invoke(cli.app, ["probe", str(fixture)])
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload[0]["layout_id"] == "commodore_mfm_1581_800k"
+        assert payload[0]["filesystem"] == "cbm_dos"

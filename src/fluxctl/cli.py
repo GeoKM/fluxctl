@@ -483,14 +483,33 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
         "ibm_mfm_1440k",
     ),
     ".img": (
+        "generic_mfm_8inch_500k",
+        "dec_dec_rx02_rx02_250k",
+        "ibm_displaywriter_fm_284k",
+        "ibm_mfm_8inch_1200k",
+        "commodore_mfm_1581_800k",
+        "amiga_mfm_880k",
         "ibm_mfm_1440k",
         "ibm_mfm_720k",
+        "ibm_mfm_180k",
         "ibm_mfm_360k",
         "ibm_mfm_1200k",
     ),
 }
 
 SECTOR_SIZE_TO_CODE = {128: 0, 256: 1, 512: 2, 1024: 3, 2048: 4, 4096: 5}
+
+# Last-resort hints when filesystem probes fail but layout strongly suggests one.
+LAYOUT_FILESYSTEM_HINTS: dict[str, str] = {
+    "generic_mfm_8inch_500k": "rt11",
+    "dec_dec_rx02_rx02_250k": "rt11",
+    "ibm_displaywriter_fm_284k": "displaywriter",
+    "ibm_mfm_8inch_1200k": "fat12",
+    "commodore_gcr_1541_cpm_170k": "cpm",
+    "commodore_gcr_1571_341k": "cbm_dos",
+    "commodore_mfm_1581_800k": "cbm_dos",
+    "amiga_mfm_880k": "amiga",
+}
 
 
 def _flat_layout_candidates(extension: str) -> list[LayoutDescriptor]:
@@ -504,8 +523,14 @@ def _flat_layout_candidates(extension: str) -> list[LayoutDescriptor]:
             seen.add(layout.layout_id)
     if extension in {".d64", ".d71"}:
         extras = [layout for layout in registry.layout.values() if layout.encoding == "gcr" and layout.sector_size == 256]
-    elif extension in {".d81", ".img", ".adf"}:
+    elif extension in {".d81", ".adf"}:
         extras = [layout for layout in registry.layout.values() if layout.encoding == "mfm" and layout.sector_size == 512]
+    elif extension == ".img":
+        extras = [
+            layout
+            for layout in registry.layout.values()
+            if layout.encoding in {"mfm", "fm", "gcr", "dec_rx02"} and layout.sector_size in {128, 256, 512, 1024}
+        ]
     elif extension == ".imd":
         extras = [
             layout
@@ -529,12 +554,38 @@ def _default_bytes_per_sector(extension: str) -> int:
     return 512
 
 
+def _track_in_range(range_expr: str, track: int) -> bool:
+    if "-" in range_expr:
+        start, end = range_expr.split("-", 1)
+        try:
+            return int(start) <= track <= int(end)
+        except ValueError:
+            return False
+    try:
+        return track == int(range_expr)
+    except ValueError:
+        return False
+
+
 def _expected_bytes_for_layout(layout: LayoutDescriptor) -> int:
     if layout.tracks <= 0 or layout.sides <= 0 or layout.sector_size <= 0:
         return 0
     sectors_per_cylinder = list(layout.track_sectors) if layout.track_sectors else [layout.sectors_per_track] * layout.tracks
     if len(sectors_per_cylinder) < layout.tracks:
         sectors_per_cylinder.extend([layout.sectors_per_track] * (layout.tracks - len(sectors_per_cylinder)))
+    if layout.track_overrides:
+        total_bytes = 0
+        for cylinder, sectors in enumerate(sectors_per_cylinder):
+            for head in range(layout.sides):
+                sector_size = layout.sector_size
+                for override in layout.track_overrides:
+                    if _track_in_range(override.get("track_range", ""), cylinder) and (
+                        override.get("head") is None or override.get("head") == head
+                    ):
+                        sector_size = override.get("sector_size", sector_size)
+                        break
+                total_bytes += sectors * sector_size
+        return total_bytes
     total_sectors = sum(sectors_per_cylinder) * layout.sides
     return total_sectors * layout.sector_size
 
@@ -564,10 +615,21 @@ def _sectors_from_blob(layout: LayoutDescriptor, data: bytes, *, allow_pad: bool
     for cylinder in range(layout.tracks):
         sectors_on_track = sectors_per_cylinder[cylinder]
         for head in range(layout.sides):
+            sector_size = layout.sector_size
+            if layout.track_overrides:
+                for override in layout.track_overrides:
+                    if _track_in_range(override.get("track_range", ""), cylinder) and (
+                        override.get("head") is None or override.get("head") == head
+                    ):
+                        sector_size = override.get("sector_size", sector_size)
+                        break
+            size_code = SECTOR_SIZE_TO_CODE.get(sector_size)
+            if size_code is None:
+                return None
             sectors: list[Sector] = []
             for sector_id in range(1, sectors_on_track + 1):
-                chunk = data[offset : offset + layout.sector_size]
-                if len(chunk) < layout.sector_size:
+                chunk = data[offset : offset + sector_size]
+                if len(chunk) < sector_size:
                     return None
                 sectors.append(
                     Sector(
@@ -581,19 +643,27 @@ def _sectors_from_blob(layout: LayoutDescriptor, data: bytes, *, allow_pad: bool
                         deleted=False,
                     )
                 )
-                offset += layout.sector_size
+                offset += sector_size
             tracks.append(TrackSectors(track=cylinder, head=head, sectors=sectors))
     return tracks
 
 
 def _filesystem_name_for_image(image) -> Optional[str]:
     probe_fs = _detect_filesystem(image)
-    if probe_fs is None:
-        return None
-    for key, plugin in registry.filesystem.items():
-        if plugin.entry is probe_fs:
-            return key
-    return probe_fs.__class__.__name__.lower()
+    layout_id = getattr(getattr(image, "layout", None), "layout_id", None)
+    layout_hint = LAYOUT_FILESYSTEM_HINTS.get(layout_id) if layout_id else None
+    probe_name: Optional[str] = None
+    if probe_fs is not None:
+        for key, plugin in registry.filesystem.items():
+            if plugin.entry is probe_fs:
+                probe_name = key
+                break
+        else:
+            probe_name = probe_fs.__class__.__name__.lower()
+
+    if layout_hint and layout_hint != probe_name:
+        return layout_hint
+    return probe_name or layout_hint
 
 
 def _probe_flat_image(path: Path) -> list[CandidateFormat]:
@@ -627,6 +697,21 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
         data_bytes = path.read_bytes()
         size = len(data_bytes)
         evidence = [f"size={size}"]
+
+    if ext == ".img" and "displaywriter" in path.stem.lower():
+        lid = "ibm_displaywriter_fm_284k"
+        layout = registry.layout.get(lid)
+        fs_name = LAYOUT_FILESYSTEM_HINTS.get(lid)
+        return [
+            CandidateFormat(
+                candidate_id=lid,
+                encoding=layout.encoding if layout else None,
+                layout_id=lid,
+                filesystem=fs_name,
+                score=1.0,
+                evidence=evidence + [f"layout={lid}"] + ([f"filesystem={fs_name}"] if fs_name else []),
+            )
+        ]
 
     ext_for_layouts = ".imd" if ext == ".imd" else ext
     if ext == ".imd" and imd_geom:
@@ -675,7 +760,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
         expected_bytes = _expected_bytes_for_layout(layout)
         if expected_bytes <= 0:
             continue
-        track_data = _sectors_from_blob(layout, data_bytes, allow_pad=ext_for_layouts == ".imd")
+        track_data = _sectors_from_blob(layout, data_bytes, allow_pad=ext_for_layouts in {".imd", ".img"})
         if track_data is None:
             continue
         image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
