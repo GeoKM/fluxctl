@@ -115,7 +115,7 @@ class CBMDOS(Filesystem):
         if bam is None or len(bam) < SECTOR_SIZE:
             return False
         self.dos_type = bam[0xA2:0xA4]
-        if not self.dos_type or not all(chr(b).isalnum() or chr(b) == " " for b in self.dos_type):
+        if not self.dos_type or not all(chr(b).isalnum() for b in self.dos_type):
             return False
         try:
             self._parse_directory()
