@@ -176,13 +176,17 @@ def _resolve_expected_and_missing(
     expected_hint: int,
 ) -> tuple[int, int]:
     decoded_ids = {sector.sector_id for sector in track_sectors.sectors if sector.data}
-    expected_layout = layout.expected_sectors_for_track(logical_track, track_sectors.head) if layout else None
-    inferred = _infer_expected_sector_count(track_sectors.sectors)
-    expected = expected_layout or (inferred or expected_hint or 0)
-    missing = max(expected - len(decoded_ids), 0) if expected else 0
-    if expected_layout and track_sectors.missing:
-        if track_sectors.missing == missing:
-            missing = track_sectors.missing
+    if layout and layout.layout_id.startswith("amiga_"):
+        expected = layout.sectors_per_track
+        missing = max(expected - len(track_sectors.sectors), 0)
+    else:
+        expected_layout = layout.expected_sectors_for_track(logical_track, track_sectors.head) if layout else None
+        inferred = _infer_expected_sector_count(track_sectors.sectors)
+        expected = expected_layout or (inferred or expected_hint or 0)
+        missing = max(expected - len(decoded_ids), 0) if expected else 0
+        if expected_layout and track_sectors.missing:
+            if track_sectors.missing == missing:
+                missing = track_sectors.missing
     return expected, missing
 
 
@@ -211,16 +215,29 @@ def build_qc_report(
         try:
             if not track_flux.revolutions:
                 raise FluxDecodeError("No revolutions present for track")
-            track_sectors = build_track_sectors(
-                track_flux.revolutions[0],
-                decoder,
-                cylinder=track_flux.track,
-                head=track_flux.side,
-                expected_sectors=layout.expected_sectors_for_track(logical_track, track_flux.side)
-                if layout
-                else expected_hint or None,
-                encoding=encoding,
-            )
+            if layout and layout.layout_id.startswith("amiga_"):
+                from ..sector.reconstruct_amiga import reconstruct_amiga_track
+
+                best_track = None
+                for rev in track_flux.revolutions:
+                    bitstream = decoder.decode_revolution(rev)
+                    candidate = reconstruct_amiga_track(bitstream, cylinder=track_flux.track, head=track_flux.side)
+                    if best_track is None or len(candidate.sectors) > len(best_track.sectors):
+                        best_track = candidate
+                    if len(candidate.sectors) >= layout.sectors_per_track:
+                        break
+                track_sectors = best_track if best_track is not None else TrackSectors(track_flux.track, track_flux.side, [])
+            else:
+                track_sectors = build_track_sectors(
+                    track_flux.revolutions[0],
+                    decoder,
+                    cylinder=track_flux.track,
+                    head=track_flux.side,
+                    expected_sectors=layout.expected_sectors_for_track(logical_track, track_flux.side)
+                    if layout
+                    else expected_hint or None,
+                    encoding=encoding,
+                )
             expected, missing = _resolve_expected_and_missing(
                 track_sectors,
                 layout,
