@@ -202,29 +202,20 @@ def reconstruct_amiga_greaseweazle(revolutions, track: int, head: int):
     except Exception:
         return None
 
-    # Normalise to a list of revolution objects with interval_ns.
     revs = revolutions if isinstance(revolutions, list) else [revolutions]
+    codec_cls = AmigaDOS_HD if track >= 160 else AmigaDOS_DD
 
-    flux_list: List[int] = []
-    index_list: List[int] = []
+    merged: dict[int, Sector] = {}
     for rev in revs:
         ticks = [max(1, int(round(ns / 25.0))) for ns in rev.interval_ns]
-        flux_list.extend(ticks)
-        index_list.append(sum(ticks))
-
-    codec_cls = AmigaDOS_HD if track >= 160 else AmigaDOS_DD
-    codec = codec_cls(track // 2, head)
-
-    flux = Flux(index_list=index_list, flux_list=flux_list, sample_freq=40_000_000, index_cued=True)
-    codec.decode_flux(flux)
-
-    sectors: List[Sector] = []
-    for sec_id, sector in enumerate(codec.sector):
-        if sector is None:
-            continue
-        _, data = sector
-        sectors.append(
-            Sector(
+        flux = Flux(index_list=[sum(ticks)], flux_list=ticks, sample_freq=40_000_000, index_cued=True)
+        codec = codec_cls(track, head)
+        codec.decode_flux(flux)
+        for sec_id, sector in enumerate(codec.sector):
+            if sector is None:
+                continue
+            _, data = sector
+            candidate = Sector(
                 cylinder=track,
                 head=head,
                 sector_id=sec_id,
@@ -233,12 +224,16 @@ def reconstruct_amiga_greaseweazle(revolutions, track: int, head: int):
                 crc_ok=True,
                 confidence=1.0,
                 deleted=False,
-                source_revolutions=[r.index for r in revs],
+                source_revolutions=[rev.index],
             )
-        )
+            existing = merged.get(sec_id)
+            if existing is None or (not existing.crc_ok and candidate.crc_ok):
+                merged[sec_id] = candidate
+        if len(merged) >= 11:
+            break
 
-    missing = max(getattr(codec, "nsec", 0) - len(sectors), 0)
-    return TrackSectors(track=track, head=head, sectors=sectors, weak=0, missing=missing)
+    missing = max(11 - len(merged), 0)
+    return TrackSectors(track=track, head=head, sectors=sorted(merged.values(), key=lambda s: s.sector_id), weak=0, missing=missing)
 
 
 def reconstruct_amiga_with_pll(revolutions, track: int, head: int) -> TrackSectors:
@@ -250,25 +245,18 @@ def reconstruct_amiga_with_pll(revolutions, track: int, head: int) -> TrackSecto
         from greaseweazle.codec.amiga.amigados import AmigaDOS_DD, AmigaDOS_HD
         from greaseweazle.flux import Flux
 
-        flux_list: List[int] = []
-        index_list: List[int] = []
+        codec_cls = AmigaDOS_HD if track >= 160 else AmigaDOS_DD
+        merged: dict[int, Sector] = {}
         for rev in revs:
             ticks = [max(1, int(round(ns / 25.0))) for ns in rev.interval_ns]
-            flux_list.extend(ticks)
-            index_list.append(sum(ticks))
-
-        codec_cls = AmigaDOS_HD if track >= 160 else AmigaDOS_DD
-        codec = codec_cls(track // 2, head)
-        flux = Flux(index_list=index_list, flux_list=flux_list, sample_freq=40_000_000, index_cued=True)
-        codec.decode_flux(flux)
-
-        sectors: List[Sector] = []
-        for sec_id, sector in enumerate(codec.sector):
-            if sector is None:
-                continue
-            _, data = sector
-            sectors.append(
-                Sector(
+            flux = Flux(index_list=[sum(ticks)], flux_list=ticks, sample_freq=40_000_000, index_cued=True)
+            codec = codec_cls(track, head)
+            codec.decode_flux(flux)
+            for sec_id, sector in enumerate(codec.sector):
+                if sector is None:
+                    continue
+                _, data = sector
+                candidate = Sector(
                     cylinder=track,
                     head=head,
                     sector_id=sec_id,
@@ -277,11 +265,15 @@ def reconstruct_amiga_with_pll(revolutions, track: int, head: int) -> TrackSecto
                     crc_ok=True,
                     confidence=1.0,
                     deleted=False,
-                    source_revolutions=[r.index for r in revs],
+                    source_revolutions=[rev.index],
                 )
-            )
-        missing = max(getattr(codec, "nsec", 0) - len(sectors), 0)
-        return TrackSectors(track=track, head=head, sectors=sectors, weak=0, missing=missing)
+                existing = merged.get(sec_id)
+                if existing is None or (not existing.crc_ok and candidate.crc_ok):
+                    merged[sec_id] = candidate
+            if len(merged) >= 11:
+                break
+        missing = max(11 - len(merged), 0)
+        return TrackSectors(track=track, head=head, sectors=sorted(merged.values(), key=lambda s: s.sector_id), weak=0, missing=missing)
     except Exception:
         decoder = MFMDecoder()
         merged: dict[int, Sector] = {}
