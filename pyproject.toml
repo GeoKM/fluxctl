@@ -10,6 +10,15 @@ dependencies = [
     "pyyaml>=6.0.0",
 ]
 
+[project.optional-dependencies]
+greaseweazle = [
+    "bitarray>=3.8.0",
+    "pyserial>=3.5",
+    "crcmod>=1.7",
+    "requests>=2.31",
+]
+hxcfe = []
+
 [project.scripts]
 fluxctl = "fluxctl.cli:app"
 

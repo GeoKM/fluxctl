@@ -19,6 +19,11 @@ from .models import RevolutionFlux, SCPImage, TrackFlux
 
 MAGIC = b"SCP"
 DEFAULT_TIMEBASE_NS = 25.0
+# Greaseweazle treats a zero/very-low timebase in modern captures as a 40MHz
+# sampler (25ns ticks). Some tools store a tiny integer (e.g., 2) which is
+# actually the tick count for 50ns or an artefact of the writer. To stay
+# compatible, clamp implausibly small timebases to the default.
+MIN_REASONABLE_NS = 20.0
 OFFSET_TABLE_ENTRIES = 168
 
 
@@ -31,12 +36,20 @@ def _decode_timebase(version: int, raw_timebase: int) -> float:
     clock frequency in kHz.
     """
 
+    # Preserve legacy behaviour for very old captures (version 0/1) and
+    # explicit high-resolution settings; clamp suspiciously small values only
+    # on newer versions.
     if version == 0:
         if 0 < raw_timebase <= 1000:
             return float(raw_timebase)
         return DEFAULT_TIMEBASE_NS
 
+    if version <= 1 and 0 < raw_timebase <= 1000:
+        return float(raw_timebase)
+
     if 0 < raw_timebase <= 1000:
+        if raw_timebase < 5:
+            return DEFAULT_TIMEBASE_NS
         return float(raw_timebase)
     if raw_timebase > 1000:
         return 1_000_000.0 / raw_timebase
