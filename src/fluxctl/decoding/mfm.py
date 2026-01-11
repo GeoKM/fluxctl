@@ -64,7 +64,7 @@ class MFMDecoder(Decoder):
         candidates = [self.cell_ns]
         if self.auto_cell:
             base_interval = self._estimate_cell_ns(intervals_ns)
-            candidates = [base_interval, base_interval * 0.75, base_interval / 2.0]
+            candidates.extend([base_interval, base_interval * 0.75, base_interval / 2.0])
 
         best_bits: List[int] = []
         best_score = (-1, -1.0)

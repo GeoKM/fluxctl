@@ -176,7 +176,8 @@ def _resolve_expected_and_missing(
     expected_hint: int,
 ) -> tuple[int, int]:
     decoded_ids = {sector.sector_id for sector in track_sectors.sectors if sector.data}
-    if layout and layout.layout_id.startswith("amiga_"):
+    layout_id = getattr(layout, "layout_id", "")
+    if layout_id.startswith("amiga_"):
         expected = layout.sectors_per_track
         missing = max(expected - len(track_sectors.sectors), 0)
     else:
@@ -216,17 +217,16 @@ def build_qc_report(
             if not track_flux.revolutions:
                 raise FluxDecodeError("No revolutions present for track")
             if layout and layout.layout_id.startswith("amiga_"):
-                from ..sector.reconstruct_amiga import reconstruct_amiga_track
+                from ..sector.reconstruct_amiga import (
+                    reconstruct_amiga_track,
+                    reconstruct_amiga_greaseweazle,
+                    reconstruct_amiga_with_pll,
+                )
 
-                best_track = None
-                for rev in track_flux.revolutions:
-                    bitstream = decoder.decode_revolution(rev)
-                    candidate = reconstruct_amiga_track(bitstream, cylinder=track_flux.track, head=track_flux.side)
-                    if best_track is None or len(candidate.sectors) > len(best_track.sectors):
-                        best_track = candidate
-                    if len(candidate.sectors) >= layout.sectors_per_track:
-                        break
-                track_sectors = best_track if best_track is not None else TrackSectors(track_flux.track, track_flux.side, [])
+                candidate = reconstruct_amiga_greaseweazle(track_flux.revolutions, track_flux.track, track_flux.side)
+                if candidate is None:
+                    candidate = reconstruct_amiga_with_pll(track_flux.revolutions, track_flux.track, track_flux.side)
+                track_sectors = candidate
             else:
                 track_sectors = build_track_sectors(
                     track_flux.revolutions[0],

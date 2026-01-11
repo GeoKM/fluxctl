@@ -64,6 +64,40 @@ fluxctl dump disk.scp --layout ibm_mfm_720k --track 0 --side 0 --sector 1
 - The repository also includes `tests/fixtures` with annotated samples so you can run targeted commands against known media.
 - For full CLI validation across SCP fixtures (with longer GCR timeouts), run `scripts/fixture_cli_smoke.py`.
 
+## Optional integrations
+
+### Greaseweazle-assisted Amiga decoding
+Fluxctl can fall back to Greaseweazle’s Amiga codec for higher-fidelity PLL decoding. This is **optional**; when missing, fluxctl uses its own PLL/parser.
+
+Steps:
+1. Get dependencies:
+   ```
+   .venv/bin/pip install -e .[greaseweazle]
+   ```
+2. Clone Greaseweazle alongside fluxctl (sibling directory) and install it editable:
+   ```
+   git clone https://github.com/keirf/Greaseweazle.git ../greaseweazle
+   .venv/bin/pip install -e ../greaseweazle
+   ```
+No configuration is required; fluxctl will auto-detect the import at runtime when present.
+
+### HxC Floppy Emulator (hxcfe) hints / conversions
+HxCFE can provide layout hints and ADF conversions for Amiga and other formats.
+
+Steps:
+1. Clone and build `hxcfe` (the CLI from HxCFloppyEmulator). Example:
+   ```
+   git clone https://github.com/jfdelnero/HxCFloppyEmulator.git ../HxCFloppyEmulator
+   cd ../HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build
+   make       # or use the provided build script for your platform
+   ```
+2. Point fluxctl at the binary when running commands that accept `--hxcfe`, e.g.:
+   ```
+   fluxctl qc disk.scp --layout amiga_mfm_880k --hxcfe ~/src/HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build/hxcfe
+   fluxctl probe disk.scp --hxcfe /path/to/hxcfe
+   ```
+HxCFE is optional; when omitted, fluxctl uses its own detectors.
+
 ## Contributor guide
 See [AGENTS.md](AGENTS.md) for coding standards, workflows, and review expectations.
 
