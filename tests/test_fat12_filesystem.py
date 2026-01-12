@@ -4,7 +4,7 @@ from fluxctl.filesystems import RawSectorImage
 from fluxctl.filesystems.fat12 import FAT12
 
 FAT12_FIXTURE = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.img")
-NON_FAT_FIXTURE = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.img")
+NON_FAT_FIXTURE = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.adf")
 
 
 def _load_image(path: Path) -> RawSectorImage:

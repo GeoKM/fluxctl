@@ -189,7 +189,7 @@ def reconstruct_amiga_track(bitstream: Bitstream, cylinder: int = 0, head: int =
     return TrackSectors(track=cylinder, head=head, sectors=sectors, weak=0, missing=0)
 
 
-def reconstruct_amiga_greaseweazle(revolutions, track: int, head: int):
+def reconstruct_amiga_greaseweazle(revolutions, track: int, head: int, timebase_ns: float = 25.0):
     """Decode an Amiga track using Greaseweazle's PLL/codec if available.
 
     Accepts a single RevolutionFlux or an iterable of them. Returns ``None``
@@ -207,7 +207,7 @@ def reconstruct_amiga_greaseweazle(revolutions, track: int, head: int):
 
     merged: dict[int, Sector] = {}
     for rev in revs:
-        ticks = [max(1, int(round(ns / 25.0))) for ns in rev.interval_ns]
+        ticks = [max(1, int(round(ns / timebase_ns))) for ns in rev.interval_ns]
         flux = Flux(index_list=[sum(ticks)], flux_list=ticks, sample_freq=40_000_000, index_cued=True)
         codec = codec_cls(track, head)
         codec.decode_flux(flux)
@@ -236,7 +236,7 @@ def reconstruct_amiga_greaseweazle(revolutions, track: int, head: int):
     return TrackSectors(track=track, head=head, sectors=sorted(merged.values(), key=lambda s: s.sector_id), weak=0, missing=missing)
 
 
-def reconstruct_amiga_with_pll(revolutions, track: int, head: int) -> TrackSectors:
+def reconstruct_amiga_with_pll(revolutions, track: int, head: int, timebase_ns: float = 25.0) -> TrackSectors:
     """Decode using Greaseweazle if available, otherwise merge internal MFM results."""
 
     revs = list(revolutions) if isinstance(revolutions, (list, tuple)) else [revolutions]

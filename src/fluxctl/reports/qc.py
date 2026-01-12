@@ -223,9 +223,13 @@ def build_qc_report(
                     reconstruct_amiga_with_pll,
                 )
 
-                candidate = reconstruct_amiga_greaseweazle(track_flux.revolutions, track_flux.track, track_flux.side)
+                candidate = reconstruct_amiga_greaseweazle(
+                    track_flux.revolutions, track_flux.track, track_flux.side, timebase_ns=image.timebase_ns
+                )
                 if candidate is None:
-                    candidate = reconstruct_amiga_with_pll(track_flux.revolutions, track_flux.track, track_flux.side)
+                    candidate = reconstruct_amiga_with_pll(
+                        track_flux.revolutions, track_flux.track, track_flux.side, timebase_ns=image.timebase_ns
+                    )
                 track_sectors = candidate
             else:
                 track_sectors = build_track_sectors(
