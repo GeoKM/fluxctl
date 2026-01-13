@@ -478,15 +478,28 @@ def _detect_filesystem(image) -> Optional[Filesystem]:
 
 def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
     layout_desc = ensure_layout_loaded(layout_id) if layout_id else None
-    if path.suffix.lower() == ".img":
+    ext = path.suffix.lower()
+
+    # For flat images with a known layout, build TrackSectorImage directly from the blob
+    # instead of trying to decode as SCP.
+    if layout_desc and ext not in {".scp", ".imd"}:
+        data_bytes = path.read_bytes()
+        track_data = _sectors_from_blob(layout_desc, data_bytes, allow_pad=True)
+        if track_data:
+            image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
+            image.layout = layout_desc
+            return image
+        # Fall through to raw sector handling if reconstruction failed.
+
+    if ext == ".img":
         return RawSectorImage(path.read_bytes())
-    if path.suffix.lower() == ".scp":
+    if ext == ".scp":
         track_data = _decode_tracks(path, layout_id, encoding=encoding)
         image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size if layout_desc else None)
         if layout_desc:
             image.layout = layout_desc
         return image
-    if path.suffix.lower() == ".imd":
+    if ext == ".imd":
         tracks, geom, _meta = load_imd_image(path)
         image = TrackSectorImage(tracks, bytes_per_sector=geom.sector_size)
         image.set_geometry(geom.spt or geom.tracks, geom.heads)
