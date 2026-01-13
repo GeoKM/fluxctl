@@ -164,13 +164,46 @@ def info(
     path: Path = typer.Argument(..., exists=True, readable=True),
     hxcfe: Optional[Path] = typer.Option(None, "--hxcfe", help="Path to an hxcfe binary for hints."),
 ) -> None:
-    """Print basic SCP information from .scp files only."""
+    """Print basic image information (SCP, IMG, ADF, D64, D71, D81, IMD)."""
+
+    load_builtin_decoders()
+    load_builtin_layouts()
+    load_builtin_filesystems()
+    ext = path.suffix.lower()
+
+    # Flat images (.img/.adf/.d64/...) use the probe pipeline.
+    if ext != ".scp":
+        candidates = _probe_flat_image(path)
+        if not candidates:
+            raise FluxDecodeError("Unable to recognise image format")
+        primary = sorted(candidates, key=lambda c: c.score, reverse=True)[0]
+        layout_desc = registry.layout.get(primary.layout_id) if primary.layout_id else None
+        image = _prepare_image(path, primary.layout_id, primary.encoding or "mfm")
+        fs_name = _filesystem_name_for_image(image)
+        amiga_fs = _detect_amiga_fs(image)
+        typer.echo(f"Size: {path.stat().st_size} bytes")
+        typer.echo(f"Layout: {primary.layout_id or 'unknown'} (encoding={primary.encoding or 'mfm'})")
+        if layout_desc:
+            typer.echo(
+                f"Geometry: cylinders={layout_desc.tracks} heads={layout_desc.sides} "
+                f"sectors/track={layout_desc.sectors_per_track} sector_size={layout_desc.sector_size}"
+            )
+        typer.echo(f"Filesystem: {amiga_fs or fs_name or primary.filesystem or 'unknown'}")
+        typer.echo(f"Confidence: {primary.score:.2f}")
+        if len(candidates) > 1:
+            typer.echo("Other candidates:")
+            for cand in sorted(candidates[1:], key=lambda c: c.score, reverse=True)[:3]:
+                typer.echo(
+                    f"- {cand.layout_id or 'unknown'} (encoding={cand.encoding or 'mfm'}) "
+                    f"fs={cand.filesystem or 'unknown'} score={cand.score:.2f}"
+                )
+        return
+
+    # SCP path: keep existing behaviour with extra filesystem hint when possible.
     scp = parse_scp(path)
     heads_with_flux = {
         track.side for track in scp.tracks if any(rev.interval_ns for rev in track.revolutions)
     }
-    load_builtin_decoders()
-    load_builtin_layouts()
     hxc_hint = _maybe_hxc_hint(path, hxcfe)
     encoding_candidate = detect_encoding(scp, path=path, hint=hxc_hint)
     layout_candidate = (
