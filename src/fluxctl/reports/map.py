@@ -13,7 +13,7 @@ from typing import List, Tuple
 
 from ..decoding import Decoder
 from ..exceptions import FluxDecodeError
-from ..models import SCPImage
+from ..models import LayoutDescriptor, SCPImage
 from ..sector.models import TrackSectors
 from ..sector.models import Sector
 from ..sector.reconstruct import build_track_sectors
