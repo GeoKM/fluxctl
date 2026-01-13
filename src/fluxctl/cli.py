@@ -1109,8 +1109,25 @@ def visualize(
 
     if ext == ".scp":
         image = parse_scp(path)
-        decoder = _get_decoder(encoding)
-        disk_map = build_disk_map(image, decoder)
+        selected_encoding = encoding
+        layout_desc = ensure_layout_loaded(layout) if layout else None
+        if layout_desc is None:
+            # Fast-path: many captures (e.g., Amiga) are MFM even when encoding
+            # detection leans GCR. Try MFM layout detection first.
+            layout_candidate = detect_layout(image, "mfm", path)
+            if layout_candidate:
+                layout_desc = layout_candidate.layout
+                selected_encoding = layout_desc.encoding
+            else:
+                encoding_candidate = detect_encoding(image, path=path)
+                if encoding_candidate:
+                    selected_encoding = encoding_candidate.encoding
+                layout_candidate = detect_layout(image, selected_encoding, path)
+                if layout_candidate:
+                    layout_desc = layout_candidate.layout
+                    selected_encoding = layout_desc.encoding
+        decoder = _get_decoder(selected_encoding)
+        disk_map = build_disk_map(image, decoder, layout=layout_desc)
     else:
         layout_desc = ensure_layout_loaded(layout) if layout else None
         tracks: list[TrackSectors]
