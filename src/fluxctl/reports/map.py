@@ -14,6 +14,7 @@ from typing import List, Tuple
 from ..decoding import Decoder
 from ..exceptions import FluxDecodeError
 from ..models import SCPImage
+from ..sector.models import TrackSectors
 from ..sector.models import Sector
 from ..sector.reconstruct import build_track_sectors
 
@@ -148,6 +149,37 @@ def build_disk_map(image: SCPImage, decoder: Decoder) -> DiskMap:
         if len(sectors) < max_sectors:
             sectors.extend(["bad"] * (max_sectors - len(sectors)))
             track_states[idx] = sectors
+
+    return DiskMap(
+        tracks=track_states,
+        total_tracks=len(track_states),
+        max_sectors_per_track=max_sectors,
+        track_ids=track_ids,
+        track_confidence=track_confidence,
+    )
+
+
+def build_disk_map_from_tracksectors(tracks: list[TrackSectors]) -> DiskMap:
+    """Build a DiskMap from already reconstructed TrackSectors (flat images)."""
+
+    if not tracks:
+        return DiskMap([], 0, 0)
+
+    max_sectors = max(len(ts.sectors) for ts in tracks)
+    track_states: list[list[str]] = []
+    track_ids: list[tuple[int, int]] = []
+    track_confidence: list[float] = []
+
+    for ts in sorted(tracks, key=lambda t: (t.track, t.head)):
+        sectors = [_classify_sector(sec) for sec in sorted(ts.sectors, key=lambda s: s.sector_id)]
+        if len(sectors) < max_sectors:
+            sectors.extend(["bad"] * (max_sectors - len(sectors)))
+        track_states.append(sectors)
+        track_ids.append((ts.track, ts.head))
+        confidence = (
+            sum(sec.confidence for sec in ts.sectors) / len(ts.sectors) if ts.sectors else 0.0
+        )
+        track_confidence.append(confidence)
 
     return DiskMap(
         tracks=track_states,

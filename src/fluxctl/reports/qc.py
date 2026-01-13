@@ -15,7 +15,7 @@ from typing import List
 
 from ..decoding import Decoder
 from ..exceptions import FluxDecodeError
-from ..models import LayoutDescriptor, SCPImage
+from ..models import LayoutDescriptor, SCPImage, TrackFlux
 from ..sector.models import Sector, TrackSectors
 from ..sector.reconstruct import build_track_sectors
 
@@ -354,6 +354,60 @@ def build_qc_report(
     )
 
 
+def build_qc_report_from_tracks(
+    tracks: List[TrackSectors],
+    layout: LayoutDescriptor | None = None,
+    track_step: int = 1,
+) -> DiskQCReport:
+    """QC report builder for already-decoded track/sector images.
+
+    This variant is used for flat images (e.g., IMG/ADF/D81) that have been
+    reconstructed into TrackSectors without needing flux decoding.
+    """
+
+    image = SCPImage(path=Path(""), version=0, revolutions_per_track=0, timebase_ns=0.0, tracks=[])
+    image.tracks = [TrackFlux(track=ts.track, side=ts.head, revolutions=[]) for ts in tracks]
+    track_reports: List[TrackQC] = []
+    expected_hint = _estimate_sectors_per_track(image)
+    for ts in tracks:
+        logical_track = ts.track // max(track_step, 1)
+        expected, missing = _resolve_expected_and_missing(ts, layout, logical_track, expected_hint)
+        summary = _summarize_track_sectors(ts, missing)
+        track_reports.append(
+            TrackQC(
+                track=ts.track,
+                head=ts.head,
+                total_sectors=expected,
+                good_sectors=summary["good"],
+                weak_sectors=summary["weak"],
+                missing_sectors=missing,
+                no_data_sectors=summary["no_data"],
+                bad_sectors=summary["bad"],
+                crc_errors=summary["crc_errors"],
+                confidence=summary["confidence"],
+            )
+        )
+
+    overall_confidence = (
+        sum(track.confidence for track in track_reports) / len(track_reports) if track_reports else 0.0
+    )
+    missing_tracks = _compute_missing_tracks(image, layout, track_step)
+    disk_summary = _summarize_disk(track_reports, missing_tracks)
+    return DiskQCReport(
+        tracks=track_reports,
+        overall_confidence=overall_confidence,
+        missing_tracks=missing_tracks,
+        notes=["bad_sectors includes no_data + crc_errors"],
+        status=disk_summary["status"],
+        suspect_sectors=disk_summary["suspect"],
+        total_sectors=disk_summary["total_sectors"],
+        total_good_sectors=disk_summary["total_good"],
+        total_bad_sectors=disk_summary["total_bad"],
+        total_weak_sectors=disk_summary["total_weak"],
+        total_missing_sectors=disk_summary["total_missing"],
+    )
+
+
 def write_qc_report_text(report: DiskQCReport, path: Path, layout: LayoutDescriptor | None = None) -> None:
     """Write a human-readable QC report to ``path``."""
 
@@ -399,6 +453,7 @@ __all__ = [
     "TrackQC",
     "WEAK_CONFIDENCE_THRESHOLD",
     "build_qc_report",
+    "build_qc_report_from_tracks",
     "write_qc_report_json",
     "write_qc_report_text",
 ]

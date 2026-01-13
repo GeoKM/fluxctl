@@ -22,8 +22,8 @@ from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from .models import Bitstream, CandidateFormat, LayoutDescriptor, ProvenanceRecord
 from .plugins import registry
 from .provenance import write_provenance
-from .reports.map import build_disk_map, render_ascii, render_svg
-from .reports.qc import build_qc_report, write_qc_report_json, write_qc_report_text
+from .reports.map import build_disk_map, build_disk_map_from_tracksectors, render_ascii, render_svg
+from .reports.qc import build_qc_report, build_qc_report_from_tracks, write_qc_report_json, write_qc_report_text
 from .scp import parse_scp, sha256_file
 from .sector.models import Sector, TrackNibbles, TrackSectors
 from .sector.reconstruct import build_track_sectors
@@ -983,25 +983,45 @@ def qc(
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Override provenance output path"),
 ):
     """Assess image quality and emit QC reports."""
-
-    scp = parse_scp(path)
     load_builtin_decoders()
     load_builtin_layouts()
     selected_encoding = encoding.lower()
-    hxc_hint = _maybe_hxc_hint(path, hxcfe)
-    if selected_encoding == "auto":
-        encoding_candidate = detect_encoding(scp, path=path, hint=hxc_hint)
-        if encoding_candidate is None:
-            raise FluxDecodeError("Unable to infer encoding; specify --encoding")
-        selected_encoding = encoding_candidate.encoding
 
-    decoder = _get_decoder(selected_encoding)
-    layout_desc = ensure_layout_loaded(layout) if layout else None
-    if layout_desc is None:
-        layout_candidate = detect_layout(scp, selected_encoding, path, hint=hxc_hint)
-        layout_desc = layout_candidate.layout if layout_candidate else None
-    track_step = infer_track_step([track.track for track in scp.tracks])
-    report = build_qc_report(scp, decoder, layout=layout_desc, track_step=track_step)
+    if path.suffix.lower() == ".scp":
+        scp = parse_scp(path)
+        hxc_hint = _maybe_hxc_hint(path, hxcfe)
+        if selected_encoding == "auto":
+            encoding_candidate = detect_encoding(scp, path=path, hint=hxc_hint)
+            if encoding_candidate is None:
+                raise FluxDecodeError("Unable to infer encoding; specify --encoding")
+            selected_encoding = encoding_candidate.encoding
+
+        decoder = _get_decoder(selected_encoding)
+        layout_desc = ensure_layout_loaded(layout) if layout else None
+        if layout_desc is None:
+            layout_candidate = detect_layout(scp, selected_encoding, path, hint=hxc_hint)
+            layout_desc = layout_candidate.layout if layout_candidate else None
+        track_step = infer_track_step([track.track for track in scp.tracks])
+        report = build_qc_report(scp, decoder, layout=layout_desc, track_step=track_step)
+    else:
+        # Flat image QC path.
+        layout_desc = ensure_layout_loaded(layout) if layout else None
+        image_obj = _prepare_image(path, layout_desc.layout_id if layout_desc else None, selected_encoding)
+        # If no layout given, probe to pick one and rebuild image if possible.
+        if layout_desc is None:
+            candidates = _probe_flat_image(path)
+            if not candidates:
+                raise FluxDecodeError("Unable to infer layout for flat image")
+            layout_desc = ensure_layout_loaded(candidates[0].layout_id) if candidates[0].layout_id else None
+            if layout_desc:
+                image_obj = _prepare_image(path, layout_desc.layout_id, candidates[0].encoding or selected_encoding)
+        # Build TrackSectors from TrackSectorImage if needed.
+        if isinstance(image_obj, TrackSectorImage):
+            tracks = image_obj.tracks
+        else:
+            raise FluxDecodeError("Flat image could not be reconstructed into sectors")
+        report = build_qc_report_from_tracks(tracks, layout=layout_desc, track_step=1)
+        scp = None
 
     targets: list[Path] = []
     if json_out:
@@ -1011,9 +1031,13 @@ def qc(
         write_qc_report_text(report, text_out, layout=layout_desc)
         targets.append(text_out)
     if not targets:
-        track_ids = [track.track for track in scp.tracks]
-        heads_present = {track.side for track in scp.tracks}
-        step = infer_track_step(track_ids)
+        if scp is not None:
+            track_ids = [track.track for track in scp.tracks]
+            heads_present = {track.side for track in scp.tracks}
+        else:
+            track_ids = [ts.track for ts in tracks]
+            heads_present = {ts.head for ts in tracks}
+        step = infer_track_step(track_ids) if track_ids else 1
         logical_tracks = logical_track_count(track_ids, step) if track_ids else 0
         if layout_desc:
             cylinders = layout_desc.tracks
@@ -1070,6 +1094,7 @@ def visualize(
     format: str = typer.Option("ascii", "--format", help="Output format: ascii or svg"),
     out: Optional[Path] = typer.Option(None, "--out", help="Write output to a file"),
     encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding (mfm, fm, gcr)"),
+    layout: Optional[str] = typer.Option(None, "--layout", help="Layout identifier for flat images"),
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar path"),
 ):
     """Render a disk map in ASCII or SVG form."""
@@ -1078,9 +1103,26 @@ def visualize(
     if format_lower not in {"ascii", "svg"}:
         raise typer.BadParameter("--format must be 'ascii' or 'svg'")
 
-    image = parse_scp(path)
-    decoder = _get_decoder(encoding)
-    disk_map = build_disk_map(image, decoder)
+    load_builtin_layouts()
+    load_builtin_decoders()
+    ext = path.suffix.lower()
+
+    if ext == ".scp":
+        image = parse_scp(path)
+        decoder = _get_decoder(encoding)
+        disk_map = build_disk_map(image, decoder)
+    else:
+        layout_desc = ensure_layout_loaded(layout) if layout else None
+        tracks: list[TrackSectors]
+        if layout_desc is None:
+            candidates = _probe_flat_image(path)
+            layout_desc = ensure_layout_loaded(candidates[0].layout_id) if candidates and candidates[0].layout_id else None
+        image_obj = _prepare_image(path, layout_desc.layout_id if layout_desc else None, encoding)
+        if isinstance(image_obj, TrackSectorImage):
+            tracks = image_obj.tracks
+        else:
+            raise FluxDecodeError("Flat image could not be reconstructed into sectors for visualisation")
+        disk_map = build_disk_map_from_tracksectors(tracks)
 
     output_path: Optional[Path] = None
     if format_lower == "ascii":
