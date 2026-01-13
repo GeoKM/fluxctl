@@ -18,7 +18,8 @@ from ..sector.models import TrackSectors
 from ..sector.models import Sector
 from ..sector.reconstruct import build_track_sectors
 
-WEAK_CONFIDENCE_THRESHOLD = 0.8
+# Slightly lower than QC to avoid over-reporting weak sectors in visuals.
+WEAK_CONFIDENCE_THRESHOLD = 0.7
 
 STATE_TO_GLYPH = {"good": "■", "weak": "□", "bad": "×"}
 STATE_TO_COLOR = {"good": "#2ecc71", "weak": "#f1c40f", "bad": "#e74c3c"}
@@ -91,7 +92,7 @@ def _classify_sector(sector: Sector) -> str:
     return "good"
 
 
-def build_disk_map(image: SCPImage, decoder: Decoder) -> DiskMap:
+def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor | None = None) -> DiskMap:
     """Decode an image and produce a :class:`DiskMap`.
 
     The mapper walks every track/head pair present in the image, decodes the
@@ -106,7 +107,7 @@ def build_disk_map(image: SCPImage, decoder: Decoder) -> DiskMap:
     ``"bad"`` entries so that renderers can draw consistent rows/rings.
     """
 
-    expected_sectors = _estimate_sectors_per_track(image)
+    expected_sectors = layout.sectors_per_track if layout else _estimate_sectors_per_track(image)
     track_states: List[List[str]] = []
     track_ids: List[Tuple[int, int]] = []
     track_confidence: List[float] = []
@@ -119,13 +120,34 @@ def build_disk_map(image: SCPImage, decoder: Decoder) -> DiskMap:
             sectors = ["bad"] * expected_sectors
         else:
             try:
-                track_data = build_track_sectors(
-                    track_flux.revolutions[0],
-                    decoder,
-                    cylinder=track_flux.track,
-                    head=track_flux.side,
-                    expected_sectors=expected_sectors or None,
-                )
+                if layout and layout.layout_id.startswith("amiga_"):
+                    from ..sector.reconstruct_amiga import (
+                        reconstruct_amiga_greaseweazle,
+                        reconstruct_amiga_with_pll,
+                    )
+
+                    candidate = reconstruct_amiga_greaseweazle(
+                        track_flux.revolutions,
+                        track_flux.track,
+                        track_flux.side,
+                        timebase_ns=image.timebase_ns,
+                    )
+                    if candidate is None:
+                        candidate = reconstruct_amiga_with_pll(
+                            track_flux.revolutions,
+                            track_flux.track,
+                            track_flux.side,
+                            timebase_ns=image.timebase_ns,
+                        )
+                    track_data = candidate
+                else:
+                    track_data = build_track_sectors(
+                        track_flux.revolutions[0],
+                        decoder,
+                        cylinder=track_flux.track,
+                        head=track_flux.side,
+                        expected_sectors=expected_sectors or None,
+                    )
                 confidence = (
                     sum(sec.confidence for sec in track_data.sectors) / len(track_data.sectors)
                     if track_data.sectors
