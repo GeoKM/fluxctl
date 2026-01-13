@@ -17,6 +17,7 @@ from ..models import LayoutDescriptor, SCPImage
 from ..sector.models import TrackSectors
 from ..sector.models import Sector
 from ..sector.reconstruct import build_track_sectors
+from ..sector.reconstruct_gcr import reconstruct_gcr_track
 
 # Slightly lower than QC to avoid over-reporting weak sectors in visuals.
 WEAK_CONFIDENCE_THRESHOLD = 0.7
@@ -114,12 +115,23 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
     max_sectors = 0
 
     for track_flux in sorted(image.tracks, key=lambda t: (t.track, t.side)):
+        expected_this = expected_sectors
+        if layout and hasattr(layout, "expected_sectors_for_track"):
+            try:
+                expected_this = layout.expected_sectors_for_track(track_flux.track, track_flux.side)
+            except Exception:
+                expected_this = expected_sectors
         sectors: List[str] = []
         confidence = 0.0
         if not track_flux.revolutions:
-            sectors = ["bad"] * expected_sectors
+            sectors = ["bad"] * expected_this
         else:
             try:
+                if hasattr(decoder, "set_track"):
+                    try:
+                        decoder.set_track(track_flux.track)
+                    except Exception:
+                        pass
                 if layout and layout.layout_id.startswith("amiga_"):
                     from ..sector.reconstruct_amiga import (
                         reconstruct_amiga_greaseweazle,
@@ -140,13 +152,40 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
                             timebase_ns=image.timebase_ns,
                         )
                     track_data = candidate
+                elif layout and layout.encoding == "gcr":
+                    best_track = None
+                    best_score = (-1,)
+                    expected_this = layout.sectors_per_track
+                    for idx, rev in enumerate(track_flux.revolutions[:3]):
+                        try:
+                            if hasattr(decoder, "set_track"):
+                                decoder.set_track(track_flux.track)
+                            bs = decoder.decode_revolution(rev)
+                            bs.intervals = rev.interval_ns
+                            bs.timebase_ns = image.timebase_ns
+                            bs.source_revs = [idx]
+                            candidate = reconstruct_gcr_track(
+                                bs,
+                                cylinder=track_flux.track,
+                                head=track_flux.side,
+                                expected_sectors=expected_this,
+                            )
+                            score = (len(candidate.sectors), bs.metrics.confidence or 0.0)
+                            if score > best_score and candidate.sectors:
+                                best_score = score
+                                best_track = candidate
+                        except Exception:
+                            continue
+                    if best_track is None:
+                        raise FluxDecodeError("GCR decode failed")
+                    track_data = best_track
                 else:
                     track_data = build_track_sectors(
                         track_flux.revolutions[0],
                         decoder,
                         cylinder=track_flux.track,
                         head=track_flux.side,
-                        expected_sectors=expected_sectors or None,
+                        expected_sectors=expected_this or None,
                     )
                 confidence = (
                     sum(sec.confidence for sec in track_data.sectors) / len(track_data.sectors)
@@ -154,13 +193,13 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
                     else 0.0
                 )
                 sectors = [_classify_sector(sec) for sec in sorted(track_data.sectors, key=lambda s: s.sector_id)]
-                if expected_sectors and len(sectors) < expected_sectors:
-                    sectors.extend(["bad"] * (expected_sectors - len(sectors)))
+                if expected_this and len(sectors) < expected_this:
+                    sectors.extend(["bad"] * (expected_this - len(sectors)))
             except (FluxDecodeError, Exception):
                 # Future refinement: capture decoder metrics so we can visualise
                 # why a track failed, or try secondary revolutions for multi-pass
                 # recovery.
-                sectors = ["bad"] * expected_sectors
+                sectors = ["bad"] * expected_this
                 confidence = 0.0
         max_sectors = max(max_sectors, len(sectors))
         track_states.append(sectors)
