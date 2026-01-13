@@ -197,6 +197,8 @@ def build_track_sectors(
         decoder.set_track(cylinder)
     bitstream = decoder.decode_revolution(rev)
     if effective_encoding == "gcr":
+        bitstream.intervals = rev.interval_ns  # type: ignore[attr-defined]
+    if effective_encoding == "gcr":
         return reconstruct_gcr_track(bitstream, cylinder=cylinder, head=head, expected_sectors=expected_sectors)
     if effective_encoding == "fm":
         return reconstruct_fm_track(bitstream, cylinder=cylinder, head=head, expected_sectors=expected_sectors)

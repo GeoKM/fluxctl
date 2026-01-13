@@ -44,17 +44,56 @@ class GCRDecoder(Decoder):
         track_1based = cylinder + 1
         self.cell_ns = cell_ns_for_1541_track(track_1based)
 
-    def _intervals_to_bits(self, intervals_ns: Sequence[int], cell_ns: float) -> List[int]:
+    def _lowpass_merge(self, intervals_ns: Sequence[int], thresh_ns: float) -> List[float]:
+        merged: List[float] = []
+        i = 0
+        n = len(intervals_ns)
+        while i < n:
+            t = intervals_ns[i]
+            if t < thresh_ns and i + 1 < n:
+                t += intervals_ns[i + 1]
+                if merged:
+                    merged[-1] += t
+                else:
+                    merged.append(t)
+                i += 2
+                continue
+            merged.append(t)
+            i += 1
+        return merged
+
+    def _intervals_to_bits(
+        self, intervals_ns: Sequence[int], cell_ns: float, lowpass_ns: float = 2000.0
+    ) -> List[int]:
+        """Convert flux intervals to bitcells using a PLL-style sampler (GW-like)."""
+
+        if not intervals_ns:
+            return []
+
+        merged = self._lowpass_merge(intervals_ns, lowpass_ns)
+
+        clock = cell_ns
+        clock_min = cell_ns * 0.9
+        clock_max = cell_ns * 1.1
+        period_adj = 0.05
+        phase_adj = 0.60
+        phase = 0.0
         bits: List[int] = []
-        for interval in intervals_ns:
+
+        for interval in merged:
             if interval <= 0:
                 continue
-            cells = max(1, round(interval / cell_ns))
-            if cells == 1:
-                bits.append(1)
-            else:
-                bits.extend([0] * (cells - 1))
-                bits.append(1)
+            phase += interval
+            cells = max(1, int((phase + clock * 0.5) // clock))
+            phase -= cells * clock
+            bits.extend([0] * (cells - 1))
+            bits.append(1)
+            measured = interval / cells
+            error = measured - clock
+            clock += error * period_adj
+            clock = min(max(clock, clock_min), clock_max)
+            phase += error * phase_adj
+
         return bits
 
     def _estimate_confidence(self, bits: List[int]) -> float:
@@ -89,7 +128,10 @@ class GCRDecoder(Decoder):
                 best_confidence = confidence
                 best_bits = bits
         metrics = BitDecodeMetrics(pll_lock_score=best_confidence, rpm_estimate=None, confidence=best_confidence)
-        return Bitstream(bits=best_bits, metrics=metrics, source_revs=[rev.index])
+        bs = Bitstream(bits=best_bits, metrics=metrics, source_revs=[rev.index])
+        # Stash intervals for downstream PLL fallback if needed.
+        bs.intervals = rev.interval_ns  # type: ignore[attr-defined]
+        return bs
 
 
 gcr_decoder = GCRDecoder()
