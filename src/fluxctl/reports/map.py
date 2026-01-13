@@ -191,14 +191,30 @@ def build_disk_map_from_tracksectors(tracks: list[TrackSectors]) -> DiskMap:
 
 
 def render_ascii(disk_map: DiskMap) -> str:
-    """Render a disk map as ASCII art suitable for terminal inspection."""
+    """Render a disk map as ASCII art suitable for terminal inspection.
 
-    lines: List[str] = []
-    for idx, sectors in enumerate(disk_map.tracks):
+    Tracks are grouped by head (side) so all H0 rows appear first, followed by
+    H1, which better matches common mental models of two-sided media. A short
+    legend is prepended to clarify glyph meanings.
+    """
+
+    lines: List[str] = [
+        "Legend: ",
+        f"  {STATE_TO_GLYPH['good']} good  {STATE_TO_GLYPH['weak']} weak  {STATE_TO_GLYPH['bad']} bad",
+    ]
+
+    # Reorder tracks by head then track number when IDs are present; otherwise
+    # retain original order.
+    ordering = list(range(len(disk_map.tracks)))
+    if disk_map.track_ids:
+        ordering = sorted(range(len(disk_map.tracks)), key=lambda i: (disk_map.track_ids[i][1], disk_map.track_ids[i][0]))
+
+    for idx in ordering:
+        sectors = disk_map.tracks[idx]
         track_label = f"Track {idx:02d}"
         if disk_map.track_ids:
             track, head = disk_map.track_ids[idx]
-            suffix = f"H{head}" if head else ""
+            suffix = f"H{head}"
             track_label = f"Track {track:02d}{suffix}"
         glyphs = "".join(STATE_TO_GLYPH.get(state, "?") for state in sectors)
         padded = glyphs.ljust(disk_map.max_sectors_per_track, STATE_TO_GLYPH["bad"])
@@ -279,4 +295,10 @@ def render_svg(disk_map: DiskMap) -> str:
     )
 
 
-__all__ = ["DiskMap", "build_disk_map", "render_ascii", "render_svg"]
+__all__ = [
+    "DiskMap",
+    "build_disk_map",
+    "build_disk_map_from_tracksectors",
+    "render_ascii",
+    "render_svg",
+]
