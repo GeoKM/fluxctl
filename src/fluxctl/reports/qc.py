@@ -20,9 +20,9 @@ from ..sector.models import Sector, TrackSectors
 from ..sector.reconstruct import build_track_sectors
 
 # Sectors with confidence lower than this threshold are treated as "weak" in the
-# QC report. This can be surfaced in future UI work alongside jitter and
-# drop-out metrics.
-WEAK_CONFIDENCE_THRESHOLD = 0.7
+# QC report. Lowered to 0.5 to avoid flagging otherwise clean captures as
+# suspect while still surfacing genuinely noisy decodes.
+WEAK_CONFIDENCE_THRESHOLD = 0.5
 
 
 @dataclass
@@ -58,6 +58,13 @@ class DiskQCReport:
     overall_confidence: float
     missing_tracks: int
     notes: List[str] = field(default_factory=list)
+    status: str = "unknown"
+    suspect_sectors: int = 0
+    total_sectors: int = 0
+    total_good_sectors: int = 0
+    total_bad_sectors: int = 0
+    total_weak_sectors: int = 0
+    total_missing_sectors: int = 0
 
     def to_dict(self) -> dict:
         """Return the QC report as a JSON-friendly dictionary."""
@@ -67,6 +74,13 @@ class DiskQCReport:
             "overall_confidence": self.overall_confidence,
             "missing_tracks": self.missing_tracks,
             "notes": self.notes,
+            "status": self.status,
+            "suspect_sectors": self.suspect_sectors,
+            "total_sectors": self.total_sectors,
+            "total_good_sectors": self.total_good_sectors,
+            "total_bad_sectors": self.total_bad_sectors,
+            "total_weak_sectors": self.total_weak_sectors,
+            "total_missing_sectors": self.total_missing_sectors,
         }
 
     def to_json(self) -> str:
@@ -85,7 +99,45 @@ class DiskQCReport:
             overall_confidence=data.get("overall_confidence", 0.0),
             missing_tracks=data.get("missing_tracks", 0),
             notes=data.get("notes", []),
+            status=data.get("status", "unknown"),
+            suspect_sectors=data.get("suspect_sectors", 0),
+            total_sectors=data.get("total_sectors", 0),
+            total_good_sectors=data.get("total_good_sectors", 0),
+            total_bad_sectors=data.get("total_bad_sectors", 0),
+            total_weak_sectors=data.get("total_weak_sectors", 0),
+            total_missing_sectors=data.get("total_missing_sectors", 0),
         )
+
+
+def _summarize_disk(tracks: List[TrackQC], missing_tracks: int) -> dict:
+    """Aggregate per-track QC into disk-level counters and status."""
+
+    # Ignore trailing tracks that decoded nothing but bad sectors; these are
+    # often empty over-captures beyond the real cylinder range (common on
+    # 40-track media imaged as 42 tracks). Trim only trailing all-bad tracks.
+    last_useful = None
+    for idx, track in enumerate(tracks):
+        if track.good_sectors or track.weak_sectors:
+            last_useful = idx
+    trimmed = tracks if last_useful is None else tracks[: last_useful + 1]
+
+    total_sectors = sum(track.total_sectors for track in trimmed)
+    total_good = sum(track.good_sectors for track in trimmed)
+    total_bad = sum(track.bad_sectors for track in trimmed)
+    total_weak = sum(track.weak_sectors for track in trimmed)
+    total_missing = sum(track.missing_sectors for track in trimmed)
+    suspect = total_bad + total_missing + total_weak
+    status = "good" if suspect == 0 and missing_tracks == 0 else "suspect"
+
+    return {
+        "total_sectors": total_sectors,
+        "total_good": total_good,
+        "total_bad": total_bad,
+        "total_weak": total_weak,
+        "total_missing": total_missing,
+        "suspect": suspect,
+        "status": status,
+    }
 
 
 def _infer_expected_sector_count(track_sectors: List[Sector]) -> int:
@@ -285,11 +337,20 @@ def build_qc_report(
     )
     missing_tracks = _compute_missing_tracks(image, layout, track_step)
     notes = ["bad_sectors includes no_data + crc_errors"]
+
+    disk_summary = _summarize_disk(track_reports, missing_tracks)
     return DiskQCReport(
         tracks=track_reports,
         overall_confidence=overall_confidence,
         missing_tracks=missing_tracks,
         notes=notes,
+        status=disk_summary["status"],
+        suspect_sectors=disk_summary["suspect"],
+        total_sectors=disk_summary["total_sectors"],
+        total_good_sectors=disk_summary["total_good"],
+        total_bad_sectors=disk_summary["total_bad"],
+        total_weak_sectors=disk_summary["total_weak"],
+        total_missing_sectors=disk_summary["total_missing"],
     )
 
 
@@ -301,6 +362,10 @@ def write_qc_report_text(report: DiskQCReport, path: Path, layout: LayoutDescrip
         f"Tracks analysed: {len(report.tracks)}",
         f"Overall confidence: {report.overall_confidence:.2f}",
         f"Missing tracks: {report.missing_tracks}",
+        f"Status: {report.status}",
+        f"Sectors: total={report.total_sectors} good={report.total_good_sectors} "
+        f"weak={report.total_weak_sectors} missing={report.total_missing_sectors} "
+        f"bad={report.total_bad_sectors} suspect={report.suspect_sectors}",
     ]
     if report.notes:
         lines.append("Notes:")

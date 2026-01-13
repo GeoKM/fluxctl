@@ -29,6 +29,9 @@ def test_qc_report_counts_good_disk() -> None:
     assert first_track.confidence > 0.5
     assert report.overall_confidence > 0.5
     assert first_track.crc_errors == 0
+    assert report.status == "good"
+    assert report.suspect_sectors == 0
+    assert report.total_sectors == sum(track.total_sectors for track in report.tracks[:40])
 
 
 def test_qc_json_roundtrip_and_failure_detection() -> None:
