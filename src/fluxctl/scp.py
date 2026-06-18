@@ -106,6 +106,15 @@ def _parse_flux_bytes(flux_bytes: bytes, timebase_ns: float) -> Sequence[int]:
 
 
 def parse_scp(path: Path) -> SCPImage:
+    """Parse an SCP image, with a Greaseweazle fallback for newer variants.
+
+    Some captures (e.g., produced by newer Greaseweazle builds) ship with
+    track headers that our minimal parser does not yet understand. Rather
+    than fail with empty revolutions, fall back to Greaseweazle's own SCP
+    reader when available so we can still obtain flux timings.
+    """
+
+    # First try the built-in lightweight parser.
     data = path.read_bytes()
     version, revolutions, start_track, end_track, timebase_ns = _read_header(data)
 
@@ -217,6 +226,56 @@ def parse_scp(path: Path) -> SCPImage:
             else:
                 intervals = array("I")
 
+            # Some images (e.g., certain v2.4 SCP captures) leave the
+            # per-revolution headers zeroed but still store flux data after
+            # the TRK header. Salvage a single revolution from the remaining
+            # block bytes so downstream decoders can attempt recovery.
+            if (
+                not intervals
+                and length_words == 0
+                and offset_bytes == 0
+                and rev_index == 0
+                and len(track_block) > header_length
+            ):
+                flux_bytes = track_block[header_length:]
+                intervals = _parse_flux_bytes(flux_bytes, timebase_ns)
+
+                if intervals:
+                    # Split the flux list into evenly sized revolutions based on
+                    # the declared revolution count so downstream decoders can
+                    # make multiple passes across the track.
+                    total_ns = sum(intervals)
+                    target_ns = total_ns / max(revolutions, 1)
+                    accum_ns = 0
+                    accum: list[int] = []
+                    splits: list[list[int]] = []
+                    for interval in intervals:
+                        accum.append(interval)
+                        accum_ns += interval
+                        if accum_ns >= target_ns and len(splits) < max(revolutions - 1, 0):
+                            splits.append(accum)
+                            accum = []
+                            accum_ns = 0
+                    if accum:
+                        splits.append(accum)
+                    if not splits:
+                        splits = [list(intervals)]
+
+                    for split_idx, split in enumerate(splits):
+                        rev_ns = int(round(sum(split)))
+                        revolution_flux.append(
+                            RevolutionFlux(
+                                index=split_idx,
+                                interval_ns=split,
+                                index_time_ns=rev_ns,
+                                data_length_bytes=len(split) * 2,
+                                data_offset=None,
+                            )
+                        )
+                    # Skip the standard rev loop; we've populated all revs.
+                    break
+                index_ticks = sum(intervals) if intervals else 0
+
             index_time_ns = int(round(index_ticks * timebase_ns))
             revolution_flux.append(
                 RevolutionFlux(
@@ -230,11 +289,107 @@ def parse_scp(path: Path) -> SCPImage:
 
         tracks.append(TrackFlux(track=track_num, side=head_num, revolutions=revolution_flux))
 
-    return SCPImage(
+    image = SCPImage(
         path=path,
         version=version,
         revolutions_per_track=revolutions,
         timebase_ns=timebase_ns,
+        tracks=tracks,
+        warnings=warnings,
+    )
+
+    # If every revolution decoded to an empty interval list, try Greaseweazle.
+    if all(not rev.interval_ns for trk in image.tracks for rev in trk.revolutions):
+        gw_image = _parse_with_greaseweazle(path)
+        if gw_image is not None:
+            gw_image.warnings.extend(warnings)
+            gw_image.warnings.append("Parsed via Greaseweazle fallback SCP reader")
+            return gw_image
+
+    return image
+
+
+def _parse_with_greaseweazle(path: Path) -> SCPImage | None:
+    """Fallback SCP parser backed by Greaseweazle's implementation."""
+
+    try:
+        from greaseweazle.image.scp import SCP as GWSCP
+    except Exception:
+        return None
+
+    data = path.read_bytes()
+    gw = GWSCP(str(path), None)
+    try:
+        gw.from_bytes(data)
+    except Exception:
+        return None
+
+    tracks: List[TrackFlux] = []
+    warnings: List[str] = []
+    ns_per_tick = 1_000_000_000.0 / GWSCP.sample_freq
+
+    for track_nr, track in gw.to_track.items():
+        cyl = track_nr // 2
+        side = track_nr % 2
+        flux = gw.get_track(cyl, side)
+        if flux is None or not flux.list:
+            continue
+
+        rev_lengths = flux.index_list or []
+        revs: List[RevolutionFlux] = []
+        tick_accum = 0
+        rev_idx = 0
+        rev_intervals: list[int] = []
+        target = rev_lengths[rev_idx] if rev_lengths else None
+
+        for t in flux.list:
+            tick_accum += t
+            rev_intervals.append(int(round(t * ns_per_tick)))
+            if target is not None and tick_accum >= target:
+                index_ns = int(round(target * ns_per_tick))
+                revs.append(
+                    RevolutionFlux(
+                        index=rev_idx,
+                        interval_ns=rev_intervals,
+                        index_time_ns=index_ns,
+                        data_length_bytes=len(rev_intervals) * 2,
+                        data_offset=None,
+                    )
+                )
+                rev_idx += 1
+                tick_accum = 0
+                rev_intervals = []
+                target = rev_lengths[rev_idx] if rev_idx < len(rev_lengths) else None
+
+        if rev_intervals:
+            index_ns = int(round((tick_accum or (rev_lengths[rev_idx] if rev_idx < len(rev_lengths) else 0)) * ns_per_tick))
+            revs.append(
+                RevolutionFlux(
+                    index=rev_idx,
+                    interval_ns=rev_intervals,
+                    index_time_ns=index_ns,
+                    data_length_bytes=len(rev_intervals) * 2,
+                    data_offset=None,
+                )
+            )
+
+        if revs:
+            tracks.append(
+                TrackFlux(
+                    track=cyl,
+                    side=side,
+                    revolutions=revs,
+                )
+            )
+
+    if not tracks:
+        return None
+
+    return SCPImage(
+        path=path,
+        version=version if 'version' in locals() else 0,
+        revolutions_per_track=len(tracks[0].revolutions) if tracks else 0,
+        timebase_ns=ns_per_tick,
         tracks=tracks,
         warnings=warnings,
     )
