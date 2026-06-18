@@ -360,7 +360,11 @@ def reconstruct_gcr_track(
             bits = _pll_bits(bitstream.intervals)  # type: ignore[arg-type]
         except Exception:
             bits = []
-    sync_marks = _find_sync_marks(bits)
+    # Find sync marks; if none are found at the default threshold, retry with
+    # a looser threshold to cope with captures that have shorter sync runs.
+    sync_marks = _find_sync_marks(bits, threshold=SYNC_THRESHOLD)
+    if not sync_marks and SYNC_THRESHOLD > 12:
+        sync_marks = _find_sync_marks(bits, threshold=SYNC_THRESHOLD // 2)
     sectors: dict[int, Sector] = {}
     weak = 0
 
