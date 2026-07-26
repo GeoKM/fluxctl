@@ -17,8 +17,10 @@ def test_disk_map_generation_counts_and_ascii() -> None:
 
     ascii_map = render_ascii(disk_map)
     lines = ascii_map.splitlines()
-    assert len(lines) == disk_map.total_tracks
-    assert all(line.startswith("Track") for line in lines[:3])
+    track_lines = [line for line in lines if line.startswith("Track")]
+    assert len(track_lines) == disk_map.total_tracks
+    assert lines[0].startswith("Legend")
+    assert all(line.startswith("Track") for line in track_lines[:3])
     assert any("×" in line for line in lines)
 
 

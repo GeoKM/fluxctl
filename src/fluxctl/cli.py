@@ -613,6 +613,43 @@ def _track_in_range(range_expr: str, track: int) -> bool:
         return False
 
 
+def _parse_write_sector_spec(write_sector: str) -> tuple[int, int, bytes]:
+    """Parse ``T:S:HEX`` patch input into track, sector ID, and payload bytes."""
+
+    parts = write_sector.split(":", 2)
+    if len(parts) != 3:
+        raise ValueError("Expected T:S:HEX")
+    track_str, sector_str, payload_hex = parts
+    if not track_str or not sector_str or not payload_hex:
+        raise ValueError("Expected T:S:HEX")
+    return int(track_str), int(sector_str), bytes.fromhex(payload_hex)
+
+
+def _apply_sector_patch(
+    track_data: list[TrackSectors], track_idx: int, sector_idx: int, payload: bytes
+) -> None:
+    """Apply a full-sector payload to matching decoded sectors."""
+
+    patched = False
+    for ts in track_data:
+        if ts.track != track_idx:
+            continue
+        for sec in ts.sectors:
+            if sec.sector_id != sector_idx:
+                continue
+            expected_size = sec.size
+            if len(payload) != expected_size:
+                raise FluxctlError(
+                    f"Patch payload is {len(payload)} bytes; sector {track_idx}:{sector_idx} requires {expected_size} bytes"
+                )
+            sec.data = payload
+            sec.crc_ok = True
+            sec.confidence = 1.0
+            patched = True
+    if not patched:
+        raise FluxctlError(f"Sector {track_idx}:{sector_idx} not found in decoded image")
+
+
 def _expected_bytes_for_layout(layout: LayoutDescriptor) -> int:
     if layout.tracks <= 0 or layout.sides <= 0 or layout.sector_size <= 0:
         return 0
@@ -1364,18 +1401,10 @@ def patch(
     load_builtin_exporters()
     track_data = _decode_tracks(path, layout)
     try:
-        track_str, payload = write_sector.split(":", 1)
-        t_str, s_str = track_str.split(":")
+        track_idx, sector_idx, payload = _parse_write_sector_spec(write_sector)
     except ValueError as exc:
         raise typer.BadParameter("Expected T:S:HEX") from exc
-    track_idx = int(t_str)
-    sector_idx = int(s_str)
-    for ts in track_data:
-        if ts.track == track_idx:
-            for sec in ts.sectors:
-                if sec.sector_id == sector_idx:
-                    sec.data = bytes.fromhex(payload)
-                    sec.state = "good"
+    _apply_sector_patch(track_data, track_idx, sector_idx, payload)
     exporter_info = registry.exporter.get("raw")
     if exporter_info is None:
         raise ExportError("Raw exporter not available")
