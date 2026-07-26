@@ -100,8 +100,8 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
     first revolution, reconstructs sectors, and classifies each sector using
     CRC status and decoder confidence:
 
-    * ``good``: ``crc_ok`` and confidence >= ``0.8``
-    * ``weak``: ``crc_ok`` but confidence < ``0.8``
+    * ``good``: ``crc_ok`` and confidence >= ``0.7``
+    * ``weak``: ``crc_ok`` but confidence < ``0.7``
     * ``bad``: missing data or CRC failure
 
     Tracks with fewer sectors than the maximum observed are padded with
