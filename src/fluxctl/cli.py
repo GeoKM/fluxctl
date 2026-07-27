@@ -936,8 +936,14 @@ def compare(
     encoding_a: str = typer.Option("auto", "--encoding-a", help="Encoding for input A (mfm, fm, gcr, auto for SCP)"),
     encoding_b: str = typer.Option("auto", "--encoding-b", help="Encoding for input B (mfm, fm, gcr, auto for SCP)"),
     json_out: Optional[Path] = typer.Option(None, "--json-out", help="Write compare report to JSON"),
+    prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar for --json-out"),
 ):
-    """Compare two images by content; SCP inputs are decoded before comparison."""
+    """Compare two images by content; SCP inputs are decoded before comparison.
+
+    Examples:
+    fluxctl compare disk.scp disk.img --layout-a ibm_mfm_720k --json-out diff.json
+    fluxctl compare before.img after.img
+    """
 
     bytes_a, meta_a = _image_bytes_for_compare(a, layout_a, encoding_a)
     bytes_b, meta_b = _image_bytes_for_compare(b, layout_b, encoding_b)
@@ -972,6 +978,34 @@ def compare(
     if json_out:
         json_out.parent.mkdir(parents=True, exist_ok=True)
         json_out.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        prov_target = prov_out or json_out.with_suffix(json_out.suffix + ".provenance.json")
+        record = ProvenanceRecord(
+            tool_name="fluxctl",
+            tool_version=__version__,
+            operation="compare",
+            input_path=a,
+            input_sha256=sha256_file(a),
+            output_path=json_out,
+            output_sha256=ProvenanceRecord.sha256_file(json_out),
+            parameters={
+                "path_a": str(a),
+                "path_b": str(b),
+                "layout_a": layout_a or "",
+                "layout_b": layout_b or "",
+                "encoding_a": encoding_a,
+                "encoding_b": encoding_b,
+                "json_out": str(json_out),
+            },
+            plugins={"decoder_a": meta_a["encoding"], "decoder_b": meta_b["encoding"]},
+            decoder=f"{meta_a['encoding']},{meta_b['encoding']}",
+            evidence=[
+                f"path_b={b}",
+                f"path_b_sha256={sha256_file(b)}",
+                f"decoded_sha256_a={sha_a}",
+                f"decoded_sha256_b={sha_b}",
+            ],
+        )
+        write_provenance(record, prov_target)
         typer.echo(f"Wrote compare report to {json_out}")
 
     raise typer.Exit(code=0 if identical else 1)
@@ -1251,11 +1285,19 @@ def visualize(
 def convert(
     path: Path = typer.Argument(..., exists=True, readable=True),
     to: str = typer.Option(..., "--to", help="Exporter key (raw, imd, adf, d64, g64)"),
-    out: Path = typer.Option(..., "--out"),
-    layout: Optional[str] = typer.Option(None, "--layout", help="Layout identifier for reconstruction"),
+    out: Path = typer.Option(..., "--out", help="Destination image path"),
+    layout: Optional[str] = typer.Option(None, "--layout", help="Layout ID for SCP reconstruction or flat image geometry"),
     encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding for SCP sources"),
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar output"),
 ):
+    """Convert SCP, IMD, or flat sector images to a supported output format.
+
+    Examples:
+    fluxctl convert disk.scp --layout ibm_mfm_720k --to raw --out disk.img
+    fluxctl convert disk.img --layout ibm_mfm_720k --to imd --out disk.imd
+    fluxctl convert c64.scp --layout commodore_gcr_1541_170k --to g64 --out disk.g64
+    """
+
     load_builtin_exporters()
     layout_desc = ensure_layout_loaded(layout) if layout else None
     decoder_used = layout_desc.encoding if layout_desc else encoding
@@ -1429,10 +1471,20 @@ def decode(
 @_handle_cli_errors
 def patch(
     path: Path = typer.Argument(..., exists=True, readable=True),
-    layout: str = typer.Option(..., "--layout"),
-    write_sector: str = typer.Option(..., "--write-sector", help="T:S:HEX or T:H:S:HEX"),
-    out: Path = typer.Option(..., "--out"),
+    layout: str = typer.Option(..., "--layout", help="Layout ID used to decode and re-export the image"),
+    write_sector: str = typer.Option(
+        ..., "--write-sector", help="Patch target as T:S:HEX or side-aware T:H:S:HEX"
+    ),
+    out: Path = typer.Option(..., "--out", help="Destination raw image path"),
+    prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar output"),
 ):
+    """Patch one full sector and export a raw image.
+
+    Use T:S:HEX only when the sector is unambiguous. On double-sided media,
+    use T:H:S:HEX, for example 0:1:1:DEADBEEF... for track 0, head 1,
+    sector 1.
+    """
+
     layout_desc = ensure_layout_loaded(layout)
     load_builtin_exporters()
     track_data = _decode_tracks(path, layout)
@@ -1467,7 +1519,7 @@ def patch(
         decoder=layout_desc.encoding,
         encoder=exporter_info.name,
     )
-    write_provenance(provenance, out.with_suffix(out.suffix + ".provenance.json"))
+    write_provenance(provenance, prov_out or out.with_suffix(out.suffix + ".provenance.json"))
     out.with_suffix(out.suffix + ".patchlog.json").write_text(
         json.dumps({"patched": write_sector}, indent=2), encoding="utf-8"
     )

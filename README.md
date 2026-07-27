@@ -29,12 +29,15 @@ fluxctl probe disk.scp
 
 # Compare two images (SCP decoded on the fly)
 fluxctl compare a.scp b.img --json-out diff.json
+fluxctl compare before.img after.img
 
 # Quality reports and maps
 fluxctl qc disk.scp --json-out qc.json
 fluxctl visualize disk.scp --format ascii --out map.txt
 
 # Export / convert
+fluxctl convert disk.scp --to raw --out disk.img --layout ibm_mfm_720k
+fluxctl convert disk.img --to imd --out disk.imd --layout ibm_mfm_720k
 fluxctl convert disk.scp --to d64 --out disk.d64 --layout commodore_gcr_1541_170k
 fluxctl convert disk.scp --to g64 --out disk.g64 --layout commodore_gcr_1541_170k
 fluxctl convert disk.img --to raw --out copy.img
@@ -47,6 +50,9 @@ fluxctl extract disk.scp --layout ibm_mfm_720k --path README.TXT --out readme.bi
 # Per-track inspection
 fluxctl sectors disk.scp --track 0 --head 0 --encoding mfm
 fluxctl dump disk.scp --layout ibm_mfm_720k --track 0 --side 0 --sector 1
+
+# Patch one full sector and export a raw image
+fluxctl patch disk.scp --layout ibm_mfm_720k --write-sector 0:0:1:DEADBEEF... --out patched.img
 ```
 
 ### Commodore exports
@@ -116,4 +122,18 @@ Python fallback.
 See [AGENTS.md](AGENTS.md) for coding standards, workflows, and review expectations.
 
 ## Provenance
-All commands emit provenance sidecars alongside outputs (e.g. `map.txt.provenance.json`). Records capture tool version, inputs, outputs, parameters, and timestamps so artefacts can be verified later.
+Commands that create output files write provenance sidecars by default:
+
+- `convert --out disk.img` writes `disk.img.provenance.json`.
+- `qc --json-out qc.json` or `--text-out qc.txt` writes a sidecar for the first report path.
+- `visualize --out map.txt` writes `map.txt.provenance.json`.
+- `extract --out file.bin` writes `file.bin.provenance.json`.
+- `compare --json-out diff.json` writes `diff.json.provenance.json`.
+- `patch --out patched.img` writes `patched.img.provenance.json` and a separate patch log.
+
+Use `--prov-out custom.provenance.json` on commands that support it to choose
+the sidecar path. Terminal-only commands such as `info`, `probe`, `sectors`,
+`dump`, and `extract --list` print results but do not create sidecars unless a
+file output option is used. Provenance records capture tool version, inputs,
+outputs, hashes, parameters, timestamps, and decoder/exporter identifiers so
+artefacts can be verified later.
