@@ -17,7 +17,7 @@ from ..decoding import Decoder
 from ..exceptions import FluxDecodeError
 from ..models import LayoutDescriptor, SCPImage, TrackFlux
 from ..sector.models import Sector, TrackSectors
-from ..sector.reconstruct import build_track_sectors
+from ..sector.reconstruct import build_track_sectors_from_revolutions
 
 # Sectors with confidence lower than this threshold are treated as "weak" in the
 # QC report. Lowered to 0.5 to avoid flagging otherwise clean captures as
@@ -251,8 +251,8 @@ def build_qc_report(
 ) -> DiskQCReport:
     """Analyse an image and build a QC report.
 
-    Each track/head pair is decoded using the supplied ``decoder`` and the first
-    available revolution. Sectors are reconstructed and tallied, with CRC
+    Each track/head pair is decoded using the supplied ``decoder`` across all
+    available revolutions. Sectors are reconstructed and tallied, with CRC
     failures and low-confidence decodes highlighted. Tracks that fail to decode
     are represented with zero confidence and a single bad sector placeholder so
     that the CLI and report writers can flag the issue clearly.
@@ -263,7 +263,7 @@ def build_qc_report(
     encoding = layout.encoding if layout else getattr(decoder, "encoding", None)
     for track_flux in image.tracks:
         logical_track = track_flux.track // max(track_step, 1)
-        if layout and logical_track >= layout.tracks * layout.sides:
+        if layout and (logical_track >= layout.tracks or track_flux.side >= layout.sides):
             continue
         try:
             if not track_flux.revolutions:
@@ -284,8 +284,8 @@ def build_qc_report(
                     )
                 track_sectors = candidate
             else:
-                track_sectors = build_track_sectors(
-                    track_flux.revolutions[0],
+                track_sectors = build_track_sectors_from_revolutions(
+                    track_flux.revolutions,
                     decoder,
                     cylinder=track_flux.track,
                     head=track_flux.side,
@@ -293,6 +293,7 @@ def build_qc_report(
                     if layout
                     else expected_hint or None,
                     encoding=encoding,
+                    timebase_ns=image.timebase_ns,
                 )
             expected, missing = _resolve_expected_and_missing(
                 track_sectors,
