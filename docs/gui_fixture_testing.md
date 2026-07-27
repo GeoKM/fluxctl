@@ -9,13 +9,29 @@ shape later implementation work.
   root directory entries.
 - `Commodore-1010-DSDD-MFM-Amiga-880K.scp` now probes as `amiga_ffs` and lists
   root directory entries.
+- `IBM-Generic-DSDD-MFM-IBMPC-1200K` 8-inch variants probe as
+  `ibm_mfm_8inch_1200k` but do not contain a valid FAT boot sector; filesystem
+  should stay unknown rather than falling back to `fat12`.
+- `IBM-Generic-DSDD-MFM-IBMPC-1200K-B.scp` probes as 8-inch IBM MFM/FAT12 and
+  lists the same four root files as HxC. The physical capture is 78 cylinders,
+  2 heads, 15 sectors/track; the FAT boot sector reports 2400 total sectors,
+  so filesystem listing must tolerate the boot-sector total exceeding the
+  captured physical sectors.
+- `IBM-Generic-DSDD-MFM-IBMPC-1200K-C.scp` probes as 8-inch IBM MFM/FAT12 and
+  represents an empty DOS disk. An empty Files panel is expected when the FAT
+  root directory contains no entries.
+- `IBM-6580-SSDD-FM-DisplayWriter-284K.scp` probes as
+  `ibm_displaywriter_fm_284k`, single-sided FM. Track 0 has 26 128-byte
+  sectors; tracks 1-76 have 15 256-byte sectors each. QC reports all 1,166
+  sectors good, and the Files panel lists IBM standard-label `HDR1` entries
+  such as `WPE`. Document extraction is not implemented yet because only the
+  label directory is decoded.
 
 ## Deferred GUI Work
 
-- The Files panel currently lists only the root directory. 1581 CBM DOS and
-  AmigaDOS both support directories and subdirectories, so Fluxctl Studio needs
-  filesystem navigation before workflows that operate on nested files can be
-  complete.
+- The Files panel currently lists only the root directory. FAT12, 1581 CBM DOS,
+  AmigaDOS, and other hierarchical filesystems need directory navigation before
+  workflows that operate on nested files can be complete.
 - Expected direction: make directory rows actionable, maintain a current path
   breadcrumb, and call `list_directory(path)` on filesystem plugins that support
   nested paths.

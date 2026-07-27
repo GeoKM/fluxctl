@@ -121,8 +121,8 @@ therefore follow the same behavior documented above.
 
 ## Optional integrations
 
-### Greaseweazle-assisted Amiga decoding
-Fluxctl can fall back to Greaseweazle’s Amiga codec for higher-fidelity PLL decoding. This is **optional**; when missing, fluxctl uses its own PLL/parser.
+### Greaseweazle-assisted PLL decoding
+Fluxctl can fall back to Greaseweazle’s Amiga and IBM FM/MFM codecs for higher-fidelity PLL decoding. This is **optional**; when missing, fluxctl uses its own PLL/parser.
 
 Steps:
 1. Get dependencies:

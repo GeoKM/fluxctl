@@ -109,17 +109,20 @@ class DiskQCReport:
         )
 
 
-def _summarize_disk(tracks: List[TrackQC], missing_tracks: int) -> dict:
+def _summarize_disk(tracks: List[TrackQC], missing_tracks: int, *, trim_trailing_empty: bool = True) -> dict:
     """Aggregate per-track QC into disk-level counters and status."""
 
     # Ignore trailing tracks that decoded nothing but bad sectors; these are
     # often empty over-captures beyond the real cylinder range (common on
     # 40-track media imaged as 42 tracks). Trim only trailing all-bad tracks.
-    last_useful = None
-    for idx, track in enumerate(tracks):
-        if track.good_sectors or track.weak_sectors:
-            last_useful = idx
-    trimmed = tracks if last_useful is None else tracks[: last_useful + 1]
+    if trim_trailing_empty:
+        last_useful = None
+        for idx, track in enumerate(tracks):
+            if track.good_sectors or track.weak_sectors:
+                last_useful = idx
+        trimmed = tracks if last_useful is None else tracks[: last_useful + 1]
+    else:
+        trimmed = tracks
 
     total_sectors = sum(track.total_sectors for track in trimmed)
     total_good = sum(track.good_sectors for track in trimmed)
@@ -339,7 +342,7 @@ def build_qc_report(
     missing_tracks = _compute_missing_tracks(image, layout, track_step)
     notes = ["bad_sectors includes no_data + crc_errors"]
 
-    disk_summary = _summarize_disk(track_reports, missing_tracks)
+    disk_summary = _summarize_disk(track_reports, missing_tracks, trim_trailing_empty=layout is None)
     return DiskQCReport(
         tracks=track_reports,
         overall_confidence=overall_confidence,
@@ -393,7 +396,7 @@ def build_qc_report_from_tracks(
         sum(track.confidence for track in track_reports) / len(track_reports) if track_reports else 0.0
     )
     missing_tracks = _compute_missing_tracks(image, layout, track_step)
-    disk_summary = _summarize_disk(track_reports, missing_tracks)
+    disk_summary = _summarize_disk(track_reports, missing_tracks, trim_trailing_empty=layout is None)
     return DiskQCReport(
         tracks=track_reports,
         overall_confidence=overall_confidence,

@@ -11,7 +11,7 @@ from .exceptions import FluxDecodeError
 from .geohints import LayoutHint
 from .models import Bitstream, LayoutDescriptor, SCPImage
 from .plugins import registry
-from .sector.reconstruct import build_track_sectors
+from .sector.reconstruct import build_track_sectors_from_revolutions
 from .sector.models import TrackSectors
 from .filesystems import TrackSectorImage
 from .filesystems.cpm import CPMFilesystem
@@ -46,6 +46,21 @@ def logical_track_count(track_ids: Iterable[int], step: int) -> int:
     if not ids:
         return 0
     return ids[-1] // max(step, 1) + 1
+
+
+def _tracks_with_flux(image: SCPImage):
+    return [
+        track
+        for track in image.tracks
+        if any(getattr(rev, "interval_ns", None) for rev in track.revolutions)
+    ]
+
+
+def _geometry_tracks_for_encoding(image: SCPImage, encoding: str | None):
+    active_tracks = _tracks_with_flux(image)
+    if encoding == "fm" and active_tracks:
+        return active_tracks
+    return image.tracks
 
 
 def _decode_once(decoder: Decoder, image: SCPImage) -> Optional[Bitstream]:
@@ -117,18 +132,20 @@ def _estimate_geometry(image: SCPImage, decoder: Decoder, sample_tracks: int = 6
     sector_sizes: list[int] = []
     track_samples = 0
     tracks_with_sectors = 0
-    for track_flux in image.tracks:
+    for track_flux in _tracks_with_flux(image):
         if not track_flux.revolutions:
             continue
         track_samples += 1
         try:
             if getattr(decoder, "encoding", None) == "gcr" and hasattr(decoder, "set_track"):
                 decoder.set_track(track_flux.track)
-            track_sectors = build_track_sectors(
-                track_flux.revolutions[0],
+            track_sectors = build_track_sectors_from_revolutions(
+                track_flux.revolutions,
                 decoder,
                 cylinder=track_flux.track,
                 head=track_flux.side,
+                encoding=getattr(decoder, "encoding", None),
+                timebase_ns=image.timebase_ns,
             )
         except FluxDecodeError:
             continue
@@ -161,13 +178,13 @@ def _estimate_geometry(image: SCPImage, decoder: Decoder, sample_tracks: int = 6
 
 
 def _layout_geometry_score(
-    desc: LayoutDescriptor, image: SCPImage, logical_tracks: int, heads_present: set[int]
+    desc: LayoutDescriptor, observed_entries: int, logical_tracks: int, heads_present: set[int]
 ) -> float:
     """Score how well a layout matches the observed track/head counts."""
 
     expected_entries = desc.tracks * desc.sides
-    entries_diff = abs(expected_entries - len(image.tracks))
-    entries_score = 1.0 - (entries_diff / max(expected_entries, len(image.tracks), 1))
+    entries_diff = abs(expected_entries - observed_entries)
+    entries_score = 1.0 - (entries_diff / max(expected_entries, observed_entries, 1))
     cyl_diff = abs(desc.tracks - logical_tracks)
     cyl_score = 1.0 - (cyl_diff / max(desc.tracks, logical_tracks, 1))
     heads_score = 1.0 if len(heads_present) == desc.sides else 0.7 if len(heads_present) == 1 else 0.4
@@ -266,8 +283,9 @@ def detect_layout(
     if plugin is None:
         return None
 
-    track_ids = [track.track for track in image.tracks]
-    heads_present = {track.side for track in image.tracks}
+    geometry_tracks = _geometry_tracks_for_encoding(image, encoding)
+    track_ids = [track.track for track in geometry_tracks]
+    heads_present = {track.side for track in geometry_tracks}
     step = infer_track_step(track_ids)
     logical_tracks = logical_track_count(track_ids, step)
     geometry = _estimate_geometry(image, plugin.entry)
@@ -278,14 +296,15 @@ def detect_layout(
     best: Optional[LayoutCandidate] = None
     for desc in layouts:
         expected_entries = desc.tracks * desc.sides
-        entries_diff = abs(expected_entries - len(image.tracks))
-        score = 1.0 - (entries_diff / max(expected_entries, len(image.tracks), 1))
+        observed_entries = len(geometry_tracks)
+        entries_diff = abs(expected_entries - observed_entries)
+        score = 1.0 - (entries_diff / max(expected_entries, observed_entries, 1))
         expected_cylinders = desc.tracks
         cyl_diff = abs(expected_cylinders - logical_tracks)
         score = (score * 0.6) + (1.0 - (cyl_diff / max(expected_cylinders, logical_tracks, 1))) * 0.4
         evidence = [
             f"expected_entries={expected_entries}",
-            f"observed_entries={len(image.tracks)}",
+            f"observed_entries={observed_entries}",
             f"expected_cylinders={expected_cylinders}",
             f"logical_cylinders={logical_tracks}",
         ]
@@ -427,13 +446,14 @@ def _probe_cpm_filesystem(image: SCPImage, decoder: Decoder, desc: LayoutDescrip
         if not track_flux.revolutions:
             continue
         try:
-            track_sectors = build_track_sectors(
-                track_flux.revolutions[0],
+            track_sectors = build_track_sectors_from_revolutions(
+                track_flux.revolutions,
                 decoder,
                 cylinder=track_flux.track,
                 head=track_flux.side,
                 expected_sectors=desc.sectors_per_track,
                 encoding=desc.encoding,
+                timebase_ns=image.timebase_ns,
             )
         except FluxDecodeError:
             continue
@@ -457,8 +477,10 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
     if not registry.layout:
         return None
 
-    track_ids = [track.track for track in image.tracks]
-    heads_present = {track.side for track in image.tracks}
+    active_tracks = _tracks_with_flux(image)
+    default_geometry_tracks = active_tracks or image.tracks
+    track_ids = [track.track for track in default_geometry_tracks]
+    heads_present = {track.side for track in default_geometry_tracks}
     step = infer_track_step(track_ids)
     logical_tracks = logical_track_count(track_ids, step)
 
@@ -482,10 +504,15 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
     for desc in registry.layout.values():
         if desc.encoding not in registry.encoding:
             continue
-        score = _layout_geometry_score(desc, image, logical_tracks, heads_present)
+        geometry_tracks = _geometry_tracks_for_encoding(image, desc.encoding)
+        track_ids = [track.track for track in geometry_tracks]
+        heads_present = {track.side for track in geometry_tracks}
+        step = infer_track_step(track_ids)
+        logical_tracks = logical_track_count(track_ids, step)
+        score = _layout_geometry_score(desc, len(geometry_tracks), logical_tracks, heads_present)
         evidence = [
             f"expected_entries={desc.tracks * desc.sides}",
-            f"observed_entries={len(image.tracks)}",
+            f"observed_entries={len(geometry_tracks)}",
             f"expected_cylinders={desc.tracks}",
             f"logical_cylinders={logical_tracks}",
         ]
@@ -628,6 +655,9 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
             coverage = (tracks_with_sectors / track_samples) if track_samples else 1.0
             coverage_factor = coverage if coverage < 0.5 and gcr_conf < 0.9 else 1.0
             score += 0.4 * gcr_conf * coverage_factor
+            if gcr_conf < 0.3:
+                score -= 0.5
+                evidence.append("gcr_low_conf_penalty=1")
             if gcr_conf < 0.6 and coverage < 0.9:
                 score -= 0.2
                 evidence.append("gcr_conf_penalty=1")

@@ -80,6 +80,7 @@ def main(ctx: typer.Context) -> None:
 
 
 def _get_decoder(encoding: str):
+    load_builtin_decoders()
     if encoding == "mfm":
         return mfm_decoder
     plugin = registry.encoding.get(encoding)
@@ -169,7 +170,7 @@ def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
                 "greaseweazle",
                 "warn",
                 "optional package not importable",
-                "Install with `.venv/bin/pip install -e .[greaseweazle]` for Amiga PLL fallback support.",
+                "Install with `.venv/bin/pip install -e .[greaseweazle]` for Amiga and IBM FM/MFM PLL fallback support.",
             )
         )
     else:
@@ -697,7 +698,6 @@ LAYOUT_FILESYSTEM_HINTS: dict[str, str] = {
     "generic_mfm_8inch_500k": "rt11",
     "dec_dec_rx02_rx02_250k": "rt11",
     "ibm_displaywriter_fm_284k": "displaywriter",
-    "ibm_mfm_8inch_1200k": "fat12",
     "commodore_gcr_1541_cpm_170k": "cpm",
     "commodore_gcr_1571_341k": "cbm_dos",
     "commodore_mfm_1581_800k": "cbm_dos",
@@ -968,6 +968,19 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
 
     ext_for_layouts = ".imd" if ext == ".imd" else ext
     if ext == ".imd" and imd_geom:
+        if imd_filesystem_name == "displaywriter":
+            lid = "ibm_displaywriter_fm_284k"
+            layout = registry.layout.get(lid)
+            return [
+                CandidateFormat(
+                    candidate_id=lid,
+                    encoding=layout.encoding if layout else "fm",
+                    layout_id=lid,
+                    filesystem=imd_filesystem_name,
+                    score=1.0,
+                    evidence=evidence + [f"layout={lid}", "filesystem=displaywriter"],
+                )
+            ]
         # Fast-path common IMD geometries.
         if imd_geom.sector_size == 128 and imd_geom.spt == 26 and imd_geom.tracks >= 77:
             lid = "generic_mfm_8inch_500k"
@@ -985,14 +998,15 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
         if imd_geom.sector_size == 512 and imd_geom.spt in {15, 16} and imd_geom.heads == 2 and imd_geom.tracks >= 77:
             lid = "ibm_mfm_8inch_1200k" if registry.layout.get("ibm_mfm_8inch_1200k") else "ibm_mfm_1200k"
             layout = registry.layout.get(lid)
+            fs_name, fs_evidence = _filesystem_evidence_for_image(imd_image, path) if imd_image else (None, [])
             return [
                 CandidateFormat(
                     candidate_id=lid,
                     encoding=layout.encoding if layout else "mfm",
                     layout_id=lid,
-                    filesystem="fat12",
+                    filesystem=fs_name,
                     score=1.0,
-                    evidence=evidence + [f"layout={lid}", "filesystem=fat12"],
+                    evidence=evidence + [f"layout={lid}"] + ([f"filesystem={fs_name}"] if fs_name else []) + fs_evidence,
                 )
             ]
     def _imd_penalty(layout: LayoutDescriptor) -> int:
@@ -1555,7 +1569,20 @@ def extract(
     if file_path and out is None:
         raise typer.BadParameter("--out must be provided when --path is used")
 
-    image_obj = _prepare_image(path, layout, encoding)
+    selected_layout = layout
+    selected_encoding = encoding
+    if selected_layout is None and path.suffix.lower() == ".scp":
+        load_builtin_decoders()
+        load_builtin_layouts()
+        scp = parse_scp(path)
+        encoding_candidate = detect_encoding(scp, path=path)
+        if encoding_candidate:
+            selected_encoding = encoding_candidate.encoding
+            layout_candidate = detect_layout(scp, selected_encoding, path)
+            if layout_candidate:
+                selected_layout = layout_candidate.layout.layout_id
+
+    image_obj = _prepare_image(path, selected_layout, selected_encoding)
     filesystem = _detect_filesystem(image_obj)
 
     if filesystem is None:
@@ -1576,9 +1603,9 @@ def extract(
             input_sha256=sha256_file(path),
             output_path=out,
             output_sha256=ProvenanceRecord.sha256_bytes(raw_bytes),
-            parameters={"layout": layout or "", "encoding": encoding, "path": file_path or ""},
+            parameters={"layout": selected_layout or "", "encoding": selected_encoding, "path": file_path or ""},
             plugins={},
-            decoder=encoding,
+            decoder=selected_encoding,
             encoder=None,
         )
         prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
@@ -1607,9 +1634,9 @@ def extract(
         input_sha256=sha256_file(path),
         output_path=out,
         output_sha256=ProvenanceRecord.sha256_bytes(content),
-        parameters={"layout": layout or "", "encoding": encoding, "path": file_path or ""},
+        parameters={"layout": selected_layout or "", "encoding": selected_encoding, "path": file_path or ""},
         plugins={"filesystem": filesystem.__class__.__name__},
-        decoder=encoding,
+        decoder=selected_encoding,
         encoder=None,
     )
     write_provenance(record, prov_target)
