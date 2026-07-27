@@ -472,7 +472,19 @@ class FluxctlStudio(QMainWindow):
         if filename:
             self.current_path = Path(filename)
             self.file_label.setText(str(self.current_path))
+            self._clear_image_results()
             self.run_probe()
+
+    def _clear_image_results(self) -> None:
+        self.current_summary = None
+        self.files_table.setRowCount(0)
+        self.map_widget.set_disk_map(None)
+        self.summary_labels["layout"].setText("-")
+        self.summary_labels["encoding"].setText("-")
+        self.summary_labels["filesystem"].setText("-")
+        self.summary_labels["confidence"].setText("-")
+        self.summary_labels["size"].setText("-")
+        self.activity_label.setText("Ready")
 
     def run_doctor(self) -> None:
         self._run_job("doctor", services.doctor_report, self._show_doctor)

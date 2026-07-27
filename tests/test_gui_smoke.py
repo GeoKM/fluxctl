@@ -84,6 +84,19 @@ def test_disk_map_widget_groups_double_sided_media_by_head() -> None:
     assert [track_id for _row_index, track_id, _sectors in groups[1][1]] == [(0, 1), (1, 1)]
 
 
+def test_opening_new_image_clears_file_panel() -> None:
+    window = FluxctlStudio()
+    window.files_table.setRowCount(1)
+    window.summary_labels["filesystem"].setText("cbm_dos")
+
+    window._clear_image_results()
+
+    assert window.files_table.rowCount() == 0
+    assert window.summary_labels["filesystem"].text() == "-"
+    assert window.map_widget.disk_map is None
+    window.close()
+
+
 def test_disk_map_widget_tooltip_includes_sector_metadata() -> None:
     disk_map = DiskMap(
         tracks=[["weak"]],

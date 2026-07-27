@@ -5,6 +5,8 @@ from fluxctl import studio_services as services
 
 FIXTURE_IMG = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.img")
 FIXTURE_D64 = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64-170K.d64")
+FIXTURE_1581_D81 = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MFM-C64-800K.d81")
+FIXTURE_ADF = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.adf")
 
 
 def test_studio_doctor_report_matches_cli_shape() -> None:
@@ -47,6 +49,24 @@ def test_studio_map_preserves_commodore_gcr_zones() -> None:
     assert row_lengths[17:24] == [19] * 7
     assert row_lengths[24:30] == [18] * 6
     assert row_lengths[30:] == [17] * 10
+
+
+def test_studio_lists_1581_cbm_dos_files() -> None:
+    summary = services.summarize_image(FIXTURE_1581_D81)
+    entries = services.list_files(FIXTURE_1581_D81, summary.layout_id, summary.encoding)
+
+    assert summary.filesystem == "cbm_dos_1581"
+    assert any(entry.name == "HOW TO USE" for entry in entries)
+    assert any(entry.name == "PIC.DIR" and entry.kind == "<DIR>" for entry in entries)
+
+
+def test_studio_lists_amiga_dos_root_entries() -> None:
+    summary = services.summarize_image(FIXTURE_ADF)
+    entries = services.list_files(FIXTURE_ADF, summary.layout_id, summary.encoding)
+
+    assert summary.filesystem == "amiga_ffs"
+    assert any(entry.name == "Devs" and entry.kind == "<DIR>" for entry in entries)
+    assert any(entry.name == "Install" and entry.kind == "<DIR>" for entry in entries)
 
 
 def test_studio_command_runner_uses_current_fluxctl() -> None:

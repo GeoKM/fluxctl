@@ -621,6 +621,11 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
     if ext == ".img":
         return RawSectorImage(path.read_bytes())
     if ext == ".scp":
+        if layout_desc and layout_desc.layout_id.startswith("amiga_"):
+            track_data = _decode_amiga_tracks(path, layout_desc)
+            image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
+            image.layout = layout_desc
+            return image
         track_data = _decode_tracks(path, layout_id, encoding=encoding)
         image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size if layout_desc else None)
         if layout_desc:
@@ -637,6 +642,21 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
         image.layout = layout_desc
         return image
     return RawSectorImage(path.read_bytes())
+
+
+def _decode_amiga_tracks(path: Path, layout: LayoutDescriptor) -> list[TrackSectors]:
+    scp = parse_scp(path)
+    from .sector.reconstruct_amiga import reconstruct_amiga_greaseweazle, reconstruct_amiga_with_pll
+
+    track_data: list[TrackSectors] = []
+    for ts in scp.tracks:
+        if ts.track >= layout.tracks or ts.side >= layout.sides or not ts.revolutions:
+            continue
+        candidate = reconstruct_amiga_greaseweazle(ts.revolutions, ts.track, ts.side, timebase_ns=scp.timebase_ns)
+        if candidate is None:
+            candidate = reconstruct_amiga_with_pll(ts.revolutions, ts.track, ts.side, timebase_ns=scp.timebase_ns)
+        track_data.append(candidate)
+    return track_data
 
 
 FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
@@ -998,7 +1018,8 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
             continue
         image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
         image_obj.layout = layout
-        if not layout.track_sectors:
+        sector_base = int(layout.id_rules.get("sector_number_base", 1))
+        if not layout.track_sectors and sector_base == 1:
             image_obj.set_geometry(layout.sectors_per_track, layout.sides)
         filesystem_name, filesystem_evidence = _filesystem_evidence_for_image(image_obj, path)
         layout_evidence = evidence + [f"layout={layout.layout_id}"]
