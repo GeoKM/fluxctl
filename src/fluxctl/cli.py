@@ -26,10 +26,9 @@ from .reports.map import build_disk_map, build_disk_map_from_tracksectors, rende
 from .reports.qc import build_qc_report, build_qc_report_from_tracks, write_qc_report_json, write_qc_report_text
 from .scp import parse_scp, sha256_file
 from .sector.models import Sector, TrackNibbles, TrackSectors
-from .sector.reconstruct import build_track_sectors
+from .sector.reconstruct import build_track_sectors_from_revolutions
 from .sector.reconstruct_gcr import (
     extract_best_gcr_nibble_stream,
-    reconstruct_gcr_track,
     score_gcr_alignment,
 )
 from .external.hxc import probe_hxcfe
@@ -412,6 +411,8 @@ def _decode_tracks(
     selected_encoding = layout.encoding if layout else (encoding or "mfm")
     decoder = _get_decoder(selected_encoding)
     for ts in scp.tracks[: limit_tracks or None]:
+        if layout and (ts.track >= layout.tracks or ts.side >= layout.sides):
+            continue
         # Skip tracks with no captured revolutions.
         if not ts.revolutions:
             continue
@@ -434,11 +435,14 @@ def _decode_tracks(
                 decoder.set_track(ts.track)
             primary_bitstream = decoder.decode_revolution(revs[0])
             track_data.append(
-                reconstruct_gcr_track(
-                    primary_bitstream,
+                build_track_sectors_from_revolutions(
+                    revs,
+                    decoder,
                     cylinder=ts.track,
                     head=ts.side,
                     expected_sectors=expected_sectors,
+                    encoding=selected_encoding,
+                    timebase_ns=scp.timebase_ns,
                 )
             )
             if capture_nibbles:
@@ -452,8 +456,8 @@ def _decode_tracks(
                     nibble_data.append(nibble_candidate)
         else:
             track_data.append(
-                build_track_sectors(
-                    revs[0],
+                build_track_sectors_from_revolutions(
+                    revs,
                     decoder,
                     cylinder=ts.track,
                     head=ts.side,
@@ -976,7 +980,14 @@ def sectors(
         raise FluxDecodeError("No revolutions captured for the selected track")
 
     decoder = _get_decoder(encoding)
-    track_sectors = build_track_sectors(track_flux.revolutions[0], decoder, cylinder=track, head=head)
+    track_sectors = build_track_sectors_from_revolutions(
+        track_flux.revolutions,
+        decoder,
+        cylinder=track,
+        head=head,
+        encoding=encoding,
+        timebase_ns=scp.timebase_ns,
+    )
     typer.echo(
         f"Track {track_sectors.track} head {track_sectors.head}: "
         f"{len(track_sectors.sectors)} sectors (weak={track_sectors.weak} missing={track_sectors.missing})"

@@ -5,10 +5,12 @@ import pytest
 
 from fluxctl.decoding.mfm import mfm_decoder
 from fluxctl.models import BitDecodeMetrics, Bitstream
+from fluxctl.models import RevolutionFlux
 from fluxctl.scp import parse_scp
 from fluxctl.sector.reconstruct import (
     ID_ADDRESS_MARK,
     SYNC_WORD,
+    build_track_sectors_from_revolutions,
     build_track_sectors,
     reconstruct_track,
 )
@@ -71,6 +73,107 @@ def _encode_mfm_byte(value: int) -> List[int]:
 def _sync_bits(count: int = 1) -> List[int]:
     word_bits = [int(bit) for bit in format(SYNC_WORD, "016b")]
     return word_bits * count
+
+
+def _build_mfm_sector_bits(
+    cylinder: int,
+    head: int,
+    sector_id: int,
+    size_code: int,
+    data_bytes: bytes,
+) -> List[int]:
+    header_field = bytes(
+        [0xA1, 0xA1, 0xA1, ID_ADDRESS_MARK, cylinder, head, sector_id, size_code]
+    )
+    header_crc = _crc16(header_field)
+    data_marker = 0xFB
+    data_field = bytes([0xA1, 0xA1, 0xA1, data_marker, *data_bytes])
+    data_crc = _crc16(data_field)
+
+    bits: List[int] = []
+    bits.extend(_sync_bits(3))
+    bits.extend(_encode_mfm_byte(ID_ADDRESS_MARK))
+    for value in (cylinder, head, sector_id, size_code):
+        bits.extend(_encode_mfm_byte(value))
+    bits.extend(_encode_mfm_byte((header_crc >> 8) & 0xFF))
+    bits.extend(_encode_mfm_byte(header_crc & 0xFF))
+    bits.extend(_sync_bits(3))
+    bits.extend(_encode_mfm_byte(data_marker))
+    for byte in data_bytes:
+        bits.extend(_encode_mfm_byte(byte))
+    bits.extend(_encode_mfm_byte((data_crc >> 8) & 0xFF))
+    bits.extend(_encode_mfm_byte(data_crc & 0xFF))
+    return bits
+
+
+class _SequenceDecoder:
+    encoding = "mfm"
+
+    def __init__(self, streams: dict[int, Bitstream]) -> None:
+        self.streams = streams
+        self.calls: list[int] = []
+
+    def decode_revolution(self, rev: RevolutionFlux) -> Bitstream:
+        self.calls.append(rev.index)
+        return self.streams[rev.index]
+
+
+def test_multi_revolution_reconstruction_recovers_later_good_sector() -> None:
+    data_bytes = bytes(range(128))
+    good_bits = _build_mfm_sector_bits(0, 0, 1, 0, data_bytes)
+    decoder = _SequenceDecoder(
+        {
+            0: Bitstream(bits=[], metrics=BitDecodeMetrics(confidence=0.1), source_revs=[0]),
+            1: Bitstream(bits=good_bits, metrics=BitDecodeMetrics(confidence=0.9), source_revs=[1]),
+        }
+    )
+    revolutions = [
+        RevolutionFlux(index=0, interval_ns=[1]),
+        RevolutionFlux(index=1, interval_ns=[1]),
+    ]
+
+    track = build_track_sectors_from_revolutions(
+        revolutions,
+        decoder,
+        cylinder=0,
+        head=0,
+        expected_sectors=1,
+        encoding="mfm",
+    )
+
+    assert track.missing == 0
+    assert len(track.sectors) == 1
+    assert track.sectors[0].data == data_bytes
+    assert track.sectors[0].crc_ok is True
+    assert track.sectors[0].source_revolutions == [1]
+
+
+def test_multi_revolution_reconstruction_stops_after_complete_good_track() -> None:
+    data_bytes = bytes(range(128))
+    good_bits = _build_mfm_sector_bits(0, 0, 1, 0, data_bytes)
+    decoder = _SequenceDecoder(
+        {
+            0: Bitstream(bits=good_bits, metrics=BitDecodeMetrics(confidence=0.9), source_revs=[0]),
+            1: Bitstream(bits=[], metrics=BitDecodeMetrics(confidence=0.1), source_revs=[1]),
+        }
+    )
+    revolutions = [
+        RevolutionFlux(index=0, interval_ns=[1]),
+        RevolutionFlux(index=1, interval_ns=[1]),
+    ]
+
+    track = build_track_sectors_from_revolutions(
+        revolutions,
+        decoder,
+        cylinder=0,
+        head=0,
+        expected_sectors=1,
+        encoding="mfm",
+    )
+
+    assert len(track.sectors) == 1
+    assert track.sectors[0].crc_ok is True
+    assert decoder.calls == [0]
 
 
 def test_bad_header_crc_still_yields_sector_with_valid_data() -> None:

@@ -9,9 +9,10 @@ future iterations.
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Iterable, List, Optional, Sequence
 
 from ..decoding import Decoder
+from ..exceptions import FluxDecodeError
 from ..models import Bitstream, RevolutionFlux
 from .models import Sector, TrackSectors
 from .reconstruct_gcr import reconstruct_gcr_track
@@ -205,4 +206,122 @@ def build_track_sectors(
     return reconstruct_track(bitstream, cylinder=cylinder, head=head, expected_sectors=expected_sectors)
 
 
-__all__ = ["reconstruct_track", "build_track_sectors"]
+def _sector_quality_key(sector: Sector) -> tuple[int, int, float, int]:
+    """Rank sector candidates for duplicate-resolution during recovery."""
+
+    return (
+        1 if sector.crc_ok else 0,
+        1 if sector.data else 0,
+        sector.confidence,
+        len(sector.data),
+    )
+
+
+def merge_track_sectors(
+    candidates: Iterable[TrackSectors],
+    cylinder: int,
+    head: int,
+    expected_sectors: Optional[int] = None,
+) -> TrackSectors:
+    """Merge per-revolution sector candidates into one best-effort track.
+
+    Duplicate sector IDs are resolved by preferring valid CRCs, then populated
+    data, then higher decoder confidence. This lets a later revolution recover
+    a sector when the first revolution is weak or missing.
+    """
+
+    merged: dict[int, Sector] = {}
+    weak_candidates = 0
+    for track in candidates:
+        weak_candidates += track.weak
+        for sector in track.sectors:
+            existing = merged.get(sector.sector_id)
+            if existing is None or _sector_quality_key(sector) > _sector_quality_key(existing):
+                merged[sector.sector_id] = sector
+
+    sectors = sorted(merged.values(), key=lambda s: s.sector_id)
+    weak = sum(1 for sector in sectors if sector.data and not sector.crc_ok)
+    if weak_candidates and weak == 0:
+        weak = weak_candidates
+    missing = max((expected_sectors or len(sectors)) - len({s.sector_id for s in sectors if s.data}), 0)
+    return TrackSectors(track=cylinder, head=head, sectors=sectors, weak=weak, missing=missing)
+
+
+def _has_complete_valid_sectors(track: TrackSectors, expected_sectors: Optional[int]) -> bool:
+    """Return true when a merged track has all expected sectors with valid CRCs."""
+
+    if expected_sectors is None:
+        return False
+    valid_ids = {sector.sector_id for sector in track.sectors if sector.data and sector.crc_ok}
+    return len(valid_ids) >= expected_sectors
+
+
+def build_track_sectors_from_revolutions(
+    revolutions: Sequence[RevolutionFlux],
+    decoder: Decoder,
+    cylinder: int = 0,
+    head: int = 0,
+    expected_sectors: Optional[int] = None,
+    encoding: Optional[str] = None,
+    timebase_ns: Optional[float] = None,
+) -> TrackSectors:
+    """Decode all usable revolutions and merge the best sector candidates."""
+
+    tracks: list[TrackSectors] = []
+    effective_encoding = encoding or getattr(decoder, "encoding", None)
+    for rev in revolutions:
+        if not getattr(rev, "interval_ns", None):
+            continue
+        try:
+            if effective_encoding == "gcr" and hasattr(decoder, "set_track"):
+                decoder.set_track(cylinder)
+            bitstream = decoder.decode_revolution(rev)
+            if effective_encoding == "gcr":
+                bitstream.intervals = rev.interval_ns  # type: ignore[attr-defined]
+                if timebase_ns is not None:
+                    bitstream.timebase_ns = timebase_ns  # type: ignore[attr-defined]
+            if effective_encoding == "gcr":
+                track = reconstruct_gcr_track(
+                    bitstream,
+                    cylinder=cylinder,
+                    head=head,
+                    expected_sectors=expected_sectors,
+                )
+            elif effective_encoding == "fm":
+                track = reconstruct_fm_track(
+                    bitstream,
+                    cylinder=cylinder,
+                    head=head,
+                    expected_sectors=expected_sectors,
+                )
+            else:
+                track = reconstruct_track(
+                    bitstream,
+                    cylinder=cylinder,
+                    head=head,
+                    expected_sectors=expected_sectors,
+                )
+            tracks.append(track)
+            if expected_sectors is not None:
+                merged = merge_track_sectors(
+                    tracks,
+                    cylinder=cylinder,
+                    head=head,
+                    expected_sectors=expected_sectors,
+                )
+                if _has_complete_valid_sectors(merged, expected_sectors):
+                    return merged
+        except FluxDecodeError:
+            continue
+
+    if not tracks:
+        raise FluxDecodeError("No revolutions could be decoded for track")
+    return merge_track_sectors(tracks, cylinder=cylinder, head=head, expected_sectors=expected_sectors)
+
+
+__all__ = [
+    "reconstruct_track",
+    "build_track_sectors",
+    "build_track_sectors_from_revolutions",
+    "merge_track_sectors",
+]

@@ -71,6 +71,28 @@ def test_raw_export_cli(tmp_path, img_fixture: Path) -> None:
     assert provenance["output_sha256"] == hashlib.sha256(out_path.read_bytes()).hexdigest()
 
 
+def test_raw_export_from_scp_respects_layout_bounds(tmp_path: Path, img_fixture: Path) -> None:
+    scp_fixture = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.scp")
+    out_path = tmp_path / "from_scp.img"
+
+    result = runner.invoke(
+        app,
+        [
+            "convert",
+            str(scp_fixture),
+            "--layout",
+            "ibm_mfm_720k",
+            "--to",
+            "raw",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert out_path.read_bytes() == img_fixture.read_bytes()
+
+
 def test_imd_export_from_tracks(tmp_path, img_fixture: Path, layout_720k) -> None:
     image_obj = _build_track_image(img_fixture, layout_720k.layout_id, cylinders=1)
     exporter = IMDExporter()
