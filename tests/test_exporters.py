@@ -108,6 +108,30 @@ def test_imd_export_from_tracks(tmp_path, img_fixture: Path, layout_720k) -> Non
     assert payload.startswith(b"IMD")
 
 
+def test_imd_export_from_flat_img_uses_layout(tmp_path: Path, img_fixture: Path) -> None:
+    out_path = tmp_path / "disk.imd"
+
+    result = runner.invoke(
+        app,
+        [
+            "convert",
+            str(img_fixture),
+            "--layout",
+            "ibm_mfm_720k",
+            "--to",
+            "imd",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert out_path.read_bytes().startswith(b"IMD")
+    provenance = json.loads(out_path.with_suffix(out_path.suffix + ".provenance.json").read_text())
+    assert provenance["parameters"]["layout"] == "ibm_mfm_720k"
+    assert provenance["encoder"] == "imd"
+
+
 def test_exporters_support_track_image(img_fixture: Path, layout_720k) -> None:
     load_builtin_exporters()
     image_obj = _build_track_image(img_fixture, layout_720k.layout_id, cylinders=1)
