@@ -617,41 +617,56 @@ def _track_in_range(range_expr: str, track: int) -> bool:
         return False
 
 
-def _parse_write_sector_spec(write_sector: str) -> tuple[int, int, bytes]:
-    """Parse ``T:S:HEX`` patch input into track, sector ID, and payload bytes."""
+def _parse_write_sector_spec(write_sector: str) -> tuple[int, Optional[int], int, bytes]:
+    """Parse ``T:S:HEX`` or ``T:H:S:HEX`` patch input."""
 
-    parts = write_sector.split(":", 2)
-    if len(parts) != 3:
-        raise ValueError("Expected T:S:HEX")
-    track_str, sector_str, payload_hex = parts
-    if not track_str or not sector_str or not payload_hex:
-        raise ValueError("Expected T:S:HEX")
-    return int(track_str), int(sector_str), bytes.fromhex(payload_hex)
+    parts = write_sector.split(":")
+    if len(parts) == 3:
+        track_str, sector_str, payload_hex = parts
+        head_str: Optional[str] = None
+    elif len(parts) == 4:
+        track_str, head_str, sector_str, payload_hex = parts
+    else:
+        raise ValueError("Expected T:S:HEX or T:H:S:HEX")
+    if not track_str or not sector_str or not payload_hex or head_str == "":
+        raise ValueError("Expected T:S:HEX or T:H:S:HEX")
+    head = int(head_str) if head_str is not None else None
+    return int(track_str), head, int(sector_str), bytes.fromhex(payload_hex)
 
 
 def _apply_sector_patch(
-    track_data: list[TrackSectors], track_idx: int, sector_idx: int, payload: bytes
+    track_data: list[TrackSectors], track_idx: int, head_idx: Optional[int], sector_idx: int, payload: bytes
 ) -> None:
-    """Apply a full-sector payload to matching decoded sectors."""
+    """Apply a full-sector payload to one matching decoded sector."""
 
-    patched = False
+    matches: list[Sector] = []
     for ts in track_data:
         if ts.track != track_idx:
+            continue
+        if head_idx is not None and ts.head != head_idx:
             continue
         for sec in ts.sectors:
             if sec.sector_id != sector_idx:
                 continue
-            expected_size = sec.size
-            if len(payload) != expected_size:
-                raise FluxctlError(
-                    f"Patch payload is {len(payload)} bytes; sector {track_idx}:{sector_idx} requires {expected_size} bytes"
-                )
-            sec.data = payload
-            sec.crc_ok = True
-            sec.confidence = 1.0
-            patched = True
-    if not patched:
-        raise FluxctlError(f"Sector {track_idx}:{sector_idx} not found in decoded image")
+            matches.append(sec)
+    if not matches:
+        target = f"{track_idx}:{head_idx}:{sector_idx}" if head_idx is not None else f"{track_idx}:{sector_idx}"
+        raise FluxctlError(f"Sector {target} not found in decoded image")
+    if len(matches) > 1:
+        raise FluxctlError(
+            f"Sector {track_idx}:{sector_idx} matches multiple heads; use T:H:S:HEX to choose one"
+        )
+
+    sector = matches[0]
+    expected_size = sector.size
+    if len(payload) != expected_size:
+        target = f"{track_idx}:{head_idx}:{sector_idx}" if head_idx is not None else f"{track_idx}:{sector_idx}"
+        raise FluxctlError(
+            f"Patch payload is {len(payload)} bytes; sector {target} requires {expected_size} bytes"
+        )
+    sector.data = payload
+    sector.crc_ok = True
+    sector.confidence = 1.0
 
 
 def _expected_bytes_for_layout(layout: LayoutDescriptor) -> int:
@@ -1415,17 +1430,17 @@ def decode(
 def patch(
     path: Path = typer.Argument(..., exists=True, readable=True),
     layout: str = typer.Option(..., "--layout"),
-    write_sector: str = typer.Option(..., "--write-sector", help="T:S:HEX"),
+    write_sector: str = typer.Option(..., "--write-sector", help="T:S:HEX or T:H:S:HEX"),
     out: Path = typer.Option(..., "--out"),
 ):
     layout_desc = ensure_layout_loaded(layout)
     load_builtin_exporters()
     track_data = _decode_tracks(path, layout)
     try:
-        track_idx, sector_idx, payload = _parse_write_sector_spec(write_sector)
+        track_idx, head_idx, sector_idx, payload = _parse_write_sector_spec(write_sector)
     except ValueError as exc:
-        raise typer.BadParameter("Expected T:S:HEX") from exc
-    _apply_sector_patch(track_data, track_idx, sector_idx, payload)
+        raise typer.BadParameter("Expected T:S:HEX or T:H:S:HEX") from exc
+    _apply_sector_patch(track_data, track_idx, head_idx, sector_idx, payload)
     exporter_info = registry.exporter.get("raw")
     if exporter_info is None:
         raise ExportError("Raw exporter not available")
