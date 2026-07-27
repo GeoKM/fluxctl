@@ -4,6 +4,7 @@ from fluxctl.native import (
     gcr_estimate_confidence,
     gcr_intervals_to_bits,
     is_native_available,
+    mfm_decode_auto,
     mfm_decode_best,
     mfm_intervals_to_bits,
     mfm_reconstruct_track,
@@ -29,6 +30,18 @@ def test_native_mfm_decode_best_returns_score_and_bits() -> None:
     assert bits == bytes([1, 0, 1, 0, 0, 1])
     assert pll_lock == 1.0
     assert sync_count == 0
+
+
+def test_native_mfm_decode_auto_matches_explicit_candidates() -> None:
+    intervals = [4000, 8000, 12000, 4000, 4000, 8000, 12000, 16000]
+    base = 4000.0
+
+    auto_bits, auto_pll, auto_sync = mfm_decode_auto(intervals, 4000.0, True, 64)
+    best_bits, best_pll, best_sync = mfm_decode_best(intervals, [4000.0, base, base * 0.75, base / 2.0], 64)
+
+    assert auto_bits == best_bits
+    assert auto_pll == best_pll
+    assert auto_sync == best_sync
 
 
 def _crc16(data: bytes, poly: int = 0x1021, init: int = 0xFFFF) -> int:

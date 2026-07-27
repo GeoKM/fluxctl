@@ -106,6 +106,17 @@ def _load_library():
             ctypes.POINTER(ctypes.c_size_t),
         ]
         lib.fluxctl_mfm_decode_best.restype = ctypes.c_int
+        lib.fluxctl_mfm_decode_auto.argtypes = [
+            ctypes.POINTER(ctypes.c_uint32),
+            ctypes.c_size_t,
+            ctypes.c_double,
+            ctypes.c_bool,
+            ctypes.c_size_t,
+            ctypes.POINTER(_NativeBuffer),
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        lib.fluxctl_mfm_decode_auto.restype = ctypes.c_int
         lib.fluxctl_mfm_reconstruct_track.argtypes = [
             ctypes.POINTER(ctypes.c_uint8),
             ctypes.c_size_t,
@@ -235,6 +246,33 @@ def mfm_decode_best(
     return _take_buffer(lib, buffer), float(pll_lock.value), int(sync_count.value)
 
 
+def mfm_decode_auto(
+    intervals_ns: Sequence[int], default_cell_ns: float, auto_cell: bool, max_cells: int
+) -> Optional[tuple[bytes, float, int]]:
+    """Return the best native MFM bitstream with native cell-candidate estimation."""
+
+    lib = _load_library()
+    if lib is None:
+        return None
+    intervals = _interval_array(intervals_ns)
+    buffer = _NativeBuffer()
+    pll_lock = ctypes.c_double()
+    sync_count = ctypes.c_size_t()
+    status = lib.fluxctl_mfm_decode_auto(
+        ctypes.cast(intervals.buffer_info()[0], ctypes.POINTER(ctypes.c_uint32)),
+        len(intervals),
+        float(default_cell_ns),
+        bool(auto_cell),
+        int(max_cells),
+        ctypes.byref(buffer),
+        ctypes.byref(pll_lock),
+        ctypes.byref(sync_count),
+    )
+    if status != 0:
+        return None
+    return _take_buffer(lib, buffer), float(pll_lock.value), int(sync_count.value)
+
+
 def mfm_reconstruct_track(
     bits: Sequence[int], expected_sectors: Optional[int] = None
 ) -> Optional[tuple[list[tuple[int, int, int, int, bytes, bool, bool]], int]]:
@@ -328,6 +366,7 @@ __all__ = [
     "gcr_estimate_confidence",
     "gcr_intervals_to_bits",
     "is_native_available",
+    "mfm_decode_auto",
     "mfm_decode_best",
     "mfm_intervals_to_bits",
     "mfm_reconstruct_track",
