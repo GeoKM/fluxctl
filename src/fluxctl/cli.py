@@ -1011,12 +1011,18 @@ def dump(
 ):
     """Dump sector data as hex."""
     track_data = _decode_tracks(path, layout)
+    selected_track: Optional[TrackSectors] = None
     for ts in track_data:
         if ts.track == track and ts.side == side:
-            for sec in ts.sectors:
-                if sec.sector_id == sector:
-                    typer.echo(sec.data.hex())
-                    return
+            selected_track = ts
+            break
+    if selected_track is None:
+        raise FluxctlError(f"Track {track} side {side} not found in decoded image")
+    for sec in selected_track.sectors:
+        if sec.sector_id == sector:
+            typer.echo(sec.data.hex())
+            return
+    raise FluxctlError(f"Sector {track}:{side}:{sector} not found in decoded image")
 
 
 @app.command()
