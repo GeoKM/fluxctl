@@ -20,10 +20,9 @@ from .native import parse_scp_flux_bytes
 
 MAGIC = b"SCP"
 DEFAULT_TIMEBASE_NS = 25.0
-# Greaseweazle treats a zero/very-low timebase in modern captures as a 40MHz
-# sampler (25ns ticks). Some tools store a tiny integer (e.g., 2) which is
-# actually the tick count for 50ns or an artefact of the writer. To stay
-# compatible, clamp implausibly small timebases to the default.
+# Greaseweazle treats small timebase values in modern captures as a 40MHz
+# sampler (25ns ticks). Some tools store tiny integers in this field; treating
+# them literally compresses flux timings enough to create false MFM CRC errors.
 MIN_REASONABLE_NS = 20.0
 OFFSET_TABLE_ENTRIES = 168
 
@@ -49,7 +48,7 @@ def _decode_timebase(version: int, raw_timebase: int) -> float:
         return float(raw_timebase)
 
     if 0 < raw_timebase <= 1000:
-        if raw_timebase < 5:
+        if raw_timebase < MIN_REASONABLE_NS:
             return DEFAULT_TIMEBASE_NS
         return float(raw_timebase)
     if raw_timebase > 1000:

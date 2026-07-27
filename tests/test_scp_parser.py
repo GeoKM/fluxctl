@@ -6,6 +6,8 @@ from pathlib import Path
 
 from fluxctl.scp import OFFSET_TABLE_ENTRIES, _parse_flux_bytes, parse_scp
 
+FIXTURE_8IN_1200K_FAT = Path("tests/fixtures/8inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-1200K-B.scp")
+
 
 def _pack_flux_be(intervals: list[int]) -> bytes:
     return struct.pack(f">{len(intervals)}H", *intervals)
@@ -187,6 +189,13 @@ def test_timebase_and_single_sided_track_mapping(tmp_path: Path) -> None:
     assert len({rev.data_offset for rev in track.revolutions}) == len(track.revolutions)
     for rev in track.revolutions:
         assert rev.index_time_ns == sum(rev.interval_ns)
+
+
+def test_modern_small_timebase_matches_greaseweazle_default() -> None:
+    image = parse_scp(FIXTURE_8IN_1200K_FAT)
+
+    assert image.timebase_ns == 25.0
+    assert len(image.tracks) == 156
 
 
 def test_long_interval_overflow_round_trips(tmp_path: Path) -> None:

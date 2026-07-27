@@ -92,6 +92,98 @@ def _finalize_mfm_track(
     return TrackSectors(track=cylinder, head=head, sectors=sectors, weak=weak, missing=missing)
 
 
+def reconstruct_ibm_greaseweazle(
+    revolutions: Sequence[RevolutionFlux],
+    track: int,
+    head: int,
+    expected_sectors: Optional[int] = None,
+    timebase_ns: float = 25.0,
+    encoding: str = "mfm",
+) -> Optional[TrackSectors]:
+    """Decode an IBM FM/MFM track using Greaseweazle's PLL/codec if available."""
+
+    try:
+        import greaseweazle.codec.codec  # noqa: F401 - initialise codec package imports
+        from greaseweazle.codec.ibm.ibm import IBMTrack_ScanDef
+        from greaseweazle.flux import Flux
+    except Exception:
+        return None
+
+    if timebase_ns <= 0:
+        timebase_ns = 25.0
+    sample_freq = 1_000_000_000.0 / timebase_ns
+    config = IBMTrack_ScanDef("ibm.scan")
+    config.rate = 250 if encoding == "fm" else 500
+    config.rpm = 360
+
+    merged: dict[int, Sector] = {}
+    for rev in revolutions:
+        if not getattr(rev, "interval_ns", None):
+            continue
+        ticks = [max(1, int(round(ns / timebase_ns))) for ns in rev.interval_ns]
+        if not ticks:
+            continue
+        flux = Flux(index_list=[sum(ticks)], flux_list=ticks, sample_freq=sample_freq, index_cued=True)
+        codec = config.mk_track(track, head)
+        try:
+            codec.decode_flux(flux)
+        except Exception:
+            continue
+
+        for area in getattr(codec.track, "sectors", []):
+            idam = area.idam
+            dam = area.dam
+            data = bytes(dam.data or b"")
+            if not data:
+                continue
+            size_code = int(idam.n)
+            candidate = Sector(
+                cylinder=int(idam.c),
+                head=int(idam.h),
+                sector_id=int(idam.r),
+                size_code=size_code,
+                data=data,
+                crc_ok=area.crc == 0,
+                confidence=1.0,
+                deleted=dam.mark == 0xF8,
+                source_revolutions=[rev.index],
+            )
+            existing = merged.get(candidate.sector_id)
+            if existing is None or _sector_quality_key(candidate) > _sector_quality_key(existing):
+                merged[candidate.sector_id] = candidate
+
+        good_ids = {sid for sid, sector in merged.items() if sector.crc_ok and sector.data}
+        if expected_sectors is not None and len(good_ids) >= expected_sectors:
+            break
+
+    if not merged:
+        return None
+
+    sectors = sorted(merged.values(), key=lambda s: s.sector_id)
+    weak = sum(1 for sector in sectors if sector.data and not sector.crc_ok)
+    missing = max((expected_sectors or len(sectors)) - len({s.sector_id for s in sectors if s.data}), 0)
+    return TrackSectors(track=track, head=head, sectors=sectors, weak=weak, missing=missing)
+
+
+def reconstruct_mfm_greaseweazle(
+    revolutions: Sequence[RevolutionFlux],
+    track: int,
+    head: int,
+    expected_sectors: Optional[int] = None,
+    timebase_ns: float = 25.0,
+) -> Optional[TrackSectors]:
+    """Decode an IBM MFM track using Greaseweazle's PLL/codec if available."""
+
+    return reconstruct_ibm_greaseweazle(
+        revolutions,
+        track=track,
+        head=head,
+        expected_sectors=expected_sectors,
+        timebase_ns=timebase_ns,
+        encoding="mfm",
+    )
+
+
 def reconstruct_track(
     bitstream: Bitstream, cylinder: int = 0, head: int = 0, expected_sectors: Optional[int] = None
 ) -> TrackSectors:
@@ -266,6 +358,14 @@ def _sector_quality_key(sector: Sector) -> tuple[int, int, float, int]:
     )
 
 
+def _track_quality_key(track: TrackSectors) -> tuple[int, int, int, float]:
+    good = sum(1 for sector in track.sectors if sector.data and sector.crc_ok)
+    populated = sum(1 for sector in track.sectors if sector.data)
+    weak = sum(1 for sector in track.sectors if sector.data and not sector.crc_ok) + track.missing
+    confidence = sum((sector.confidence or 0.0) for sector in track.sectors)
+    return (good, populated, -weak, confidence)
+
+
 def merge_track_sectors(
     candidates: Iterable[TrackSectors],
     cylinder: int,
@@ -365,7 +465,19 @@ def build_track_sectors_from_revolutions(
 
     if not tracks:
         raise FluxDecodeError("No revolutions could be decoded for track")
-    return merge_track_sectors(tracks, cylinder=cylinder, head=head, expected_sectors=expected_sectors)
+    merged = merge_track_sectors(tracks, cylinder=cylinder, head=head, expected_sectors=expected_sectors)
+    if effective_encoding in {"fm", "mfm"} and not _has_complete_valid_sectors(merged, expected_sectors):
+        gw_track = reconstruct_ibm_greaseweazle(
+            revolutions,
+            track=cylinder,
+            head=head,
+            expected_sectors=expected_sectors,
+            timebase_ns=timebase_ns or 25.0,
+            encoding=effective_encoding or "mfm",
+        )
+        if gw_track is not None and _track_quality_key(gw_track) > _track_quality_key(merged):
+            return gw_track
+    return merged
 
 
 __all__ = [
@@ -373,4 +485,6 @@ __all__ = [
     "build_track_sectors",
     "build_track_sectors_from_revolutions",
     "merge_track_sectors",
+    "reconstruct_ibm_greaseweazle",
+    "reconstruct_mfm_greaseweazle",
 ]

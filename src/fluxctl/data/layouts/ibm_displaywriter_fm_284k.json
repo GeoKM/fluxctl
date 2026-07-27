@@ -6,7 +6,7 @@
   "rpm_nominal": 360,
   "sides": 1,
   "tracks": 77,
-  "sectors_per_track": 26,
+  "sectors_per_track": 15,
   "sector_size": 256,
   "gap3_hint": null,
   "id_rules": {
@@ -33,6 +33,7 @@
       "track_range": "0",
       "head": 0,
       "encoding": "fm",
+      "sectors_per_track": 26,
       "sector_size": 128,
       "gap3_hint": 42
     }

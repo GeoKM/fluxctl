@@ -1,10 +1,12 @@
 from pathlib import Path
 
+from fluxctl.cli import _prepare_image
 from fluxctl.filesystems import RawSectorImage
 from fluxctl.filesystems.fat12 import FAT12
 
 FAT12_FIXTURE = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.img")
 NON_FAT_FIXTURE = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.adf")
+EMPTY_8IN_FAT12_SCP = Path("tests/fixtures/8inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-1200K-C.scp")
 
 
 def _load_image(path: Path) -> RawSectorImage:
@@ -44,3 +46,11 @@ def test_extract_file_returns_expected_bytes():
     content = fs.extract_file("/AUTOEXEC.BAT")
 
     assert content == b"@ECHO OFF\r\nCLS\r\nKEYB US\r\nSELECT MENU\r\n\x1a"
+
+
+def test_empty_8inch_fat12_scp_lists_no_files():
+    fs = FAT12()
+    image = _prepare_image(EMPTY_8IN_FAT12_SCP, "ibm_mfm_8inch_1200k", "mfm")
+    assert fs.probe(image)
+
+    assert fs.list_directory("/") == []

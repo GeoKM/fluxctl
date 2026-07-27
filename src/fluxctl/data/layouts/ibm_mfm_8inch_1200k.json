@@ -5,7 +5,7 @@
   "encoding": "mfm",
   "rpm_nominal": 360,
   "sides": 2,
-  "tracks": 77,
+  "tracks": 78,
   "sectors_per_track": 15,
   "sector_size": 512,
   "gap3_hint": 84,

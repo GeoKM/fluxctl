@@ -100,7 +100,9 @@ def test_probe_prefers_8inch_fm_284k_layout() -> None:
     runner = CliRunner()
     result = runner.invoke(cli.app, ["probe", str(FIXTURE_8IN_FM_284K)])
     assert result.exit_code == 0
-    assert "ibm_fm_8inch_284k" in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "ibm_displaywriter_fm_284k"
+    assert payload[0]["filesystem"] == "displaywriter"
 
 
 def test_probe_prefers_amiga_880k_over_hd() -> None:
@@ -163,7 +165,7 @@ def test_probe_supports_imd_ibm_1200k() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload[0]["layout_id"] == "ibm_mfm_8inch_1200k"
-    assert payload[0]["filesystem"] == "fat12"
+    assert payload[0]["filesystem"] is None
 
 
 def test_probe_supports_imd_ibm_180k_with_fat() -> None:

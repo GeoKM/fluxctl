@@ -1,7 +1,9 @@
 from pathlib import Path
 
+from fluxctl.decoding.fm import fm_decoder
 from fluxctl.decoding.mfm import mfm_decoder
 from fluxctl.exceptions import FluxDecodeError
+from fluxctl.layouts.loader import ensure_layout_loaded
 from fluxctl.reports.qc import DiskQCReport, build_qc_report, _resolve_expected_and_missing
 from fluxctl.sector.models import Sector, TrackSectors
 from fluxctl.scp import parse_scp
@@ -15,6 +17,8 @@ class BrokenDecoder:
 
 
 FIXTURE_GOOD = Path("tests/fixtures/5.25inch/IBM/IBM-Generic-SSDD-MFM-IBMPC-180K.scp")
+FIXTURE_8IN_1200K_FAT = Path("tests/fixtures/8inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-1200K-B.scp")
+FIXTURE_DISPLAYWRITER = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWriter-284K.scp")
 
 
 def test_qc_report_counts_good_disk() -> None:
@@ -32,6 +36,29 @@ def test_qc_report_counts_good_disk() -> None:
     assert report.status == "good"
     assert report.suspect_sectors == 0
     assert report.total_sectors == sum(track.total_sectors for track in report.tracks[:40])
+
+
+def test_qc_uses_pll_fallback_for_8inch_mfm_fat() -> None:
+    image = parse_scp(FIXTURE_8IN_1200K_FAT)
+    layout = ensure_layout_loaded("ibm_mfm_8inch_1200k")
+    report = build_qc_report(image, mfm_decoder, layout)
+
+    assert len(report.tracks) == 156
+    assert report.total_sectors == 2340
+    assert report.total_good_sectors >= 2200
+    assert report.total_bad_sectors < 100
+
+
+def test_qc_uses_fm_pll_fallback_for_displaywriter() -> None:
+    image = parse_scp(FIXTURE_DISPLAYWRITER)
+    layout = ensure_layout_loaded("ibm_displaywriter_fm_284k")
+    report = build_qc_report(image, fm_decoder, layout)
+
+    assert len(report.tracks) == 77
+    assert report.total_sectors == 1166
+    assert report.total_good_sectors == 1166
+    assert report.total_bad_sectors == 0
+    assert report.status == "good"
 
 
 def test_qc_json_roundtrip_and_failure_detection() -> None:
