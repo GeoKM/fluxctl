@@ -6,9 +6,13 @@ fluxctl is a modular toolkit for inspecting and converting floppy disk flux capt
 - `python3 -m venv .venv` and `.venv/bin/python -m pip install --upgrade pip` to prepare a local environment.
 - Install the project and CLI helpers with `.venv/bin/python -m pip install -e .`.
 - Run `.venv/bin/fluxctl --help` to confirm the CLI loads and to explore available targets.
+- Run `.venv/bin/fluxctl doctor` to check built-in plugins, layouts, optional
+  native acceleration, Greaseweazle support, and HxCFE discovery before working
+  on real media.
 
 ## Supported operations
 - **info**: inspect SCP headers and inferred geometry.
+- **doctor**: check the local installation and optional helper integrations.
 - **probe**: detect encoding, layout, and filesystem (where detectable) for SCP and flat images.
 - **compare**: hash + byte diff two images; SCP inputs are decoded first.
 - **qc**: generate quality control reports (JSON or text).
@@ -24,6 +28,7 @@ fluxctl is a modular toolkit for inspecting and converting floppy disk flux capt
 ## Usage examples
 ```bash
 # Quick identification
+fluxctl doctor
 fluxctl info disk.scp
 fluxctl probe disk.scp
 
@@ -54,6 +59,29 @@ fluxctl dump disk.scp --layout ibm_mfm_720k --track 0 --side 0 --sector 1
 # Patch one full sector and export a raw image
 fluxctl patch disk.scp --layout ibm_mfm_720k --write-sector 0:0:1:DEADBEEF... --out patched.img
 ```
+
+### Health checks and troubleshooting
+
+Use `fluxctl doctor` when a conversion, decode, or optional helper path behaves
+unexpectedly. It reports:
+
+- Python and fluxctl versions.
+- Loaded layouts, decoders, exporters, and filesystem readers.
+- Whether optional Rust native decoder acceleration is enabled, disabled, or not
+  built yet.
+- Whether the optional Greaseweazle Python package can be imported.
+- Whether `hxcfe` is available on `PATH` or at a supplied `--hxcfe` path.
+
+Examples:
+```bash
+fluxctl doctor
+fluxctl doctor --json
+fluxctl doctor --hxcfe ~/src/HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build/hxcfe
+```
+
+Warnings are informational for optional features. A missing native library only
+means fluxctl will use the pure-Python decoder path. A failed `hxcfe` check only
+matters when you explicitly want HxC-assisted hints.
 
 ### Commodore exports
 
