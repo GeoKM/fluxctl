@@ -14,6 +14,7 @@ from typing import Iterable, List, Optional, Sequence
 from ..decoding import Decoder
 from ..exceptions import FluxDecodeError
 from ..models import Bitstream, RevolutionFlux
+from ..native import mfm_reconstruct_track as native_mfm_reconstruct_track
 from .models import Sector, TrackSectors
 from .reconstruct_gcr import reconstruct_gcr_track
 from .reconstruct_fm import reconstruct_fm_track
@@ -56,6 +57,41 @@ def _decode_data_byte(bits: List[int], offset: int) -> Optional[int]:
     return value
 
 
+def _finalize_mfm_track(
+    cylinder: int,
+    head: int,
+    sectors: List[Sector],
+    weak: int,
+    expected_sectors: Optional[int],
+    confidence: float,
+    source_revs: List[int],
+) -> TrackSectors:
+    missing = 0
+    if expected_sectors:
+        found_ids = {s.sector_id for s in sectors}
+        missing = max(expected_sectors - len(found_ids), 0)
+        if not sectors:
+            default_size_code = 2
+            sectors = [
+                Sector(
+                    cylinder=cylinder,
+                    head=head,
+                    sector_id=idx,
+                    size_code=default_size_code,
+                    data=bytes(128 << default_size_code),
+                    crc_ok=False,
+                    confidence=confidence,
+                    deleted=False,
+                    source_revolutions=source_revs,
+                )
+                for idx in range(1, expected_sectors + 1)
+            ]
+            weak = expected_sectors
+            missing = 0
+
+    return TrackSectors(track=cylinder, head=head, sectors=sectors, weak=weak, missing=missing)
+
+
 def reconstruct_track(
     bitstream: Bitstream, cylinder: int = 0, head: int = 0, expected_sectors: Optional[int] = None
 ) -> TrackSectors:
@@ -74,6 +110,34 @@ def reconstruct_track(
     """
 
     bits = bitstream.bits
+    confidence = bitstream.metrics.confidence or 0.0
+    native_result = native_mfm_reconstruct_track(bits, expected_sectors)
+    if native_result is not None:
+        records, weak = native_result
+        sectors = [
+            Sector(
+                cylinder=c,
+                head=h,
+                sector_id=r,
+                size_code=n,
+                data=data,
+                crc_ok=crc_ok,
+                confidence=confidence,
+                deleted=deleted,
+                source_revolutions=bitstream.source_revs,
+            )
+            for c, h, r, n, data, crc_ok, deleted in records
+        ]
+        return _finalize_mfm_track(
+            cylinder,
+            head,
+            sectors,
+            weak,
+            expected_sectors,
+            confidence,
+            bitstream.source_revs,
+        )
+
     bit_str = "".join("1" if b else "0" for b in bits)
     search_pos = 0
     sectors: List[Sector] = []
@@ -146,7 +210,7 @@ def reconstruct_track(
                     size_code=n,
                     data=bytes(data_bytes),
                     crc_ok=crc_ok,
-                    confidence=bitstream.metrics.confidence or 0.0,
+                    confidence=confidence,
                     deleted=marker == 0xF8,
                     source_revolutions=bitstream.source_revs,
                 )
@@ -157,30 +221,15 @@ def reconstruct_track(
 
         search_pos = pos + 1
 
-    missing = 0
-    if expected_sectors:
-        found_ids = {s.sector_id for s in sectors}
-        missing = max(expected_sectors - len(found_ids), 0)
-        if not sectors:
-            default_size_code = 2
-            sectors = [
-                Sector(
-                    cylinder=cylinder,
-                    head=head,
-                    sector_id=idx,
-                    size_code=default_size_code,
-                    data=bytes(128 << default_size_code),
-                    crc_ok=False,
-                    confidence=bitstream.metrics.confidence or 0.0,
-                    deleted=False,
-                    source_revolutions=bitstream.source_revs,
-                )
-                for idx in range(1, expected_sectors + 1)
-            ]
-            weak = expected_sectors
-            missing = 0
-
-    return TrackSectors(track=cylinder, head=head, sectors=sectors, weak=weak, missing=missing)
+    return _finalize_mfm_track(
+        cylinder,
+        head,
+        sectors,
+        weak,
+        expected_sectors,
+        confidence,
+        bitstream.source_revs,
+    )
 
 
 def build_track_sectors(
