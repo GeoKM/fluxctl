@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Callable, Optional
@@ -11,7 +12,7 @@ from . import studio_services as services
 
 try:  # pragma: no cover - exercised only when GUI dependencies are installed.
     from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
-    from PySide6.QtGui import QAction, QColor, QPainter, QPen
+    from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
     from PySide6.QtWidgets import (
         QApplication,
         QComboBox,
@@ -31,6 +32,7 @@ try:  # pragma: no cover - exercised only when GUI dependencies are installed.
         QTableWidgetItem,
         QTabWidget,
         QTextEdit,
+        QToolTip,
         QToolBar,
         QVBoxLayout,
         QWidget,
@@ -64,60 +66,162 @@ class DiskMapWidget(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.disk_map = None
-        self.setMinimumHeight(360)
+        self._head_layouts: list[dict[str, object]] = []
+        self.setMouseTracking(True)
+        self.setMinimumHeight(520)
 
     def set_disk_map(self, disk_map) -> None:
         self.disk_map = disk_map
         self.update()
 
+    @staticmethod
+    def head_groups(disk_map) -> list[tuple[int, list[tuple[int, tuple[int, int], list[str]]]]]:
+        """Group map rows by physical head while preserving track order."""
+
+        if not disk_map or not disk_map.tracks:
+            return []
+        track_ids = disk_map.track_ids or [(idx, 0) for idx, _ in enumerate(disk_map.tracks)]
+        grouped: dict[int, list[tuple[int, tuple[int, int], list[str]]]] = {}
+        for row_index, (track_id, sectors) in enumerate(zip(track_ids, disk_map.tracks)):
+            track, head = track_id
+            grouped.setdefault(head, []).append((row_index, (track, head), sectors))
+        return [
+            (head, sorted(rows, key=lambda item: item[1][0]))
+            for head, rows in sorted(grouped.items(), key=lambda item: item[0])
+        ]
+
+    def sector_detail_text(self, row_index: int, sector_index: int) -> str:
+        if not self.disk_map:
+            return ""
+        track_ids = self.disk_map.track_ids or [(idx, 0) for idx, _ in enumerate(self.disk_map.tracks)]
+        track, head = track_ids[row_index]
+        detail = None
+        if self.disk_map.sector_details and row_index < len(self.disk_map.sector_details):
+            details = self.disk_map.sector_details[row_index]
+            if sector_index < len(details):
+                detail = details[sector_index]
+        state = self.disk_map.tracks[row_index][sector_index]
+        if detail is None:
+            return f"Track {track} Head {head}\nSector position {sector_index + 1}\nState: {state}"
+        crc = "ok" if detail.crc_ok else "bad"
+        data = "yes" if detail.has_data else "no"
+        deleted = "yes" if detail.deleted else "no"
+        return (
+            f"Track {track}  Head {head}\n"
+            f"Sector ID {detail.sector_id}  Position {sector_index + 1}\n"
+            f"State: {detail.state}  CRC: {crc}\n"
+            f"Confidence: {detail.confidence:.2f}\n"
+            f"Size: {detail.size} bytes  Data: {data}  Deleted: {deleted}"
+        )
+
     def paintEvent(self, _event) -> None:  # pragma: no cover - visual rendering.
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor("#0c1018"))
+        self._head_layouts = []
         if not self.disk_map or not self.disk_map.tracks:
             painter.setPen(QPen(QColor("#788296"), 1))
             painter.drawText(self.rect(), Qt.AlignCenter, "Open an image to render the disk map")
             return
 
+        head_groups = self.head_groups(self.disk_map)
+        if not head_groups:
+            return
+
         width = self.width()
         height = self.height()
-        cx = width / 2
-        cy = height / 2
-        max_radius = min(width, height) * 0.45
-        track_count = max(len(self.disk_map.tracks), 1)
-        ring_width = max(max_radius / track_count, 2.0)
         colors = {
             "good": QColor("#35d07f"),
             "weak": QColor("#f2c94c"),
             "bad": QColor("#e05a47"),
         }
-        painter.setPen(Qt.NoPen)
-        for track_idx, sectors in enumerate(self.disk_map.tracks):
-            radius = max_radius - (track_idx * ring_width)
-            if radius <= 4:
-                break
-            sector_count = max(len(sectors), 1)
-            for sector_idx, state in enumerate(sectors):
-                painter.setBrush(colors.get(state, QColor("#6b7280")))
-                start = int((90 - (360 * sector_idx / sector_count)) * 16)
-                span = int(-(360 / sector_count) * 16)
-                rect_size = radius * 2
-                painter.drawPie(
-                    int(cx - radius),
-                    int(cy - radius),
-                    int(rect_size),
-                    int(rect_size),
-                    start,
-                    span,
-                )
-            painter.setBrush(QColor("#0c1018"))
-            inner_radius = max(radius - ring_width + 1, 0)
-            painter.drawEllipse(
-                int(cx - inner_radius),
-                int(cy - inner_radius),
-                int(inner_radius * 2),
-                int(inner_radius * 2),
+        columns = len(head_groups)
+        gap = 28
+        label_height = 34
+        column_width = max((width - gap * (columns + 1)) / columns, 1)
+        usable_height = max(height - label_height - 20, 1)
+
+        for column, (head, rows) in enumerate(head_groups):
+            left = gap + column * (column_width + gap)
+            cx = left + column_width / 2
+            cy = label_height + usable_height / 2
+            max_radius = min(column_width, usable_height) * 0.49
+            track_count = max(len(rows), 1)
+            ring_width = max(max_radius / track_count, 2.0)
+            self._head_layouts.append(
+                {
+                    "head": head,
+                    "cx": cx,
+                    "cy": cy,
+                    "max_radius": max_radius,
+                    "ring_width": ring_width,
+                    "rows": rows,
+                }
             )
+
+            painter.setPen(QPen(QColor("#dce7f7"), 1))
+            painter.setFont(QFont("Arial", 12, QFont.Bold))
+            painter.drawText(int(left), 8, int(column_width), 24, Qt.AlignCenter, f"Head {head}")
+            painter.setPen(Qt.NoPen)
+            for track_idx, (_row_index, _track_id, sectors) in enumerate(rows):
+                radius = max_radius - (track_idx * ring_width)
+                if radius <= 4:
+                    break
+                sector_count = max(len(sectors), 1)
+                for sector_idx, state in enumerate(sectors):
+                    painter.setBrush(colors.get(state, QColor("#6b7280")))
+                    start = int((90 - (360 * sector_idx / sector_count)) * 16)
+                    span = int(-(360 / sector_count) * 16)
+                    rect_size = radius * 2
+                    painter.drawPie(
+                        int(cx - radius),
+                        int(cy - radius),
+                        int(rect_size),
+                        int(rect_size),
+                        start,
+                        span,
+                    )
+                painter.setBrush(QColor("#0c1018"))
+                inner_radius = max(radius - ring_width + 1, 0)
+                painter.drawEllipse(
+                    int(cx - inner_radius),
+                    int(cy - inner_radius),
+                    int(inner_radius * 2),
+                    int(inner_radius * 2),
+                )
+
+    def mouseMoveEvent(self, event) -> None:  # pragma: no cover - GUI interaction.
+        hit = self._hit_test(event.position().x(), event.position().y())
+        if hit is None:
+            QToolTip.hideText()
+            return
+        row_index, sector_index = hit
+        QToolTip.showText(event.globalPosition().toPoint(), self.sector_detail_text(row_index, sector_index), self)
+
+    def leaveEvent(self, _event) -> None:  # pragma: no cover - GUI interaction.
+        QToolTip.hideText()
+
+    def _hit_test(self, x: float, y: float) -> Optional[tuple[int, int]]:
+        for layout in self._head_layouts:
+            dx = x - float(layout["cx"])
+            dy = y - float(layout["cy"])
+            distance = math.hypot(dx, dy)
+            max_radius = float(layout["max_radius"])
+            ring_width = float(layout["ring_width"])
+            if distance > max_radius or distance <= max(max_radius - ring_width * len(layout["rows"]), 0):
+                continue
+            track_idx = int((max_radius - distance) // ring_width)
+            rows = layout["rows"]
+            if track_idx < 0 or track_idx >= len(rows):
+                continue
+            row_index, _track_id, sectors = rows[track_idx]
+            if not sectors:
+                continue
+            angle = (90 - math.degrees(math.atan2(dy, dx))) % 360
+            sector_index = int(angle / (360 / len(sectors)))
+            sector_index = max(0, min(sector_index, len(sectors) - 1))
+            return int(row_index), sector_index
+        return None
 
 
 class FluxctlStudio(QMainWindow):
@@ -126,6 +230,7 @@ class FluxctlStudio(QMainWindow):
         self.setWindowTitle("Fluxctl Studio")
         self.resize(1320, 840)
         self.thread_pool = QThreadPool.globalInstance()
+        self.active_jobs: set[Job] = set()
         self.current_path: Optional[Path] = None
         self.current_summary = None
         self.layout_options = services.load_layout_options()
@@ -187,6 +292,9 @@ class FluxctlStudio(QMainWindow):
             value.setObjectName("metric")
             self.summary_labels[key] = value
             self.summary_grid.addWidget(value, row, 1)
+        self.activity_label = QLabel("Ready")
+        self.activity_label.setObjectName("activity")
+        self.activity_label.setWordWrap(True)
 
         actions = QHBoxLayout()
         for text, handler in [
@@ -211,6 +319,7 @@ class FluxctlStudio(QMainWindow):
         upper = QWidget()
         upper_layout = QVBoxLayout(upper)
         upper_layout.addLayout(self.summary_grid)
+        upper_layout.addWidget(self.activity_label)
         upper_layout.addLayout(actions)
         upper_layout.addWidget(self.map_widget, 1)
         lower = QTabWidget()
@@ -288,6 +397,7 @@ class FluxctlStudio(QMainWindow):
             #sidebar { background: #090d14; min-width: 230px; max-width: 280px; border-right: 1px solid #263241; }
             #title { font-size: 24px; font-weight: 700; margin-bottom: 16px; }
             QLabel#metric { color: #9ee6b8; font-weight: 600; }
+            QLabel#activity { background: #172233; border: 1px solid #2f4158; border-radius: 6px; padding: 8px; color: #dce7f7; }
             QPushButton { background: #243348; border: 1px solid #40536c; border-radius: 6px; padding: 8px 10px; }
             QPushButton:hover { background: #2f435f; }
             QComboBox, QLineEdit, QTextEdit, QTableWidget {
@@ -315,11 +425,27 @@ class FluxctlStudio(QMainWindow):
         self.advanced_output.append(text)
 
     def _run_job(self, label: str, fn: Callable[[], object], done: Callable[[object], None]) -> None:
+        self.summary_labels["status"].setText("running")
+        self.activity_label.setText(f"Running {label}...")
         self._append_log(f"$ {label}")
         job = Job(fn)
-        job.signals.finished.connect(done)
-        job.signals.failed.connect(lambda message: self._append_log(f"Error: {message}"))
+        self.active_jobs.add(job)
+        job.signals.finished.connect(lambda result, current_job=job: self._finish_job(current_job, label, result, done))
+        job.signals.failed.connect(lambda message, current_job=job: self._fail_job(current_job, label, message))
         self.thread_pool.start(job)
+
+    def _finish_job(self, job: Job, label: str, result: object, done: Callable[[object], None]) -> None:
+        self.active_jobs.discard(job)
+        self.activity_label.setText(f"Finished {label}.")
+        if self.summary_labels["status"].text() == "running":
+            self.summary_labels["status"].setText("ready")
+        done(result)
+
+    def _fail_job(self, job: Job, label: str, message: str) -> None:
+        self.active_jobs.discard(job)
+        self.summary_labels["status"].setText("error")
+        self.activity_label.setText(f"{label} failed: {message}")
+        self._append_log(f"Error: {message}")
 
     def open_image(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
@@ -354,6 +480,9 @@ class FluxctlStudio(QMainWindow):
         self.summary_labels["confidence"].setText(f"{summary.confidence:.2f}")
         self.summary_labels["size"].setText(f"{summary.size:,} bytes")
         self.summary_labels["status"].setText("ready")
+        self.activity_label.setText(
+            f"Probe found {summary.layout_id or 'unknown layout'} with {summary.confidence:.2f} confidence."
+        )
         self._append_log(json.dumps(summary.__dict__, indent=2))
         self.run_map()
 
@@ -368,6 +497,10 @@ class FluxctlStudio(QMainWindow):
     def _show_qc(self, report: object) -> None:
         self.summary_labels["status"].setText(report.status)
         self.summary_labels["confidence"].setText(f"{report.overall_confidence:.2f}")
+        self.activity_label.setText(
+            f"QC {report.status}: {report.total_good_sectors}/{report.total_sectors} good sectors, "
+            f"{report.suspect_sectors} suspect."
+        )
         self._append_log(report.to_json())
 
     def run_map(self) -> None:
@@ -380,6 +513,11 @@ class FluxctlStudio(QMainWindow):
 
     def _show_map(self, disk_map: object) -> None:
         self.map_widget.set_disk_map(disk_map)
+        head_count = len(DiskMapWidget.head_groups(disk_map))
+        self.activity_label.setText(
+            f"Rendered map with {disk_map.total_tracks} track/head rows across {head_count} head(s), "
+            f"{disk_map.max_sectors_per_track} sectors per track."
+        )
         self._append_log(f"Rendered {disk_map.total_tracks} tracks with {disk_map.max_sectors_per_track} sectors/track")
 
     def run_list_files(self) -> None:
@@ -391,11 +529,20 @@ class FluxctlStudio(QMainWindow):
         self._run_job("extract --list", lambda: services.list_files(self.current_path, layout, encoding), self._show_files)
 
     def _show_files(self, entries: object) -> None:
+        if not entries:
+            self.files_table.setRowCount(1)
+            self.files_table.setItem(0, 0, QTableWidgetItem("No supported filesystem entries found"))
+            self.files_table.setItem(0, 1, QTableWidgetItem("-"))
+            self.files_table.setItem(0, 2, QTableWidgetItem("-"))
+            self.activity_label.setText("No supported filesystem was detected for directory listing.")
+            self._append_log("Listed 0 filesystem entries")
+            return
         self.files_table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
             self.files_table.setItem(row, 0, QTableWidgetItem(entry.name))
             self.files_table.setItem(row, 1, QTableWidgetItem(entry.kind))
             self.files_table.setItem(row, 2, QTableWidgetItem(str(entry.size)))
+        self.activity_label.setText(f"Listed {len(entries)} filesystem entries.")
         self._append_log(f"Listed {len(entries)} filesystem entries")
 
     def run_info(self) -> None:
@@ -542,6 +689,10 @@ class FluxctlStudio(QMainWindow):
         self._run_job(" ".join(args), lambda: services.run_fluxctl_command(args), self._show_command_result)
 
     def _show_command_result(self, result: object) -> None:
+        self.summary_labels["status"].setText("ready" if result.returncode == 0 else "error")
+        self.activity_label.setText(
+            f"Command finished with exit {result.returncode}: {' '.join(result.args)}"
+        )
         self._append_log(f"exit {result.returncode}")
         if result.stdout:
             self._append_log(result.stdout.rstrip())

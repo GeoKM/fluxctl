@@ -26,6 +26,19 @@ STATE_TO_COLOR = {"good": "#2ecc71", "weak": "#f1c40f", "bad": "#e74c3c"}
 
 
 @dataclass
+class SectorMapEntry:
+    """Per-sector metadata retained for interactive map views."""
+
+    sector_id: int
+    state: str
+    size: int
+    crc_ok: bool
+    confidence: float
+    deleted: bool = False
+    has_data: bool = True
+
+
+@dataclass
 class DiskMap:
     """Simple classification grid for sector health across a disk.
 
@@ -33,9 +46,10 @@ class DiskMap:
     ----------
     tracks:
         Outer list is ordered by the track/head pairs encountered in the image.
-        Each inner list contains the per-sector state labels (``good``/``weak``
-        /``bad``) for that track. Tracks with fewer sectors are padded with
-        ``"bad"`` to match ``max_sectors_per_track``.
+        Each inner list contains only the physically expected per-sector state
+        labels (``good``/``weak``/``bad``) for that track/head row. Tracks are
+        not padded to the disk maximum, so zoned GCR layouts can retain their
+        real sector counts.
     total_tracks:
         Total number of track/head entries represented.
     max_sectors_per_track:
@@ -52,6 +66,39 @@ class DiskMap:
     max_sectors_per_track: int
     track_ids: List[Tuple[int, int]] = field(default_factory=list)
     track_confidence: List[float] = field(default_factory=list)
+    sector_details: List[List[SectorMapEntry]] = field(default_factory=list)
+
+
+def _sector_entry(sector: Sector) -> SectorMapEntry:
+    state = _classify_sector(sector)
+    return SectorMapEntry(
+        sector_id=sector.sector_id,
+        state=state,
+        size=sector.size,
+        crc_ok=sector.crc_ok,
+        confidence=sector.confidence,
+        deleted=sector.deleted,
+        has_data=bool(sector.data),
+    )
+
+
+def _missing_sector_entry(sector_id: int, sector_size: int) -> SectorMapEntry:
+    return SectorMapEntry(
+        sector_id=sector_id,
+        state="bad",
+        size=sector_size,
+        crc_ok=False,
+        confidence=0.0,
+        has_data=False,
+    )
+
+
+def _sector_id_base(layout: LayoutDescriptor | None, decoded: list[Sector]) -> int:
+    if decoded:
+        return min(sec.sector_id for sec in decoded)
+    if layout:
+        return int(layout.id_rules.get("sector_number_base", 1))
+    return 1
 
 
 def _estimate_sectors_per_track(image: SCPImage) -> int:
@@ -111,6 +158,7 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
     track_states: List[List[str]] = []
     track_ids: List[Tuple[int, int]] = []
     track_confidence: List[float] = []
+    sector_details: List[List[SectorMapEntry]] = []
     max_sectors = 0
 
     for track_flux in sorted(image.tracks, key=lambda t: (t.track, t.side)):
@@ -123,9 +171,15 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
             except Exception:
                 expected_this = expected_sectors
         sectors: List[str] = []
+        details: List[SectorMapEntry] = []
         confidence = 0.0
         if not track_flux.revolutions:
-            sectors = ["bad"] * expected_this
+            sector_base = _sector_id_base(layout, [])
+            details = [
+                _missing_sector_entry(sector_id, layout.sector_size if layout else 0)
+                for sector_id in range(sector_base, sector_base + expected_this)
+            ]
+            sectors = [entry.state for entry in details]
         else:
             try:
                 if hasattr(decoder, "set_track"):
@@ -168,24 +222,33 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
                     if track_data.sectors
                     else 0.0
                 )
-                sectors = [_classify_sector(sec) for sec in sorted(track_data.sectors, key=lambda s: s.sector_id)]
-                if expected_this and len(sectors) < expected_this:
-                    sectors.extend(["bad"] * (expected_this - len(sectors)))
+                decoded = sorted(track_data.sectors, key=lambda s: s.sector_id)
+                details = [_sector_entry(sec) for sec in decoded]
+                if expected_this and len(details) < expected_this:
+                    present_ids = {entry.sector_id for entry in details}
+                    sector_size = layout.sector_size if layout else (decoded[0].size if decoded else 0)
+                    sector_base = _sector_id_base(layout, decoded)
+                    for sector_id in range(sector_base, sector_base + expected_this):
+                        if sector_id not in present_ids:
+                            details.append(_missing_sector_entry(sector_id, sector_size))
+                    details.sort(key=lambda entry: entry.sector_id)
+                sectors = [entry.state for entry in details]
             except (FluxDecodeError, Exception):
                 # Future refinement: capture decoder metrics so we can visualise
                 # why a track failed, or try secondary revolutions for multi-pass
                 # recovery.
-                sectors = ["bad"] * expected_this
+                sector_base = _sector_id_base(layout, [])
+                details = [
+                    _missing_sector_entry(sector_id, layout.sector_size if layout else 0)
+                    for sector_id in range(sector_base, sector_base + expected_this)
+                ]
+                sectors = [entry.state for entry in details]
                 confidence = 0.0
         max_sectors = max(max_sectors, len(sectors))
         track_states.append(sectors)
         track_ids.append((track_flux.track, track_flux.side))
         track_confidence.append(confidence)
-
-    for idx, sectors in enumerate(track_states):
-        if len(sectors) < max_sectors:
-            sectors.extend(["bad"] * (max_sectors - len(sectors)))
-            track_states[idx] = sectors
+        sector_details.append(details)
 
     return DiskMap(
         tracks=track_states,
@@ -193,6 +256,7 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
         max_sectors_per_track=max_sectors,
         track_ids=track_ids,
         track_confidence=track_confidence,
+        sector_details=sector_details,
     )
 
 
@@ -206,17 +270,18 @@ def build_disk_map_from_tracksectors(tracks: list[TrackSectors]) -> DiskMap:
     track_states: list[list[str]] = []
     track_ids: list[tuple[int, int]] = []
     track_confidence: list[float] = []
+    sector_details: list[list[SectorMapEntry]] = []
 
     for ts in sorted(tracks, key=lambda t: (t.track, t.head)):
-        sectors = [_classify_sector(sec) for sec in sorted(ts.sectors, key=lambda s: s.sector_id)]
-        if len(sectors) < max_sectors:
-            sectors.extend(["bad"] * (max_sectors - len(sectors)))
+        details = [_sector_entry(sec) for sec in sorted(ts.sectors, key=lambda s: s.sector_id)]
+        sectors = [entry.state for entry in details]
         track_states.append(sectors)
         track_ids.append((ts.track, ts.head))
         confidence = (
             sum(sec.confidence for sec in ts.sectors) / len(ts.sectors) if ts.sectors else 0.0
         )
         track_confidence.append(confidence)
+        sector_details.append(details)
 
     return DiskMap(
         tracks=track_states,
@@ -224,6 +289,7 @@ def build_disk_map_from_tracksectors(tracks: list[TrackSectors]) -> DiskMap:
         max_sectors_per_track=max_sectors,
         track_ids=track_ids,
         track_confidence=track_confidence,
+        sector_details=sector_details,
     )
 
 
@@ -254,7 +320,7 @@ def render_ascii(disk_map: DiskMap) -> str:
             suffix = f"H{head}"
             track_label = f"Track {track:02d}{suffix}"
         glyphs = "".join(STATE_TO_GLYPH.get(state, "?") for state in sectors)
-        padded = glyphs.ljust(disk_map.max_sectors_per_track, STATE_TO_GLYPH["bad"])
+        padded = glyphs.ljust(disk_map.max_sectors_per_track)
         lines.append(f"{track_label}: [{padded}]")
     return "\n".join(lines)
 
@@ -287,9 +353,10 @@ def render_svg(disk_map: DiskMap) -> str:
     for track_idx, sectors in enumerate(disk_map.tracks):
         inner_r = radius + track_idx * (ring_width + gap)
         outer_r = inner_r + ring_width
+        sector_count = max(len(sectors), 1)
         for sector_idx, state in enumerate(sectors):
-            start_angle = 2 * pi * (sector_idx / disk_map.max_sectors_per_track)
-            end_angle = 2 * pi * ((sector_idx + 1) / disk_map.max_sectors_per_track)
+            start_angle = 2 * pi * (sector_idx / sector_count)
+            end_angle = 2 * pi * ((sector_idx + 1) / sector_count)
             large_arc = 1 if end_angle - start_angle > pi else 0
 
             x1, y1 = _polar_to_cartesian(outer_r, start_angle, cx, cy)
@@ -334,6 +401,7 @@ def render_svg(disk_map: DiskMap) -> str:
 
 __all__ = [
     "DiskMap",
+    "SectorMapEntry",
     "build_disk_map",
     "build_disk_map_from_tracksectors",
     "render_ascii",
