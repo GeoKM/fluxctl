@@ -1268,6 +1268,10 @@ def convert(
         image_obj = TrackSectorImage(track_data, bytes_per_sector=imd_geom.sector_size)
         image_obj.set_geometry(imd_geom.spt or imd_geom.tracks, imd_geom.heads)
         track_data = track_data
+    elif layout_desc:
+        image_obj = _prepare_image(path, layout_desc.layout_id, decoder_used)
+        if isinstance(image_obj, TrackSectorImage):
+            track_data = image_obj.tracks
     else:
         image_obj = RawSectorImage(path.read_bytes())
 
