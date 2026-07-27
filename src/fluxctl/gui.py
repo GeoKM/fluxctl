@@ -310,12 +310,15 @@ class FluxctlStudio(QMainWindow):
 
         self.map_widget = DiskMapWidget()
         self.files_table = QTableWidget(0, 3)
+        self.files_table.setMinimumHeight(260)
         self.files_table.setHorizontalHeaderLabels(["Name", "Kind", "Size"])
         self.files_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.log = QTextEdit()
         self.log.setReadOnly(True)
+        self.log.setMinimumHeight(260)
 
-        splitter = QSplitter(Qt.Vertical)
+        self.simple_splitter = QSplitter(Qt.Vertical)
+        self.simple_splitter.setChildrenCollapsible(False)
         upper = QWidget()
         upper_layout = QVBoxLayout(upper)
         upper_layout.addLayout(self.summary_grid)
@@ -323,12 +326,15 @@ class FluxctlStudio(QMainWindow):
         upper_layout.addLayout(actions)
         upper_layout.addWidget(self.map_widget, 1)
         lower = QTabWidget()
+        lower.setMinimumHeight(300)
         lower.addTab(self.files_table, "Files")
         lower.addTab(self.log, "Jobs")
-        splitter.addWidget(upper)
-        splitter.addWidget(lower)
-        splitter.setSizes([560, 220])
-        layout.addWidget(splitter)
+        self.simple_splitter.addWidget(upper)
+        self.simple_splitter.addWidget(lower)
+        self.simple_splitter.setStretchFactor(0, 3)
+        self.simple_splitter.setStretchFactor(1, 2)
+        self.simple_splitter.setSizes([500, 340])
+        layout.addWidget(self.simple_splitter)
         return page
 
     def _build_advanced_mode(self) -> QWidget:
@@ -406,6 +412,15 @@ class FluxctlStudio(QMainWindow):
             QHeaderView::section { background: #1b2636; color: #dce7f7; padding: 6px; border: 0; }
             QTabBar::tab { background: #1b2636; padding: 8px 14px; border-top-left-radius: 6px; border-top-right-radius: 6px; }
             QTabBar::tab:selected { background: #31455f; }
+            QSplitter::handle {
+                background: #263241;
+                border: 1px solid #40536c;
+            }
+            QSplitter::handle:vertical {
+                height: 10px;
+                margin: 4px 0;
+            }
+            QSplitter::handle:hover { background: #3a516e; }
             """
         )
 
