@@ -16,6 +16,7 @@ from typing import List, Sequence
 
 from .exceptions import SCPFormatError
 from .models import RevolutionFlux, SCPImage, TrackFlux
+from .native import parse_scp_flux_bytes
 
 MAGIC = b"SCP"
 DEFAULT_TIMEBASE_NS = 25.0
@@ -91,6 +92,9 @@ def _parse_flux_bytes(flux_bytes: bytes, timebase_ns: float) -> Sequence[int]:
     intervals_ns: array[int] = array("I")
     if not flux_bytes:
         return intervals_ns
+    native_intervals = parse_scp_flux_bytes(flux_bytes, timebase_ns)
+    if native_intervals is not None:
+        return native_intervals
 
     overflow = 0
     for (tick,) in struct.iter_unpack(">H", flux_bytes[: (len(flux_bytes) // 2) * 2]):

@@ -5,6 +5,7 @@ from fluxctl.native import (
     is_native_available,
     mfm_decode_best,
     mfm_intervals_to_bits,
+    parse_scp_flux_bytes,
 )
 
 
@@ -31,3 +32,11 @@ def test_native_gcr_intervals_to_bits_matches_python_shape() -> None:
     bits = gcr_intervals_to_bits([4000, 8000, 4000], 4000.0)
 
     assert bits == bytes([1, 0, 1, 1])
+
+
+def test_native_parse_scp_flux_bytes_handles_overflows_and_truncation() -> None:
+    payload = bytes.fromhex("0000000100000002FFFFAA")
+    intervals = parse_scp_flux_bytes(payload, 1.0)
+
+    assert intervals is not None
+    assert list(intervals) == [65537, 65538, 65535]
