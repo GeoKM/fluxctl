@@ -6,7 +6,7 @@ from typing import List, Sequence
 from ..encoding.gcr import GCR_DECODE_5TO4
 from ..exceptions import FluxDecodeError
 from ..models import BitDecodeMetrics, Bitstream, RevolutionFlux
-from ..native import gcr_intervals_to_bits
+from ..native import gcr_estimate_confidence, gcr_intervals_to_bits
 from ..plugins import PluginInfo, registry
 from . import Decoder
 
@@ -103,6 +103,9 @@ class GCRDecoder(Decoder):
     def _estimate_confidence(self, bits: Sequence[int]) -> float:
         if not bits:
             return 0.0
+        native_confidence = gcr_estimate_confidence(bits)
+        if native_confidence is not None:
+            return native_confidence
         valid = 0
         total = 0
         for idx in range(0, len(bits) - 4, 5):

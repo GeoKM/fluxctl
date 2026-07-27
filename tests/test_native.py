@@ -1,6 +1,7 @@
 import pytest
 
 from fluxctl.native import (
+    gcr_estimate_confidence,
     gcr_intervals_to_bits,
     is_native_available,
     mfm_decode_best,
@@ -32,6 +33,16 @@ def test_native_gcr_intervals_to_bits_matches_python_shape() -> None:
     bits = gcr_intervals_to_bits([4000, 8000, 4000], 4000.0)
 
     assert bits == bytes([1, 0, 1, 1])
+
+
+def test_native_gcr_estimate_confidence_scores_symbols() -> None:
+    # 01010 and 01011 are valid; 00000 is invalid.
+    bits = bytes([0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0])
+
+    confidence = gcr_estimate_confidence(bits)
+
+    assert confidence is not None
+    assert round(confidence, 3) == 0.167
 
 
 def test_native_parse_scp_flux_bytes_handles_overflows_and_truncation() -> None:

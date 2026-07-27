@@ -113,6 +113,12 @@ def _load_library():
             ctypes.POINTER(_NativeBuffer),
         ]
         lib.fluxctl_gcr_intervals_to_bits.restype = ctypes.c_int
+        lib.fluxctl_gcr_estimate_confidence.argtypes = [
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_double),
+        ]
+        lib.fluxctl_gcr_estimate_confidence.restype = ctypes.c_int
         _LIB = lib
         return _LIB
     return None
@@ -242,7 +248,32 @@ def gcr_intervals_to_bits(
     return _take_buffer(lib, buffer)
 
 
+def gcr_estimate_confidence(bits: Sequence[int]) -> Optional[float]:
+    """Return native GCR symbol confidence, or ``None`` without native support."""
+
+    lib = _load_library()
+    if lib is None:
+        return None
+    if isinstance(bits, bytes):
+        payload = ctypes.c_char_p(bits)
+        payload_len = len(bits)
+    else:
+        payload_bytes = bytes(bits)
+        payload = ctypes.c_char_p(payload_bytes)
+        payload_len = len(payload_bytes)
+    confidence = ctypes.c_double()
+    status = lib.fluxctl_gcr_estimate_confidence(
+        ctypes.cast(payload, ctypes.POINTER(ctypes.c_uint8)),
+        payload_len,
+        ctypes.byref(confidence),
+    )
+    if status != 0:
+        return None
+    return float(confidence.value)
+
+
 __all__ = [
+    "gcr_estimate_confidence",
     "gcr_intervals_to_bits",
     "is_native_available",
     "mfm_decode_best",

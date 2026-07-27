@@ -268,6 +268,72 @@ fn lowpass_merge(intervals: &[u32], threshold_ns: f64) -> Vec<f64> {
     merged
 }
 
+fn is_valid_gcr_symbol(code: u8) -> bool {
+    matches!(
+        code,
+        0b01010
+            | 0b01011
+            | 0b10010
+            | 0b10011
+            | 0b01110
+            | 0b01111
+            | 0b10110
+            | 0b10111
+            | 0b01001
+            | 0b11001
+            | 0b11010
+            | 0b11011
+            | 0b01101
+            | 0b11101
+            | 0b11110
+            | 0b10101
+    )
+}
+
+#[no_mangle]
+pub extern "C" fn fluxctl_gcr_estimate_confidence(
+    bits: *const u8,
+    len: usize,
+    out_confidence: *mut f64,
+) -> i32 {
+    if bits.is_null() || out_confidence.is_null() {
+        return -1;
+    }
+    let bits = unsafe { std::slice::from_raw_parts(bits, len) };
+    if bits.is_empty() {
+        unsafe {
+            *out_confidence = 0.0;
+        }
+        return 0;
+    }
+
+    let mut valid = 0usize;
+    let mut total = 0usize;
+    let mut idx = 0usize;
+    while idx + 5 <= bits.len() {
+        let mut code = 0u8;
+        for offset in 0..5 {
+            code = (code << 1) | (bits[idx + offset] & 1);
+        }
+        total += 1;
+        if is_valid_gcr_symbol(code) {
+            valid += 1;
+        }
+        idx += 5;
+    }
+
+    let ratio = (valid as f64) / (total.max(1) as f64);
+    let confidence = if ratio <= 0.6 {
+        0.1
+    } else {
+        ((ratio - 0.6) / 0.4).clamp(0.1, 1.0)
+    };
+    unsafe {
+        *out_confidence = confidence;
+    }
+    0
+}
+
 #[no_mangle]
 pub extern "C" fn fluxctl_gcr_intervals_to_bits(
     intervals: *const u32,
