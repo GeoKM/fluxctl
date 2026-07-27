@@ -18,9 +18,13 @@ greaseweazle = [
     "requests>=2.31",
 ]
 hxcfe = []
+gui = [
+    "PySide6>=6.7",
+]
 
 [project.scripts]
 fluxctl = "fluxctl.cli:app"
+fluxctl-studio = "fluxctl.gui:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]

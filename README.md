@@ -20,6 +20,7 @@ fluxctl is a modular toolkit for inspecting and converting floppy disk flux capt
 - **extract**: detect filesystems and extract files or raw sectors.
 - **convert**: export to raw, IMD, ADF, D64, and G64 images.
 - **sectors/dump/patch**: per-track listing, hex dump, and simple patching helpers.
+- **studio**: optional desktop GUI for guided and advanced workflows.
 
 ## Encodings and filesystems
 - Encodings: MFM, FM, GCR (Commodore) via plugin registry.
@@ -82,6 +83,26 @@ fluxctl doctor --hxcfe ~/src/HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build/h
 Warnings are informational for optional features. A missing native library only
 means fluxctl will use the pure-Python decoder path. A failed `hxcfe` check only
 matters when you explicitly want HxC-assisted hints.
+
+## Fluxctl Studio GUI
+
+Fluxctl Studio is an optional desktop interface for the same core operations as
+the CLI. It is designed around two workflows:
+
+- **Simple Mode**: open an image, run doctor/probe/QC, render a disk map, list
+  filesystem files, and convert common output formats with fewer choices.
+- **Advanced Mode**: expose layout, encoding, track/head/sector, compare,
+  sector listing, hex dump, conversion, and provenance inspection controls.
+
+Install the GUI dependency and launch it:
+```bash
+.venv/bin/python -m pip install -e .[gui]
+.venv/bin/fluxctl-studio
+```
+
+The GUI uses the same fluxctl package and CLI command paths as terminal
+workflows. Outputs such as converted images, QC reports, and provenance sidecars
+therefore follow the same behavior documented above.
 
 ### Commodore exports
 
