@@ -1,11 +1,13 @@
 """Magnetic Flux Modulation (MFM) decoder."""
 from __future__ import annotations
 
+from array import array
 from math import fabs
 from typing import List, Sequence
 
 from ..exceptions import FluxDecodeError
 from ..models import BitDecodeMetrics, Bitstream, RevolutionFlux
+from ..native import mfm_intervals_to_bits
 from ..plugins import PluginInfo, registry
 from . import Decoder
 
@@ -30,7 +32,11 @@ class MFMDecoder(Decoder):
         self.max_cells = max_cells
         self.auto_cell = auto_cell
 
-    def _intervals_to_bits(self, intervals_ns: Sequence[int], cell_ns: float) -> List[int]:
+    def _intervals_to_bits(self, intervals_ns: Sequence[int], cell_ns: float) -> Sequence[int]:
+        native_bits = mfm_intervals_to_bits(intervals_ns, cell_ns, self.max_cells)
+        if native_bits is not None:
+            return native_bits
+
         bits: List[int] = []
         for interval in intervals_ns:
             if interval <= 0:
@@ -56,17 +62,17 @@ class MFMDecoder(Decoder):
         if not rev.interval_ns:
             raise FluxDecodeError("No flux intervals supplied for revolution")
 
-        intervals_ns = list(rev.interval_ns)
+        intervals_ns: Sequence[int] = rev.interval_ns
         mean_interval = sum(intervals_ns) / len(intervals_ns)
         if mean_interval > 1_000_000:
-            intervals_ns = [max(1, int(val / 1000)) for val in intervals_ns]
+            intervals_ns = array("I", (max(1, int(val / 1000)) for val in intervals_ns))
 
         candidates = [self.cell_ns]
         if self.auto_cell:
             base_interval = self._estimate_cell_ns(intervals_ns)
             candidates.extend([base_interval, base_interval * 0.75, base_interval / 2.0])
 
-        best_bits: List[int] = []
+        best_bits: Sequence[int] = []
         best_score = (-1, -1.0)
         for cell_ns in candidates:
             if cell_ns <= 0:

@@ -6,6 +6,7 @@ from typing import List, Sequence
 from ..encoding.gcr import GCR_DECODE_5TO4
 from ..exceptions import FluxDecodeError
 from ..models import BitDecodeMetrics, Bitstream, RevolutionFlux
+from ..native import gcr_intervals_to_bits
 from ..plugins import PluginInfo, registry
 from . import Decoder
 
@@ -64,11 +65,14 @@ class GCRDecoder(Decoder):
 
     def _intervals_to_bits(
         self, intervals_ns: Sequence[int], cell_ns: float, lowpass_ns: float = 2000.0
-    ) -> List[int]:
+    ) -> Sequence[int]:
         """Convert flux intervals to bitcells using a PLL-style sampler (GW-like)."""
 
         if not intervals_ns:
             return []
+        native_bits = gcr_intervals_to_bits(intervals_ns, cell_ns, lowpass_ns)
+        if native_bits is not None:
+            return native_bits
 
         merged = self._lowpass_merge(intervals_ns, lowpass_ns)
 
@@ -96,7 +100,7 @@ class GCRDecoder(Decoder):
 
         return bits
 
-    def _estimate_confidence(self, bits: List[int]) -> float:
+    def _estimate_confidence(self, bits: Sequence[int]) -> float:
         if not bits:
             return 0.0
         valid = 0
@@ -119,7 +123,7 @@ class GCRDecoder(Decoder):
             raise FluxDecodeError("No flux data available for GCR decoding")
 
         candidates = [self.cell_ns, 3250.0, 3500.0, 3750.0, 4000.0]
-        best_bits: List[int] = []
+        best_bits: Sequence[int] = []
         best_confidence = -1.0
         for cell_ns in candidates:
             bits = self._intervals_to_bits(rev.interval_ns, cell_ns)
