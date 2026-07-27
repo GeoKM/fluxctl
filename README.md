@@ -98,6 +98,20 @@ Steps:
    ```
 HxCFE is optional; when omitted, fluxctl uses its own detectors.
 
+### Optional native decoder acceleration
+Fluxctl can load an optional Rust native library for hot flux-to-bitcell decoder
+loops. The Python implementation remains the fallback when the library is not
+built.
+
+Build the native library from the repository root:
+```
+cargo build --manifest-path native/fluxctl_native/Cargo.toml --release
+```
+Fluxctl auto-detects the resulting library under `native/fluxctl_native/target`.
+Set `FLUXCTL_NATIVE_PATH=/path/to/libfluxctl_native.dylib` (or `.so`/`.dll`) to
+override the lookup path. Set `FLUXCTL_DISABLE_NATIVE=1` to force the pure
+Python fallback.
+
 ## Contributor guide
 See [AGENTS.md](AGENTS.md) for coding standards, workflows, and review expectations.
 
