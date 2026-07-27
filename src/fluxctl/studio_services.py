@@ -10,7 +10,6 @@ from typing import Optional
 
 from . import __version__
 from .cli import (
-    _detect_filesystem,
     _doctor_report,
     _get_decoder,
     _prepare_image,
@@ -18,6 +17,7 @@ from .cli import (
 )
 from .decoding import load_builtin_decoders
 from .detection import detect_encoding, detect_layout
+from .filesystem_detection import detect_filesystem
 from .filesystems import TrackSectorImage, load_builtin_filesystems
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from .plugins import registry
@@ -120,18 +120,26 @@ def summarize_image(path: Path, hxcfe: Optional[Path] = None) -> ImageSummary:
             fs_name = ""
             try:
                 image_obj = _prepare_image(path, layout.layout.layout_id, layout.layout.encoding)
-                fs = _detect_filesystem(image_obj)
-                if fs:
-                    fs_name = getattr(fs, "metadata", lambda: {})().get("filesystem", fs.__class__.__name__.lower())
+                fs_detection = detect_filesystem(image_obj, path_name=path.name)
+                fs_name = fs_detection.primary or ""
+                fs_evidence = [
+                    f"filesystem_confidence={fs_detection.confidence:.2f}",
+                    *fs_detection.evidence,
+                    *[
+                        f"filesystem_region={region.region}:{region.filesystem}"
+                        for region in fs_detection.regions
+                    ],
+                ]
             except Exception:
                 fs_name = ""
+                fs_evidence = ["filesystem_probe_failed=1"]
             candidates.append(
                 {
                     "layout_id": layout.layout.layout_id,
                     "encoding": layout.layout.encoding,
                     "filesystem": fs_name,
                     "score": layout.score,
-                    "evidence": (encoding.evidence if encoding else []) + layout.evidence,
+                    "evidence": (encoding.evidence if encoding else []) + layout.evidence + fs_evidence,
                 }
             )
         elif encoding:
@@ -205,13 +213,14 @@ def list_files(path: Path, layout_id: Optional[str], encoding: str = "mfm") -> l
 
     load_builtin_filesystems()
     image = _prepare_image(path, layout_id, encoding)
-    filesystem = _detect_filesystem(image)
+    filesystem = detect_filesystem(image, path_name=path.name).plugin
     if filesystem is None:
         return []
-    return [
-        FileEntryView(entry.name, "<DIR>" if entry.is_dir else "file", entry.size)
-        for entry in filesystem.list_directory("/")
-    ]
+    try:
+        entries = filesystem.list_directory("/")
+    except Exception:
+        return []
+    return [FileEntryView(entry.name, "<DIR>" if entry.is_dir else "file", entry.size) for entry in entries]
 
 
 def provenance_json(path: Path) -> dict:

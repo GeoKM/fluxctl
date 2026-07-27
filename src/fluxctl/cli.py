@@ -20,6 +20,7 @@ from .decoding import load_builtin_decoders
 from .decoding.mfm import mfm_decoder
 from .detection import detect_encoding, detect_layout, infer_track_step, logical_track_count
 from .exceptions import ExportError, FluxDecodeError, FluxctlError
+from .filesystem_detection import FilesystemDetection, detect_filesystem
 from .exporters import load_builtin_exporters
 from .filesystems import Filesystem, RawSectorImage, TrackSectorImage, load_builtin_filesystems
 from .imd import load_imd_image
@@ -456,74 +457,15 @@ def probe(
         image, encoding_candidate.encoding, path, hint=hxc_hint
     )
     if layout_candidate:
-        filesystem: Optional[str] = None
-        image_obj = None
-        # Try to identify filesystem by probing reconstructed image when we have a layout.
+        filesystem: Optional[str]
+        filesystem_evidence: list[str] = []
         try:
             image_obj = _prepare_image(path, layout_candidate.layout.layout_id, encoding_candidate.encoding)
-            fs = _detect_filesystem(image_obj)
-            if fs:
-                for key, plugin in registry.filesystem.items():
-                    if plugin.entry is fs:
-                        filesystem = key
-                        break
-                filesystem = filesystem or fs.__class__.__name__.lower()
+            detection = _filesystem_detection_for_image(image_obj, path)
+            filesystem, filesystem_evidence = _filesystem_probe_payload(detection)
         except Exception:
             filesystem = None
-        # Specialize CP/M variants for Commodore layouts (even if probing failed).
-        lid = layout_candidate.layout.layout_id
-        # Force known cases: 1581 uses CBM DOS.
-        if lid == "commodore_mfm_1581_800k":
-            filesystem = "cbm_dos"
-        # RX02 RT-11 fixture default.
-        if lid == "generic_mfm_8inch_500k":
-            filesystem = filesystem or "rt11"
-        # IBM Displaywriter FM single-sided.
-        if lid == "ibm_fm_8inch_284k":
-            filesystem = filesystem or "displaywriter"
-        if filesystem == "cpm":
-            if lid == "commodore_gcr_1541_cpm_170k":
-                filesystem = "c64_cpm_2_2"
-            elif lid.startswith("commodore_gcr_1571"):
-                filesystem = "c128_cpm_3_0"
-            elif "cpm" in lid:
-                flavor = _detect_cpm_variant(image_obj) if image_obj else None
-                filesystem = flavor or filesystem
-        # If layout looks like 1541 CP/M but CP/M signatures are CP/M 3.0, map accordingly.
-        if filesystem == "cpm" and lid == "commodore_gcr_1541_170k":
-            flavor = _detect_cpm_variant(image_obj) if image_obj else None
-            if flavor:
-                filesystem = flavor
-        # 1571 single-sided CP/M images reuse the 1541 layout id but should be tagged as C128 CP/M.
-        if filesystem in (None, "cpm") and lid == "commodore_gcr_1541_170k" and "cpm" in path.name.lower():
-            filesystem = "c128_cpm_3_0"
-        # Avoid mislabelling non-CP/M 1571 images as C64 CP/M; default them to cbm_dos.
-        if filesystem == "c64_cpm_2_2" and (lid.startswith("commodore_gcr_1571") and "cpm" not in lid):
-            filesystem = "cbm_dos"
-        if filesystem == "cpm" and lid.startswith("commodore_gcr_1571") and "cpm" in lid:
-            filesystem = "c128_cpm_3_0"
-        if filesystem is None and lid.startswith("commodore_gcr_1571") and "cpm" not in lid:
-            filesystem = "cbm_dos"
-        if filesystem is None and lid.startswith("ibm_mfm"):
-            filesystem = "fat12"
-        if filesystem is None and lid.startswith("amiga_mfm_"):
-            filesystem = _detect_amiga_fs(image_obj) if image_obj else None
-        if filesystem is None and lid.startswith("generic_mfm_8inch_500k"):
-            try:
-                image_obj = _prepare_image(path, lid, encoding_candidate.encoding)
-                fs_probe = _detect_filesystem(image_obj)
-                if fs_probe and getattr(fs_probe, "metadata", lambda: {})().get("filesystem") == "rt11":
-                    filesystem = "rt11"
-            except Exception:
-                pass
-        if filesystem is None:
-            if lid == "commodore_gcr_1541_cpm_170k":
-                filesystem = "c64_cpm_2_2"
-            elif lid.startswith("commodore_gcr_1571") and "cpm" in lid:
-                filesystem = "c128_cpm_3_0"
-            elif lid == "amiga_mfm_880k":
-                filesystem = "amiga_ofs"
-            # Do not infer CP/M flavor for non-CP/M layouts when probing failed.
+            filesystem_evidence = ["filesystem_probe_failed=1"]
         candidates.append(
             CandidateFormat(
                 candidate_id=layout_candidate.layout.layout_id,
@@ -531,7 +473,7 @@ def probe(
                 layout_id=layout_candidate.layout.layout_id,
                 filesystem=filesystem,
                 score=layout_candidate.score,
-                evidence=encoding_candidate.evidence + layout_candidate.evidence,
+                evidence=encoding_candidate.evidence + layout_candidate.evidence + filesystem_evidence,
             )
         )
     else:
@@ -646,13 +588,19 @@ def _decode_tracks(
 
 
 def _detect_filesystem(image) -> Optional[Filesystem]:
-    if not registry.filesystem:
-        load_builtin_filesystems()
-    for plugin in registry.filesystem.values():
-        fs = plugin.entry
-        if fs.probe(image):
-            return fs
-    return None
+    detection = detect_filesystem(image)
+    return detection.plugin
+
+
+def _filesystem_detection_for_image(image, path: Optional[Path] = None) -> FilesystemDetection:
+    return detect_filesystem(image, path_name=path.name if path else "")
+
+
+def _filesystem_probe_payload(detection: FilesystemDetection) -> tuple[Optional[str], list[str]]:
+    evidence = [f"filesystem_confidence={detection.confidence:.2f}", *detection.evidence]
+    for region in detection.regions:
+        evidence.append(f"filesystem_region={region.region}:{region.filesystem}")
+    return detection.primary, evidence
 
 
 def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
@@ -889,52 +837,66 @@ def _sectors_from_blob(layout: LayoutDescriptor, data: bytes, *, allow_pad: bool
         data = data.ljust(expected_bytes, b"\x00")
     tracks: list[TrackSectors] = []
     offset = 0
-    for cylinder in range(layout.tracks):
+    side_blocked_flat = layout.layout_id == "commodore_gcr_1571_341k"
+    order = (
+        ((cylinder, head) for head in range(layout.sides) for cylinder in range(layout.tracks))
+        if side_blocked_flat
+        else ((cylinder, head) for cylinder in range(layout.tracks) for head in range(layout.sides))
+    )
+    for cylinder, head in order:
         sectors_on_track = sectors_per_cylinder[cylinder]
-        for head in range(layout.sides):
-            sector_size = layout.sector_size
-            if layout.track_overrides:
-                for override in layout.track_overrides:
-                    if _track_in_range(override.get("track_range", ""), cylinder) and (
-                        override.get("head") is None or override.get("head") == head
-                    ):
-                        sector_size = override.get("sector_size", sector_size)
-                        break
-            size_code = SECTOR_SIZE_TO_CODE.get(sector_size)
-            if size_code is None:
+        sector_size = layout.sector_size
+        if layout.track_overrides:
+            for override in layout.track_overrides:
+                if _track_in_range(override.get("track_range", ""), cylinder) and (
+                    override.get("head") is None or override.get("head") == head
+                ):
+                    sector_size = override.get("sector_size", sector_size)
+                    break
+        size_code = SECTOR_SIZE_TO_CODE.get(sector_size)
+        if size_code is None:
+            return None
+        sectors: list[Sector] = []
+        sector_base = int(layout.id_rules.get("sector_number_base", 1))
+        for sector_offset in range(sectors_on_track):
+            chunk = data[offset : offset + sector_size]
+            if len(chunk) < sector_size:
                 return None
-            sectors: list[Sector] = []
-            for sector_id in range(1, sectors_on_track + 1):
-                chunk = data[offset : offset + sector_size]
-                if len(chunk) < sector_size:
-                    return None
-                sectors.append(
-                    Sector(
-                        cylinder=cylinder,
-                        head=head,
-                        sector_id=sector_id,
-                        size_code=size_code,
-                        data=chunk,
-                        crc_ok=True,
-                        confidence=1.0,
-                        deleted=False,
-                    )
+            sectors.append(
+                Sector(
+                    cylinder=cylinder,
+                    head=head,
+                    sector_id=sector_base + sector_offset,
+                    size_code=size_code,
+                    data=chunk,
+                    crc_ok=True,
+                    confidence=1.0,
+                    deleted=False,
                 )
-                offset += sector_size
-            tracks.append(TrackSectors(track=cylinder, head=head, sectors=sectors))
+            )
+            offset += sector_size
+        tracks.append(TrackSectors(track=cylinder, head=head, sectors=sectors))
     return tracks
 
 
-def _filesystem_name_for_image(image) -> Optional[str]:
-    probe_fs = _detect_filesystem(image)
+def _filesystem_name_for_image(image, path: Optional[Path] = None) -> Optional[str]:
+    detection = _filesystem_detection_for_image(image, path)
+    if detection.primary:
+        return detection.primary
+    layout_id = getattr(getattr(image, "layout", None), "layout_id", None)
+    return LAYOUT_FILESYSTEM_HINTS.get(layout_id) if layout_id else None
+
+
+def _filesystem_evidence_for_image(image, path: Optional[Path] = None) -> tuple[Optional[str], list[str]]:
+    detection = _filesystem_detection_for_image(image, path)
+    if detection.primary:
+        return _filesystem_probe_payload(detection)
     layout_id = getattr(getattr(image, "layout", None), "layout_id", None)
     layout_hint = LAYOUT_FILESYSTEM_HINTS.get(layout_id) if layout_id else None
-    if probe_fs is not None:
-        for key, plugin in registry.filesystem.items():
-            if plugin.entry is probe_fs:
-                return key
-        return probe_fs.__class__.__name__.lower()
-    return layout_hint
+    evidence = detection.evidence
+    if layout_hint:
+        evidence = [*evidence, f"filesystem_layout_hint={layout_hint}"]
+    return layout_hint, evidence
 
 
 def _probe_flat_image(path: Path) -> list[CandidateFormat]:
@@ -962,7 +924,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
             f"size={size}",
             f"geom={imd_geom.tracks}x{imd_geom.heads}x{imd_geom.spt}x{imd_geom.sector_size}",
         ]
-        imd_filesystem_name = _filesystem_name_for_image(imd_image) if imd_image else None
+        imd_filesystem_name = _filesystem_name_for_image(imd_image, path) if imd_image else None
         data_bytes = bytes(data)
     else:
         data_bytes = path.read_bytes()
@@ -1038,10 +1000,11 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
         image_obj.layout = layout
         if not layout.track_sectors:
             image_obj.set_geometry(layout.sectors_per_track, layout.sides)
-        filesystem_name = _filesystem_name_for_image(image_obj)
+        filesystem_name, filesystem_evidence = _filesystem_evidence_for_image(image_obj, path)
         layout_evidence = evidence + [f"layout={layout.layout_id}"]
         if filesystem_name:
             layout_evidence.append(f"filesystem={filesystem_name}")
+        layout_evidence.extend(filesystem_evidence)
         distance = abs(expected_bytes - len(data_bytes))
         candidate = CandidateFormat(
             candidate_id=layout.layout_id,
@@ -1073,8 +1036,9 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
     if imd_geom and imd_geom.spt and imd_geom.heads:
         fallback_image.set_geometry(imd_geom.spt, imd_geom.heads)
 
-    fallback_fs = _filesystem_name_for_image(fallback_image)
+    fallback_fs, fallback_fs_evidence = _filesystem_evidence_for_image(fallback_image, path)
     fallback_evidence = evidence + ([f"filesystem={fallback_fs}"] if fallback_fs else [])
+    fallback_evidence.extend(fallback_fs_evidence)
     fallback_candidate = CandidateFormat(
         candidate_id=f"flat_{ext_for_layouts.lstrip('.')}",
         encoding=None,

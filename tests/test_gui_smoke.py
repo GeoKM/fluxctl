@@ -58,7 +58,7 @@ def test_simple_mode_buttons_update_visible_activity() -> None:
     assert window.map_widget.disk_map is not None
 
     window.run_list_files()
-    _wait_until(app, lambda: "filesystem" in window.activity_label.text() or "Listed" in window.activity_label.text())
+    _wait_until(app, lambda: window.files_table.rowCount() >= 1)
     assert window.files_table.rowCount() >= 1
 
     window.close()

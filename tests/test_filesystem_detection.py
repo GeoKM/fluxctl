@@ -1,0 +1,60 @@
+from pathlib import Path
+
+from fluxctl.cli import _prepare_image
+from fluxctl.filesystem_detection import detect_filesystem
+from fluxctl.layouts.loader import load_builtin_layouts
+
+
+FIXTURE_D64 = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64-170K.d64")
+FIXTURE_D64_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64CPM-170K.d64")
+FIXTURE_D71 = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C128-341K.d71")
+FIXTURE_D71_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-MFM-C128CPM-340K.d71")
+
+
+def test_detects_1541_cbm_dos_with_strong_probe() -> None:
+    load_builtin_layouts()
+    image = _prepare_image(FIXTURE_D64, "commodore_gcr_1541_170k", "gcr")
+
+    detection = detect_filesystem(image, path_name="wrong-cpm-name.d64")
+
+    assert detection.primary == "cbm_dos"
+    assert detection.confidence > 0.9
+    assert any(region.filesystem == "cbm_dos" for region in detection.regions)
+
+
+def test_detects_1571_gcr_as_cbm_dos_family_with_regions() -> None:
+    load_builtin_layouts()
+    image = _prepare_image(FIXTURE_D71, "commodore_gcr_1571_341k", "gcr")
+
+    detection = detect_filesystem(image, path_name="wrong-cpm-name.d71")
+
+    assert detection.primary == "cbm_dos_1571"
+    assert [region.filesystem for region in detection.regions] == [
+        "cbm_dos_1541_compatible",
+        "cbm_dos_1571_extended_side",
+    ]
+
+
+def test_detects_c64_cpm_from_directory_not_filename() -> None:
+    load_builtin_layouts()
+    image = _prepare_image(FIXTURE_D64_CPM, "commodore_gcr_1541_cpm_170k", "gcr")
+
+    detection = detect_filesystem(image, path_name="definitely-not-cpm.d64")
+
+    assert detection.primary == "c64_cpm_2_2"
+    assert detection.regions[0].filesystem == "c64_cpm_2_2"
+    assert detection.plugin is not None
+    assert "PIP.COM" in [entry.name for entry in detection.plugin.list_directory("/")]
+
+
+def test_detects_c128_cpm_from_directory_not_filename() -> None:
+    load_builtin_layouts()
+    image = _prepare_image(FIXTURE_D71_CPM, "commodore_gcr_1571_341k", "gcr")
+
+    detection = detect_filesystem(image, path_name="plain-cbm-dos-name.d71")
+
+    assert detection.primary == "c128_cpm_3_0"
+    assert detection.regions[0].region == "disk"
+    assert detection.plugin is not None
+    names = [entry.name for entry in detection.plugin.list_directory("/")]
+    assert "SETDEF.COM" in names
