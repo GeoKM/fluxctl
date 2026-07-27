@@ -224,7 +224,7 @@ def test_probe_supports_d64_cpm_filesystem() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload[0]["layout_id"] == "commodore_gcr_1541_cpm_170k"
-    assert payload[0]["filesystem"] == "cpm"
+    assert payload[0]["filesystem"] == "c64_cpm_2_2"
 
 
 def test_probe_supports_d71_cbm_filesystem() -> None:
@@ -233,7 +233,9 @@ def test_probe_supports_d71_cbm_filesystem() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload[0]["layout_id"] == "commodore_gcr_1571_341k"
-    assert payload[0]["filesystem"] == "cbm_dos"
+    assert payload[0]["filesystem"] == "cbm_dos_1571"
+    assert "filesystem_region=head0:cbm_dos_1541_compatible" in payload[0]["evidence"]
+    assert "filesystem_region=head1:cbm_dos_1571_extended_side" in payload[0]["evidence"]
 
 
 def test_probe_supports_d71_cpm_filesystem() -> None:
@@ -242,7 +244,8 @@ def test_probe_supports_d71_cpm_filesystem() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload[0]["layout_id"] == "commodore_gcr_1571_341k"
-    assert payload[0]["filesystem"] == "cpm"
+    assert payload[0]["filesystem"] == "c128_cpm_3_0"
+    assert "filesystem_region=disk:c128_cpm_3_0" in payload[0]["evidence"]
 
 
 def test_probe_supports_adf_amiga_filesystem() -> None:
