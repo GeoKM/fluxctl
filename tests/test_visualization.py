@@ -1,8 +1,9 @@
 from pathlib import Path
 
 from fluxctl.decoding.mfm import mfm_decoder
-from fluxctl.reports.map import build_disk_map, render_ascii, render_svg
+from fluxctl.reports.map import build_disk_map, build_disk_map_from_tracksectors, render_ascii, render_svg
 from fluxctl.scp import parse_scp
+from fluxctl.sector.models import Sector, TrackSectors
 
 
 FIXTURE_GOOD = Path("tests/fixtures/5.25inch/IBM/IBM-Generic-SSDD-MFM-IBMPC-180K.scp")
@@ -32,3 +33,31 @@ def test_svg_renderer_contains_expected_segments() -> None:
     assert "<svg" in svg
     expected_paths = disk_map.total_tracks * disk_map.max_sectors_per_track
     assert svg.count("<path") >= expected_paths
+
+
+def _sector(sector_id: int) -> Sector:
+    return Sector(
+        cylinder=0,
+        head=0,
+        sector_id=sector_id,
+        size_code=1,
+        data=b"x" * 256,
+        crc_ok=True,
+        confidence=1.0,
+        deleted=False,
+    )
+
+
+def test_disk_map_preserves_zoned_sector_counts() -> None:
+    disk_map = build_disk_map_from_tracksectors(
+        [
+            TrackSectors(track=0, head=0, sectors=[_sector(idx) for idx in range(21)]),
+            TrackSectors(track=1, head=0, sectors=[_sector(idx) for idx in range(19)]),
+            TrackSectors(track=2, head=0, sectors=[_sector(idx) for idx in range(18)]),
+            TrackSectors(track=3, head=0, sectors=[_sector(idx) for idx in range(17)]),
+        ]
+    )
+
+    assert [len(row) for row in disk_map.tracks] == [21, 19, 18, 17]
+    assert disk_map.max_sectors_per_track == 21
+    assert [len(row) for row in disk_map.sector_details] == [21, 19, 18, 17]
