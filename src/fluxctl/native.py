@@ -17,6 +17,14 @@ class _NativeBuffer(ctypes.Structure):
     ]
 
 
+class _NativeU32Buffer(ctypes.Structure):
+    _fields_ = [
+        ("ptr", ctypes.c_void_p),
+        ("len", ctypes.c_size_t),
+        ("cap", ctypes.c_size_t),
+    ]
+
+
 _LIB = None
 _LOAD_ATTEMPTED = False
 
@@ -65,6 +73,19 @@ def _load_library():
             ctypes.c_size_t,
         ]
         lib.fluxctl_free_buffer.restype = None
+        lib.fluxctl_free_u32_buffer.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+        ]
+        lib.fluxctl_free_u32_buffer.restype = None
+        lib.fluxctl_parse_scp_flux_bytes.argtypes = [
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_size_t,
+            ctypes.c_double,
+            ctypes.POINTER(_NativeU32Buffer),
+        ]
+        lib.fluxctl_parse_scp_flux_bytes.restype = ctypes.c_int
         lib.fluxctl_mfm_intervals_to_bits.argtypes = [
             ctypes.POINTER(ctypes.c_uint32),
             ctypes.c_size_t,
@@ -116,6 +137,37 @@ def _take_buffer(lib, buffer: _NativeBuffer) -> bytes:
         return ctypes.string_at(buffer.ptr, buffer.len)
     finally:
         lib.fluxctl_free_buffer(buffer.ptr, buffer.len, buffer.cap)
+
+
+def _take_u32_buffer(lib, buffer: _NativeU32Buffer) -> array:
+    intervals = array("I")
+    if not buffer.ptr or buffer.len == 0:
+        return intervals
+    try:
+        data = ctypes.string_at(buffer.ptr, buffer.len * ctypes.sizeof(ctypes.c_uint32))
+        intervals.frombytes(data)
+        return intervals
+    finally:
+        lib.fluxctl_free_u32_buffer(buffer.ptr, buffer.len, buffer.cap)
+
+
+def parse_scp_flux_bytes(flux_bytes: bytes, timebase_ns: float) -> Optional[array]:
+    """Return parsed SCP flux intervals, or ``None`` without native support."""
+
+    lib = _load_library()
+    if lib is None:
+        return None
+    buffer = _NativeU32Buffer()
+    payload = ctypes.c_char_p(flux_bytes)
+    status = lib.fluxctl_parse_scp_flux_bytes(
+        ctypes.cast(payload, ctypes.POINTER(ctypes.c_uint8)),
+        len(flux_bytes),
+        float(timebase_ns),
+        ctypes.byref(buffer),
+    )
+    if status != 0:
+        return None
+    return _take_u32_buffer(lib, buffer)
 
 
 def mfm_intervals_to_bits(
@@ -195,4 +247,5 @@ __all__ = [
     "is_native_available",
     "mfm_decode_best",
     "mfm_intervals_to_bits",
+    "parse_scp_flux_bytes",
 ]

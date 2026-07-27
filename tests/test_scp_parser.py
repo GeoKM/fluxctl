@@ -1,11 +1,38 @@
 import struct
+import os
+import subprocess
+import sys
 from pathlib import Path
 
-from fluxctl.scp import OFFSET_TABLE_ENTRIES, parse_scp
+from fluxctl.scp import OFFSET_TABLE_ENTRIES, _parse_flux_bytes, parse_scp
 
 
 def _pack_flux_be(intervals: list[int]) -> bytes:
     return struct.pack(f">{len(intervals)}H", *intervals)
+
+
+def test_parse_flux_bytes_handles_overflow_and_odd_trailing_byte() -> None:
+    payload = bytes.fromhex("0000000100000002FFFFAA")
+
+    assert list(_parse_flux_bytes(payload, 1.0)) == [65537, 65538, 65535]
+
+
+def test_parse_flux_bytes_fallback_matches_native() -> None:
+    payload_hex = "0000000100000002FFFFAA"
+    native = list(_parse_flux_bytes(bytes.fromhex(payload_hex), 1.0))
+    script = (
+        "from fluxctl.scp import _parse_flux_bytes; "
+        f"print(list(_parse_flux_bytes(bytes.fromhex('{payload_hex}'), 1.0)))"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        text=True,
+        capture_output=True,
+        check=True,
+        env={**os.environ, "FLUXCTL_DISABLE_NATIVE": "1"},
+    )
+
+    assert completed.stdout.strip() == str(native)
 
 
 def _build_trk_block(

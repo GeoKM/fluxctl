@@ -7,6 +7,13 @@ pub struct NativeBuffer {
     pub cap: usize,
 }
 
+#[repr(C)]
+pub struct NativeU32Buffer {
+    pub ptr: *mut u32,
+    pub len: usize,
+    pub cap: usize,
+}
+
 fn store_buffer(bits: Vec<u8>, out: *mut NativeBuffer) -> i32 {
     if out.is_null() {
         return -1;
@@ -19,6 +26,25 @@ fn store_buffer(bits: Vec<u8>, out: *mut NativeBuffer) -> i32 {
         cap: bits.capacity(),
     };
     std::mem::forget(bits);
+
+    unsafe {
+        ptr::write(out, buffer);
+    }
+    0
+}
+
+fn store_u32_buffer(values: Vec<u32>, out: *mut NativeU32Buffer) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+
+    let mut values = values;
+    let buffer = NativeU32Buffer {
+        ptr: values.as_mut_ptr(),
+        len: values.len(),
+        cap: values.capacity(),
+    };
+    std::mem::forget(values);
 
     unsafe {
         ptr::write(out, buffer);
@@ -104,6 +130,49 @@ pub extern "C" fn fluxctl_free_buffer(ptr: *mut u8, len: usize, cap: usize) {
     unsafe {
         drop(Vec::from_raw_parts(ptr, len, cap));
     }
+}
+
+#[no_mangle]
+pub extern "C" fn fluxctl_free_u32_buffer(ptr: *mut u32, len: usize, cap: usize) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Vec::from_raw_parts(ptr, len, cap));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn fluxctl_parse_scp_flux_bytes(
+    flux_bytes: *const u8,
+    len: usize,
+    timebase_ns: f64,
+    out: *mut NativeU32Buffer,
+) -> i32 {
+    if flux_bytes.is_null() || timebase_ns <= 0.0 {
+        return -1;
+    }
+
+    let data = unsafe { std::slice::from_raw_parts(flux_bytes, len) };
+    let word_len = data.len() / 2;
+    let mut intervals = Vec::with_capacity(word_len);
+    let mut overflow: u64 = 0;
+
+    for chunk in data[..word_len * 2].chunks_exact(2) {
+        let tick = u16::from_be_bytes([chunk[0], chunk[1]]) as u64;
+        if tick == 0 {
+            overflow += 0x10000;
+            continue;
+        }
+
+        let ticks_total = overflow + tick;
+        let interval = ((ticks_total as f64) * timebase_ns).round();
+        let interval = interval.clamp(0.0, u32::MAX as f64) as u32;
+        intervals.push(interval);
+        overflow = 0;
+    }
+
+    store_u32_buffer(intervals, out)
 }
 
 #[no_mangle]
