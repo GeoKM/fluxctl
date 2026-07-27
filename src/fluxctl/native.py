@@ -53,6 +53,12 @@ def _candidate_paths() -> list[Path]:
     return paths
 
 
+def native_candidate_paths() -> list[Path]:
+    """Return native library paths fluxctl will try in lookup order."""
+
+    return _candidate_paths()
+
+
 def _load_library():
     global _LIB, _LOAD_ATTEMPTED
     if os.environ.get("FLUXCTL_DISABLE_NATIVE") == "1":

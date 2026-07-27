@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
+import os
+import platform
+import shutil
+import sys
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
@@ -33,8 +38,21 @@ from .sector.reconstruct_gcr import (
 )
 from .external.hxc import probe_hxcfe
 from .geohints import LayoutHint
+from .native import is_native_available, native_candidate_paths
 
-app = typer.Typer(add_completion=False, help="Fluxctl modular SCP toolkit")
+APP_HELP = """Inspect, verify, recover, and convert floppy flux captures.
+
+Typical workflows:
+  fluxctl doctor
+  fluxctl probe disk.scp
+  fluxctl qc disk.scp --layout ibm_mfm_720k --json-out qc.json
+  fluxctl convert disk.scp --layout ibm_mfm_720k --to raw --out disk.img
+  fluxctl extract disk.img --list
+
+Use `fluxctl COMMAND --help` for command-specific examples.
+"""
+
+app = typer.Typer(add_completion=False, help=APP_HELP)
 provenance_app = typer.Typer(help="Inspect provenance records")
 app.add_typer(provenance_app, name="provenance")
 
@@ -51,6 +69,15 @@ def _handle_cli_errors(func):
     return wrapper
 
 
+@app.callback(invoke_without_command=True)
+def main(ctx: typer.Context) -> None:
+    """Inspect, verify, recover, and convert floppy flux captures."""
+
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
+
+
 def _get_decoder(encoding: str):
     if encoding == "mfm":
         return mfm_decoder
@@ -58,6 +85,122 @@ def _get_decoder(encoding: str):
     if plugin:
         return plugin.entry
     raise FluxDecodeError(f"Unknown encoding '{encoding}'")
+
+
+def _status_check(name: str, status: str, detail: str, suggestion: str = "") -> dict[str, str]:
+    return {"name": name, "status": status, "detail": detail, "suggestion": suggestion}
+
+
+def _format_doctor_status(status: str) -> tuple[str, str]:
+    if status == "ok":
+        return "OK", typer.colors.GREEN
+    if status == "warn":
+        return "WARN", typer.colors.YELLOW
+    return "FAIL", typer.colors.RED
+
+
+def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
+    load_builtin_decoders()
+    load_builtin_exporters()
+    load_builtin_filesystems()
+    layouts = load_builtin_layouts()
+
+    checks = [
+        _status_check(
+            "python",
+            "ok" if sys.version_info >= (3, 11) else "fail",
+            f"{platform.python_version()} at {sys.executable}",
+            "Use Python 3.11 or newer." if sys.version_info < (3, 11) else "",
+        ),
+        _status_check("fluxctl", "ok", f"version {__version__}"),
+        _status_check(
+            "layouts",
+            "ok" if layouts else "fail",
+            f"{len(registry.layout)} loaded",
+            "Reinstall fluxctl so packaged layout JSON files are available." if not layouts else "",
+        ),
+        _status_check(
+            "decoders",
+            "ok" if registry.encoding else "fail",
+            ", ".join(sorted(registry.encoding)) or "none",
+            "Reinstall fluxctl; built-in decoder registration failed." if not registry.encoding else "",
+        ),
+        _status_check(
+            "exporters",
+            "ok" if registry.exporter else "fail",
+            ", ".join(sorted(registry.exporter)) or "none",
+            "Reinstall fluxctl; built-in exporter registration failed." if not registry.exporter else "",
+        ),
+        _status_check(
+            "filesystems",
+            "ok" if registry.filesystem else "fail",
+            ", ".join(sorted(registry.filesystem)) or "none",
+            "Reinstall fluxctl; built-in filesystem registration failed." if not registry.filesystem else "",
+        ),
+    ]
+
+    native_disabled = os.environ.get("FLUXCTL_DISABLE_NATIVE") == "1"
+    native_candidates = [str(path) for path in native_candidate_paths()]
+    if native_disabled:
+        native_status = "warn"
+        native_detail = "disabled by FLUXCTL_DISABLE_NATIVE=1"
+        native_suggestion = "Unset FLUXCTL_DISABLE_NATIVE to allow native decoder acceleration."
+    elif is_native_available():
+        native_status = "ok"
+        native_detail = "available"
+        native_suggestion = ""
+    else:
+        native_status = "warn"
+        native_detail = "not built or not loadable"
+        native_suggestion = "Run `cargo build --manifest-path native/fluxctl_native/Cargo.toml --release` to enable it."
+    checks.append(
+        _status_check(
+            "native acceleration",
+            native_status,
+            native_detail,
+            native_suggestion,
+        )
+    )
+
+    if importlib.util.find_spec("greaseweazle") is None:
+        checks.append(
+            _status_check(
+                "greaseweazle",
+                "warn",
+                "optional package not importable",
+                "Install with `.venv/bin/pip install -e .[greaseweazle]` for Amiga PLL fallback support.",
+            )
+        )
+    else:
+        checks.append(_status_check("greaseweazle", "ok", "optional package importable"))
+
+    hxcfe_path = hxcfe or (Path(found) if (found := shutil.which("hxcfe")) else None)
+    if hxcfe_path is None:
+        checks.append(
+            _status_check(
+                "hxcfe",
+                "warn",
+                "optional binary not found on PATH",
+                "Pass --hxcfe /path/to/hxcfe when using HxC-assisted hints.",
+            )
+        )
+    elif not hxcfe_path.exists():
+        checks.append(_status_check("hxcfe", "fail", f"{hxcfe_path} does not exist", "Check the --hxcfe path."))
+    elif not os.access(hxcfe_path, os.X_OK):
+        checks.append(
+            _status_check("hxcfe", "fail", f"{hxcfe_path} is not executable", "Run chmod +x or rebuild hxcfe.")
+        )
+    else:
+        checks.append(_status_check("hxcfe", "ok", str(hxcfe_path)))
+
+    overall = "fail" if any(check["status"] == "fail" for check in checks) else "ok"
+    return {
+        "tool": "fluxctl",
+        "version": __version__,
+        "overall": overall,
+        "checks": checks,
+        "native_candidates": native_candidates,
+    }
 
 
 def _first_diff_offset(a: bytes, b: bytes) -> Optional[int]:
@@ -93,6 +236,38 @@ def _maybe_hxc_hint(path: Path, hxcfe: Optional[Path]) -> LayoutHint | None:
         return None
     metadata = probe_hxcfe(path, hxcfe)
     return metadata.to_layout_hint()
+
+
+@app.command()
+@_handle_cli_errors
+def doctor(
+    hxcfe: Optional[Path] = typer.Option(None, "--hxcfe", help="Optional hxcfe binary path to validate"),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
+) -> None:
+    """Check the local fluxctl installation and optional acceleration helpers.
+
+    Examples:
+    fluxctl doctor
+    fluxctl doctor --json
+    fluxctl doctor --hxcfe ~/src/HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build/hxcfe
+    """
+
+    report = _doctor_report(hxcfe)
+    if json_output:
+        typer.echo(json.dumps(report, indent=2))
+        return
+
+    typer.echo(f"fluxctl {report['version']} doctor")
+    for check in report["checks"]:
+        label, color = _format_doctor_status(check["status"])
+        typer.secho(f"{label:>4}", fg=color, nl=False)
+        typer.echo(f"  {check['name']}: {check['detail']}")
+        if check["suggestion"]:
+            typer.echo(f"      {check['suggestion']}")
+    if report["native_candidates"]:
+        typer.echo("Native library search paths:")
+        for path in report["native_candidates"]:
+            typer.echo(f"  {path}")
 
 
 def _image_bytes_for_compare(path: Path, layout_id: Optional[str], encoding: str) -> tuple[bytes, dict]:
