@@ -73,6 +73,17 @@ def _load_library():
             ctypes.POINTER(_NativeBuffer),
         ]
         lib.fluxctl_mfm_intervals_to_bits.restype = ctypes.c_int
+        lib.fluxctl_mfm_decode_best.argtypes = [
+            ctypes.POINTER(ctypes.c_uint32),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.POINTER(_NativeBuffer),
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        lib.fluxctl_mfm_decode_best.restype = ctypes.c_int
         lib.fluxctl_gcr_intervals_to_bits.argtypes = [
             ctypes.POINTER(ctypes.c_uint32),
             ctypes.c_size_t,
@@ -129,6 +140,34 @@ def mfm_intervals_to_bits(
     return _take_buffer(lib, buffer)
 
 
+def mfm_decode_best(
+    intervals_ns: Sequence[int], candidates: Sequence[float], max_cells: int
+) -> Optional[tuple[bytes, float, int]]:
+    """Return the best native MFM bitstream, PLL score, and sync count."""
+
+    lib = _load_library()
+    if lib is None:
+        return None
+    intervals = _interval_array(intervals_ns)
+    candidate_array = (ctypes.c_double * len(candidates))(*[float(value) for value in candidates])
+    buffer = _NativeBuffer()
+    pll_lock = ctypes.c_double()
+    sync_count = ctypes.c_size_t()
+    status = lib.fluxctl_mfm_decode_best(
+        ctypes.cast(intervals.buffer_info()[0], ctypes.POINTER(ctypes.c_uint32)),
+        len(intervals),
+        candidate_array,
+        len(candidate_array),
+        int(max_cells),
+        ctypes.byref(buffer),
+        ctypes.byref(pll_lock),
+        ctypes.byref(sync_count),
+    )
+    if status != 0:
+        return None
+    return _take_buffer(lib, buffer), float(pll_lock.value), int(sync_count.value)
+
+
 def gcr_intervals_to_bits(
     intervals_ns: Sequence[int], cell_ns: float, lowpass_ns: float = 2000.0
 ) -> Optional[bytes]:
@@ -151,4 +190,9 @@ def gcr_intervals_to_bits(
     return _take_buffer(lib, buffer)
 
 
-__all__ = ["gcr_intervals_to_bits", "is_native_available", "mfm_intervals_to_bits"]
+__all__ = [
+    "gcr_intervals_to_bits",
+    "is_native_available",
+    "mfm_decode_best",
+    "mfm_intervals_to_bits",
+]

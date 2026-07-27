@@ -1,6 +1,11 @@
 import pytest
 
-from fluxctl.native import gcr_intervals_to_bits, is_native_available, mfm_intervals_to_bits
+from fluxctl.native import (
+    gcr_intervals_to_bits,
+    is_native_available,
+    mfm_decode_best,
+    mfm_intervals_to_bits,
+)
 
 
 pytestmark = pytest.mark.skipif(
@@ -12,6 +17,14 @@ def test_native_mfm_intervals_to_bits_matches_python_shape() -> None:
     bits = mfm_intervals_to_bits([4000, 8000, 12000], 4000.0, 64)
 
     assert bits == bytes([1, 0, 1, 0, 0, 1])
+
+
+def test_native_mfm_decode_best_returns_score_and_bits() -> None:
+    bits, pll_lock, sync_count = mfm_decode_best([4000, 8000, 12000], [4000.0], 64)
+
+    assert bits == bytes([1, 0, 1, 0, 0, 1])
+    assert pll_lock == 1.0
+    assert sync_count == 0
 
 
 def test_native_gcr_intervals_to_bits_matches_python_shape() -> None:
