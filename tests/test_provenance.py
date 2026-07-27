@@ -31,6 +31,18 @@ def test_convert_writes_provenance(tmp_path):
     assert prov["output_sha256"] == ProvenanceRecord.sha256_file(out)
 
 
+def test_compare_json_writes_provenance(tmp_path):
+    report = tmp_path / "compare.json"
+    result = runner.invoke(app, ["compare", str(FIXTURE_IMG), str(FIXTURE_IMG), "--json-out", str(report)])
+
+    assert result.exit_code == 0, result.output
+    prov = _load_prov(report.with_suffix(report.suffix + ".provenance.json"))
+    assert prov["operation"] == "compare"
+    assert prov["output_sha256"] == ProvenanceRecord.sha256_file(report)
+    assert prov["parameters"]["json_out"] == str(report)
+    assert any(entry.startswith("decoded_sha256_a=") for entry in prov["evidence"])
+
+
 def test_qc_provenance(tmp_path):
     json_out = tmp_path / "report.json"
     result = runner.invoke(
@@ -59,3 +71,43 @@ def test_visualize_and_extract_provenance(tmp_path):
     ext_prov = _load_prov(tmp_path / "dump.bin.provenance.json")
     assert ext_prov["operation"] == "extract"
     assert ext_prov["output_sha256"] == ProvenanceRecord.sha256_file(tmp_path / "dump.bin")
+
+
+def test_patch_respects_provenance_override(tmp_path):
+    out = tmp_path / "patched.img"
+    prov_out = tmp_path / "custom.patch.provenance.json"
+    payload = "AA" * 512
+
+    result = runner.invoke(
+        app,
+        [
+            "patch",
+            str(FIXTURE_SCP),
+            "--layout",
+            "ibm_mfm_180k",
+            "--write-sector",
+            f"0:1:{payload}",
+            "--out",
+            str(out),
+            "--prov-out",
+            str(prov_out),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    prov = _load_prov(prov_out)
+    assert prov["operation"] == "patch"
+    assert prov["output_path"].endswith("patched.img")
+
+
+def test_help_mentions_real_world_examples() -> None:
+    convert_help = runner.invoke(app, ["convert", "--help"])
+    patch_help = runner.invoke(app, ["patch", "--help"])
+    compare_help = runner.invoke(app, ["compare", "--help"])
+
+    assert convert_help.exit_code == 0
+    assert "disk.img --layout ibm_mfm_720k --to imd" in convert_help.output
+    assert patch_help.exit_code == 0
+    assert "T:H:S:HEX" in patch_help.output
+    assert compare_help.exit_code == 0
+    assert "--prov-out" in compare_help.output
