@@ -140,6 +140,7 @@ def load_builtin_filesystems() -> List[PluginInfo]:
     from .fat12 import FAT12
     from .amiga import AmigaOFS
     from .cbm_dos import CBMDOS
+    from .cbm_dos_1581 import CBMDOS1581
     from .cpm import CPMFilesystem
     from .rt11 import RT11Filesystem
     from .displaywriter import DisplaywriterFS
@@ -170,6 +171,15 @@ def load_builtin_filesystems() -> List[PluginInfo]:
             version="0.1",
             entry=CBMDOS(),
             description="Commodore DOS 2.x filesystem",
+        ),
+    )
+    registry.register_filesystem(
+        "cbm_dos_1581",
+        PluginInfo(
+            name="CBM DOS 1581 Filesystem",
+            version="0.1",
+            entry=CBMDOS1581(),
+            description="Commodore 1581 CBM DOS 10 filesystem",
         ),
     )
     registry.register_filesystem(

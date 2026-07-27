@@ -208,6 +208,22 @@ def _detect_commodore(image, layout_id: str) -> FilesystemDetection:
         )
 
     if layout_id == "commodore_mfm_1581_800k":
+        cbm1581 = registry.filesystem.get("cbm_dos_1581")
+        cbm1581_fs = cbm1581.entry if cbm1581 else None
+        cbm1581_ok = False
+        if cbm1581_fs is not None:
+            try:
+                cbm1581_ok = cbm1581_fs.probe(image)
+            except Exception:
+                cbm1581_ok = False
+        if cbm1581_ok:
+            return FilesystemDetection(
+                primary="cbm_dos_1581",
+                confidence=0.95,
+                evidence=evidence + ["cbm_dos_1581_header_probe=1"],
+                regions=[FilesystemRegion("disk", "cbm_dos_1581", ["1581 header and directory detected"])],
+                plugin=cbm1581_fs,
+            )
         return FilesystemDetection(
             primary="cbm_dos",
             confidence=0.8 if cbm_ok else 0.55,

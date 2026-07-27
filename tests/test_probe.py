@@ -107,8 +107,9 @@ def test_probe_prefers_amiga_880k_over_hd() -> None:
     runner = CliRunner()
     result = runner.invoke(cli.app, ["probe", str(FIXTURE_AMIGA_880K)])
     assert result.exit_code == 0
-    assert "amiga_mfm_880k" in result.stdout
-    assert "amiga_mfm_amigados_hd_1760k" not in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "amiga_mfm_880k"
+    assert payload[0]["filesystem"] == "amiga_ffs"
 
 
 def test_probe_prefers_commodore_cpm_over_apple_gcr() -> None:
@@ -254,7 +255,7 @@ def test_probe_supports_adf_amiga_filesystem() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload[0]["layout_id"] == "amiga_mfm_880k"
-    assert payload[0]["filesystem"] == "amiga"
+    assert payload[0]["filesystem"] == "amiga_ffs"
 
 
 def test_probe_supports_amiga_img() -> None:
@@ -263,7 +264,7 @@ def test_probe_supports_amiga_img() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload[0]["layout_id"] == "amiga_mfm_880k"
-    assert payload[0]["filesystem"] == "amiga"
+    assert payload[0]["filesystem"] == "amiga_ffs"
 
 
 def test_probe_supports_1581_images_as_cbm_dos() -> None:
@@ -273,4 +274,4 @@ def test_probe_supports_1581_images_as_cbm_dos() -> None:
         assert result.exit_code == 0
         payload = json.loads(result.stdout)
         assert payload[0]["layout_id"] == "commodore_mfm_1581_800k"
-        assert payload[0]["filesystem"] == "cbm_dos"
+        assert payload[0]["filesystem"] == "cbm_dos_1581"
