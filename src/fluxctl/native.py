@@ -6,6 +6,7 @@ import ctypes
 import os
 from pathlib import Path
 import platform
+import struct
 from typing import Optional, Sequence
 
 
@@ -105,6 +106,14 @@ def _load_library():
             ctypes.POINTER(ctypes.c_size_t),
         ]
         lib.fluxctl_mfm_decode_best.restype = ctypes.c_int
+        lib.fluxctl_mfm_reconstruct_track.argtypes = [
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.POINTER(_NativeBuffer),
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        lib.fluxctl_mfm_reconstruct_track.restype = ctypes.c_int
         lib.fluxctl_gcr_intervals_to_bits.argtypes = [
             ctypes.POINTER(ctypes.c_uint32),
             ctypes.c_size_t,
@@ -226,6 +235,49 @@ def mfm_decode_best(
     return _take_buffer(lib, buffer), float(pll_lock.value), int(sync_count.value)
 
 
+def mfm_reconstruct_track(
+    bits: Sequence[int], expected_sectors: Optional[int] = None
+) -> Optional[tuple[list[tuple[int, int, int, int, bytes, bool, bool]], int]]:
+    """Return native MFM sector records and weak count, or ``None`` without native support."""
+
+    lib = _load_library()
+    if lib is None:
+        return None
+    if isinstance(bits, bytes):
+        payload_bytes = bits
+    else:
+        payload_bytes = bytes(bits)
+
+    buffer = _NativeBuffer()
+    weak = ctypes.c_size_t()
+    payload = ctypes.c_char_p(payload_bytes)
+    status = lib.fluxctl_mfm_reconstruct_track(
+        ctypes.cast(payload, ctypes.POINTER(ctypes.c_uint8)),
+        len(payload_bytes),
+        int(expected_sectors or 0),
+        ctypes.byref(buffer),
+        ctypes.byref(weak),
+    )
+    if status != 0:
+        return None
+
+    raw_records = _take_buffer(lib, buffer)
+    records: list[tuple[int, int, int, int, bytes, bool, bool]] = []
+    offset = 0
+    header_size = struct.calcsize("<BBBBBI")
+    while offset + header_size <= len(raw_records):
+        c, h, r, n, flags, data_len = struct.unpack_from("<BBBBBI", raw_records, offset)
+        offset += header_size
+        end = offset + data_len
+        if end > len(raw_records):
+            return None
+        records.append((c, h, r, n, raw_records[offset:end], bool(flags & 0x01), bool(flags & 0x02)))
+        offset = end
+    if offset != len(raw_records):
+        return None
+    return records, int(weak.value)
+
+
 def gcr_intervals_to_bits(
     intervals_ns: Sequence[int], cell_ns: float, lowpass_ns: float = 2000.0
 ) -> Optional[bytes]:
@@ -278,5 +330,6 @@ __all__ = [
     "is_native_available",
     "mfm_decode_best",
     "mfm_intervals_to_bits",
+    "mfm_reconstruct_track",
     "parse_scp_flux_bytes",
 ]
