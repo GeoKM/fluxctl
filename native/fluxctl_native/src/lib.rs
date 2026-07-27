@@ -92,6 +92,51 @@ fn pll_lock_score(intervals: &[u32], cell_ns: f64) -> f64 {
     1.0 - (total_deviation / (count as f64)).min(1.0)
 }
 
+fn estimate_cell_ns(intervals: &[u32], default_cell_ns: f64) -> f64 {
+    if intervals.is_empty() {
+        return default_cell_ns;
+    }
+
+    let mut sorted = intervals.to_vec();
+    let idx = ((sorted.len() as f64) * 0.05) as usize;
+    let idx = idx.saturating_sub(1).min(sorted.len() - 1);
+    let (_, selected, _) = sorted.select_nth_unstable(idx);
+    (*selected as f64).max(1.0)
+}
+
+fn mfm_decode_best_from_candidates(
+    intervals: &[u32],
+    candidates: &[f64],
+    max_cells: usize,
+) -> Option<(Vec<u8>, f64, usize)> {
+    let mut best_cell_ns = 0.0f64;
+    let mut best_sync = 0usize;
+    let mut best_pll = -1.0f64;
+    let mut found = false;
+
+    for &cell_ns in candidates {
+        if cell_ns <= 0.0 {
+            continue;
+        }
+        let sync_count = sync_count_from_intervals(intervals, cell_ns, max_cells);
+        let pll_lock = pll_lock_score(intervals, cell_ns);
+        if !found || sync_count > best_sync || (sync_count == best_sync && pll_lock > best_pll) {
+            best_cell_ns = cell_ns;
+            best_sync = sync_count;
+            best_pll = pll_lock;
+            found = true;
+        }
+    }
+
+    if found {
+        let best_bits = bits_from_intervals(intervals, best_cell_ns, max_cells);
+        Some((best_bits, best_pll, best_sync))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
 fn count_sync_word(bits: &[u8]) -> usize {
     const SYNC_WORD: u16 = 0x4489;
     if bits.len() < 16 {
@@ -112,6 +157,38 @@ fn count_sync_word(bits: &[u8]) -> usize {
             idx += 1;
         }
     }
+    count
+}
+
+fn sync_count_from_intervals(intervals: &[u32], cell_ns: f64, max_cells: usize) -> usize {
+    const SYNC_WORD: u16 = 0x4489;
+
+    let mut count = 0usize;
+    let mut window = 0u16;
+    let mut bit_pos = 0usize;
+    let mut next_search_start = 0usize;
+
+    for &interval in intervals {
+        if interval == 0 {
+            continue;
+        }
+        let rounded = ((interval as f64) / cell_ns).round() as isize;
+        let cells = rounded.clamp(1, max_cells as isize) as usize;
+
+        for cell_idx in 0..cells {
+            let bit = if cell_idx + 1 == cells { 1u16 } else { 0u16 };
+            window = (window << 1) | bit;
+            if bit_pos >= 15 {
+                let window_start = bit_pos - 15;
+                if window_start >= next_search_start && window == SYNC_WORD {
+                    count += 1;
+                    next_search_start = window_start + 16;
+                }
+            }
+            bit_pos += 1;
+        }
+    }
+
     count
 }
 
@@ -287,29 +364,52 @@ pub extern "C" fn fluxctl_mfm_decode_best(
         return -2;
     }
 
-    let mut best_bits = Vec::new();
-    let mut best_sync = 0usize;
-    let mut best_pll = -1.0f64;
-    let mut found = false;
-
-    for &cell_ns in candidates {
-        if cell_ns <= 0.0 {
-            continue;
-        }
-        let bits = bits_from_intervals(intervals, cell_ns, max_cells);
-        let sync_count = count_sync_word(&bits);
-        let pll_lock = pll_lock_score(intervals, cell_ns);
-        if !found || sync_count > best_sync || (sync_count == best_sync && pll_lock > best_pll) {
-            best_bits = bits;
-            best_sync = sync_count;
-            best_pll = pll_lock;
-            found = true;
-        }
+    let Some((best_bits, best_pll, best_sync)) =
+        mfm_decode_best_from_candidates(intervals, candidates, max_cells)
+    else {
+        return -2;
+    };
+    unsafe {
+        *out_pll_lock = best_pll;
+        *out_sync_count = best_sync;
     }
+    store_buffer(best_bits, out)
+}
 
-    if !found {
+#[no_mangle]
+pub extern "C" fn fluxctl_mfm_decode_auto(
+    intervals: *const u32,
+    len: usize,
+    default_cell_ns: f64,
+    auto_cell: bool,
+    max_cells: usize,
+    out: *mut NativeBuffer,
+    out_pll_lock: *mut f64,
+    out_sync_count: *mut usize,
+) -> i32 {
+    if max_cells == 0
+        || default_cell_ns <= 0.0
+        || out_pll_lock.is_null()
+        || out_sync_count.is_null()
+    {
         return -2;
     }
+    let Some(intervals) = input_slice(intervals, len) else {
+        return -1;
+    };
+
+    let mut candidates = Vec::with_capacity(4);
+    candidates.push(default_cell_ns);
+    if auto_cell {
+        let base_interval = estimate_cell_ns(intervals, default_cell_ns);
+        candidates.extend_from_slice(&[base_interval, base_interval * 0.75, base_interval / 2.0]);
+    }
+
+    let Some((best_bits, best_pll, best_sync)) =
+        mfm_decode_best_from_candidates(intervals, &candidates, max_cells)
+    else {
+        return -2;
+    };
     unsafe {
         *out_pll_lock = best_pll;
         *out_sync_count = best_sync;
@@ -602,4 +702,39 @@ pub extern "C" fn fluxctl_gcr_intervals_to_bits(
     }
 
     store_buffer(bits, out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn streaming_sync_count_matches_bitstream_counter() {
+        let bits = [
+            0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1,
+            0, 0, 1,
+        ];
+        let intervals = bits
+            .iter()
+            .scan(0u32, |zeros, bit| {
+                *zeros += 1;
+                if *bit == 1 {
+                    let interval = *zeros * 4000;
+                    *zeros = 0;
+                    Some(Some(interval))
+                } else {
+                    Some(None)
+                }
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+
+        let decoded_bits = bits_from_intervals(&intervals, 4000.0, 64);
+
+        assert_eq!(decoded_bits, bits);
+        assert_eq!(
+            sync_count_from_intervals(&intervals, 4000.0, 64),
+            count_sync_word(&decoded_bits)
+        );
+    }
 }

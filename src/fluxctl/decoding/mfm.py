@@ -7,7 +7,7 @@ from typing import List, Sequence
 
 from ..exceptions import FluxDecodeError
 from ..models import BitDecodeMetrics, Bitstream, RevolutionFlux
-from ..native import mfm_decode_best, mfm_intervals_to_bits
+from ..native import mfm_decode_auto, mfm_decode_best, mfm_intervals_to_bits
 from ..plugins import PluginInfo, registry
 from . import Decoder
 
@@ -67,16 +67,16 @@ class MFMDecoder(Decoder):
         if mean_interval > 1_000_000:
             intervals_ns = array("I", (max(1, int(val / 1000)) for val in intervals_ns))
 
-        candidates = [self.cell_ns]
-        if self.auto_cell:
-            base_interval = self._estimate_cell_ns(intervals_ns)
-            candidates.extend([base_interval, base_interval * 0.75, base_interval / 2.0])
-
-        native_result = mfm_decode_best(intervals_ns, candidates, self.max_cells)
+        native_result = mfm_decode_auto(intervals_ns, self.cell_ns, self.auto_cell, self.max_cells)
         if native_result is not None:
             best_bits, pll_lock, _sync_count = native_result
             metrics = BitDecodeMetrics(pll_lock_score=pll_lock, rpm_estimate=None, confidence=pll_lock)
             return Bitstream(bits=best_bits, metrics=metrics, source_revs=[rev.index])
+
+        candidates = [self.cell_ns]
+        if self.auto_cell:
+            base_interval = self._estimate_cell_ns(intervals_ns)
+            candidates.extend([base_interval, base_interval * 0.75, base_interval / 2.0])
 
         best_bits: Sequence[int] = []
         best_score = (-1, -1.0)
