@@ -113,6 +113,12 @@ the selected file by allocating free clusters in the copied image. Replacement
 for other filesystems or image containers that would require format-specific
 sector rewrites is rejected until dedicated writers exist.
 
+Studio also supports FAT12 `.img` file manipulation into new image copies:
+delete a file or empty directory, import a file, recursively import a directory
+tree, and create an empty directory. FAT12 import and directory creation
+currently require 8.3-compatible ASCII names and reject overwriting existing
+entries.
+
 ### Commodore exports
 
 - **D64**: reconstructed 256-byte logical sectors written to a flat image. This

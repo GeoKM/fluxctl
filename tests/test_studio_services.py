@@ -404,6 +404,109 @@ def test_studio_rejects_replacement_over_original(tmp_path: Path) -> None:
         raise AssertionError("replacement over original should fail")
 
 
+def test_studio_imports_fat12_file_into_new_copy(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    host_file = tmp_path / "README.TXT"
+    host_file.write_bytes(b"Imported from Fluxctl Studio\r\n")
+    output = tmp_path / "imported.img"
+
+    result = services.import_file_with_copy(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/",
+        host_file,
+        output,
+    )
+
+    filesystem = FAT12()
+    assert result.operation == "import-file"
+    assert result.entries == 1
+    assert result.bytes == host_file.stat().st_size
+    assert filesystem.probe(RawSectorImage(output.read_bytes()))
+    assert filesystem.extract_file("/README.TXT") == host_file.read_bytes()
+
+
+def test_studio_creates_and_deletes_fat12_directory_in_new_copies(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    created = tmp_path / "created.img"
+    deleted = tmp_path / "deleted.img"
+
+    create_result = services.create_directory_with_copy(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/",
+        "TOOLS",
+        created,
+    )
+    delete_result = services.delete_filesystem_entry_with_copy(
+        created,
+        summary.layout_id,
+        summary.encoding,
+        "/TOOLS",
+        deleted,
+    )
+
+    created_fs = FAT12()
+    deleted_fs = FAT12()
+    assert create_result.operation == "create-directory"
+    assert delete_result.operation == "delete"
+    assert created_fs.probe(RawSectorImage(created.read_bytes()))
+    assert any(entry.name == "TOOLS" and entry.is_dir for entry in created_fs.list_directory("/"))
+    assert created_fs.list_directory("/TOOLS") == []
+    assert deleted_fs.probe(RawSectorImage(deleted.read_bytes()))
+    assert all(entry.name != "TOOLS" for entry in deleted_fs.list_directory("/"))
+
+
+def test_studio_imports_fat12_directory_tree_into_new_copy(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    host_dir = tmp_path / "TOOLS"
+    nested = host_dir / "BIN"
+    nested.mkdir(parents=True)
+    (host_dir / "README.TXT").write_bytes(b"root file\r\n")
+    (nested / "RUN.BAT").write_bytes(b"echo nested\r\n")
+    output = tmp_path / "tree.img"
+
+    result = services.import_directory_with_copy(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/",
+        host_dir,
+        output,
+    )
+
+    filesystem = FAT12()
+    assert result.operation == "import-directory"
+    assert result.entries == 4
+    assert result.bytes == 24
+    assert filesystem.probe(RawSectorImage(output.read_bytes()))
+    assert any(entry.name == "TOOLS" and entry.is_dir for entry in filesystem.list_directory("/"))
+    assert filesystem.extract_file("/TOOLS/README.TXT") == b"root file\r\n"
+    assert filesystem.extract_file("/TOOLS/BIN/RUN.BAT") == b"echo nested\r\n"
+
+
+def test_studio_rejects_fat12_import_with_long_name(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    host_file = tmp_path / "LONGFILENAME.TXT"
+    host_file.write_bytes(b"too long")
+
+    try:
+        services.import_file_with_copy(
+            FIXTURE_IMG,
+            summary.layout_id,
+            summary.encoding,
+            "/",
+            host_file,
+            tmp_path / "imported.img",
+        )
+    except Exception as exc:
+        assert "8.3" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("long FAT12 import name should fail")
+
+
 def test_studio_command_runner_uses_current_fluxctl() -> None:
     result = services.run_fluxctl_command(["doctor", "--json"])
 

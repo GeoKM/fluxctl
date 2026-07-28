@@ -15,6 +15,12 @@ from ..exceptions import FilesystemError
 from . import FileEntry, Filesystem, SectorImage, TrackSectorImage
 
 END_OF_CLUSTER = 0xFF8
+FAT12_FREE = 0x000
+
+
+@dataclass(slots=True)
+class DirectorySlot:
+    image_offset: int
 
 
 @dataclass(slots=True)
@@ -148,6 +154,61 @@ class FAT12(Filesystem):
         self._write_file_clusters(patched, clusters, replacement)
         return bytes(patched)
 
+    def delete_entry(self, image_bytes: bytes, path: str) -> bytes:
+        """Return a copy with a file or empty directory deleted."""
+
+        entry = self._entry_for_path(path)
+        if entry.full_name in {".", ".."}:
+            raise FilesystemError("Cannot delete special directory entries")
+        if entry.is_dir:
+            children = [child for child in self._entries_for_cluster_chain(entry.start_cluster) if child.full_name not in {".", ".."}]
+            if children:
+                raise FilesystemError("Directory delete currently requires an empty directory")
+
+        patched = bytearray(image_bytes)
+        if entry.image_offset >= len(patched):
+            raise FilesystemError("Directory entry exceeds image size")
+        patched[entry.image_offset] = 0xE5
+        for cluster in self._cluster_chain(entry.start_cluster):
+            self._set_fat_entry_in_all_copies(patched, cluster, FAT12_FREE)
+        return bytes(patched)
+
+    def import_file(self, image_bytes: bytes, directory: str, filename: str, data: bytes) -> bytes:
+        """Return a copy with a host file imported into a FAT12 directory."""
+
+        raw_name = self._encode_8_3_name(filename)
+        self._ensure_name_available(directory, filename)
+        clusters = self._allocate_clusters_for_data(data)
+        patched = bytearray(image_bytes)
+        self._write_cluster_chain(patched, clusters)
+        self._write_file_clusters(patched, clusters, data)
+        slot = self._find_free_directory_slot(directory)
+        entry = self._build_directory_entry(raw_name, attributes=0x20, start_cluster=clusters[0] if clusters else 0, size=len(data))
+        patched[slot.image_offset : slot.image_offset + 32] = entry
+        return bytes(patched)
+
+    def create_directory(self, image_bytes: bytes, parent: str, name: str) -> bytes:
+        """Return a copy with one empty directory created."""
+
+        raw_name = self._encode_8_3_name(name)
+        self._ensure_name_available(parent, name)
+        cluster = self._find_free_clusters(1)[0]
+        patched = bytearray(image_bytes)
+        self._set_fat_entry_in_all_copies(patched, cluster, END_OF_CLUSTER)
+        cluster_offset = self._cluster_to_lba(cluster) * self.bytes_per_sector
+        cluster_size = self.sectors_per_cluster * self.bytes_per_sector
+        if cluster_offset + cluster_size > len(patched):
+            raise FilesystemError("Directory cluster exceeds image size")
+        parent_cluster = 0 if parent.strip("/") == "" else self._entry_for_path(parent).start_cluster
+        directory_data = bytearray(cluster_size)
+        directory_data[0:32] = self._build_directory_entry(self._special_directory_name("."), 0x10, cluster, 0)
+        directory_data[32:64] = self._build_directory_entry(self._special_directory_name(".."), 0x10, parent_cluster, 0)
+        patched[cluster_offset : cluster_offset + cluster_size] = directory_data
+        slot = self._find_free_directory_slot(parent)
+        entry = self._build_directory_entry(raw_name, attributes=0x10, start_cluster=cluster, size=0)
+        patched[slot.image_offset : slot.image_offset + 32] = entry
+        return bytes(patched)
+
     def _replace_file_with_existing_allocation(
         self,
         image_bytes: bytes,
@@ -190,6 +251,59 @@ class FAT12(Filesystem):
                 raise FilesystemError("Cluster data exceeds image size")
             image_bytes[offset:end] = chunk
             written += len(chunk)
+
+    def _allocate_clusters_for_data(self, data: bytes) -> List[int]:
+        if not data:
+            return []
+        cluster_size = self.sectors_per_cluster * self.bytes_per_sector
+        required_clusters = (len(data) + cluster_size - 1) // cluster_size
+        return self._find_free_clusters(required_clusters)
+
+    def _write_cluster_chain(self, image_bytes: bytearray, clusters: List[int]) -> None:
+        if not clusters:
+            return
+        for current, next_cluster in zip(clusters, clusters[1:]):
+            self._set_fat_entry_in_all_copies(image_bytes, current, next_cluster)
+        self._set_fat_entry_in_all_copies(image_bytes, clusters[-1], END_OF_CLUSTER)
+
+    def _build_directory_entry(self, raw_name: bytes, attributes: int, start_cluster: int, size: int) -> bytes:
+        if len(raw_name) != 11:
+            raise FilesystemError("Internal FAT12 name must be 11 bytes")
+        entry = bytearray(32)
+        entry[0:11] = raw_name
+        entry[11] = attributes
+        entry[26:28] = start_cluster.to_bytes(2, "little")
+        entry[28:32] = size.to_bytes(4, "little")
+        return bytes(entry)
+
+    def _special_directory_name(self, name: str) -> bytes:
+        return name.encode("ascii").ljust(11, b" ")
+
+    def _encode_8_3_name(self, name: str) -> bytes:
+        if "/" in name or "\\" in name:
+            raise FilesystemError("FAT12 names must not contain path separators")
+        if name in {"", ".", ".."}:
+            raise FilesystemError("Choose a normal FAT12 8.3 name")
+        try:
+            ascii_name = name.upper().encode("ascii").decode("ascii")
+        except UnicodeError as exc:
+            raise FilesystemError("FAT12 import currently supports ASCII 8.3 names only") from exc
+        invalid = set('"*+,/:;<=>?[\\]|')
+        if any(ord(char) < 32 or char in invalid or char == " " for char in ascii_name):
+            raise FilesystemError("FAT12 name contains unsupported characters")
+        if ascii_name.count(".") > 1:
+            raise FilesystemError("FAT12 import currently supports one 8.3 extension separator")
+        base, dot, ext = ascii_name.partition(".")
+        if not base or len(base) > 8 or (dot and len(ext) > 3):
+            raise FilesystemError("FAT12 import currently supports 8.3 names only")
+        if not dot:
+            ext = ""
+        return base.ljust(8).encode("ascii") + ext.ljust(3).encode("ascii")
+
+    def _ensure_name_available(self, directory: str, name: str) -> None:
+        entries = self._entries_for_path(directory)
+        if self._find_entry(entries, name) is not None:
+            raise FilesystemError(f"FAT12 entry already exists: {name}")
 
     def metadata(self) -> Dict[str, int]:
         return {
@@ -266,6 +380,12 @@ class FAT12(Filesystem):
         return clusters
 
     def _entry_for_file(self, path: str) -> DirectoryEntry:
+        entry = self._entry_for_path(path)
+        if entry.is_dir:
+            raise FilesystemError("Cannot extract a directory entry")
+        return entry
+
+    def _entry_for_path(self, path: str) -> DirectoryEntry:
         if self.image is None:
             raise FilesystemError("Filesystem not initialised")
 
@@ -277,9 +397,7 @@ class FAT12(Filesystem):
         directory_entries = self._entries_for_path(directory_path)
         entry = self._find_entry(directory_entries, filename)
         if entry is None:
-            raise FilesystemError(f"File '{path}' not found")
-        if entry.is_dir:
-            raise FilesystemError("Cannot extract a directory entry")
+            raise FilesystemError(f"Filesystem entry '{path}' not found")
         return entry
 
     def _fat_entry(self, cluster: int) -> int:
@@ -355,6 +473,32 @@ class FAT12(Filesystem):
             entries.extend(self._parse_directory(self._read_cluster(cluster), cluster_lba))
         return entries
 
+    def _find_free_directory_slot(self, path: str) -> DirectorySlot:
+        if self.image is None:
+            raise FilesystemError("Filesystem not initialised")
+        if path.strip("/") == "":
+            root_lba = self.reserved_sectors + self.fat_count * self.sectors_per_fat
+            return self._find_free_slot_in_data(self.root_dir_data, root_lba)
+        entry = self._entry_for_path(path)
+        if not entry.is_dir:
+            raise FilesystemError(f"'{path}' is not a directory")
+        for cluster in self._cluster_chain(entry.start_cluster):
+            cluster_lba = self._cluster_to_lba(cluster)
+            try:
+                return self._find_free_slot_in_data(self._read_cluster(cluster), cluster_lba)
+            except FilesystemError:
+                continue
+        raise FilesystemError("Directory has no free entry slots")
+
+    def _find_free_slot_in_data(self, data: bytes, base_lba: int) -> DirectorySlot:
+        for idx in range(0, len(data), 32):
+            entry = data[idx : idx + 32]
+            if len(entry) < 32:
+                break
+            if entry[0] in {0x00, 0xE5}:
+                return DirectorySlot(base_lba * self.bytes_per_sector + idx)
+        raise FilesystemError("Directory has no free entry slots")
+
     def _parse_directory(self, data: bytes, base_lba: int) -> List[DirectoryEntry]:
         entries: List[DirectoryEntry] = []
         for idx in range(0, len(data), 32):
@@ -370,9 +514,11 @@ class FAT12(Filesystem):
                 continue
             name = entry[0:8].decode("ascii", errors="replace").rstrip()
             ext = entry[8:11].decode("ascii", errors="replace").rstrip()
+            if name in {".", ".."}:
+                continue
             start_cluster = int.from_bytes(entry[26:28], "little")
             size = int.from_bytes(entry[28:32], "little")
-            if start_cluster == 0:
+            if start_cluster == 0 and (attributes & 0x10 or size > 0):
                 continue
             entries.append(
                 DirectoryEntry(
