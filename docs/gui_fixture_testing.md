@@ -29,9 +29,14 @@ shape later implementation work.
 
 ## Deferred GUI Work
 
-- The Files panel currently lists only the root directory. FAT12, 1581 CBM DOS,
-  AmigaDOS, and other hierarchical filesystems need directory navigation before
-  workflows that operate on nested files can be complete.
-- Expected direction: make directory rows actionable, maintain a current path
-  breadcrumb, and call `list_directory(path)` on filesystem plugins that support
-  nested paths.
+- Find or create IBM DOS/FAT12 fixtures that contain real subdirectories, then
+  manually verify Studio directory drill-down, multi-file export, recursive
+  directory export, file hex viewing, and map-click sector hex viewing against
+  those images.
+- Find or create known-good 1.15 MB IBM DOS 8-inch floppy images for fixtures.
+  Use them to verify 8-inch FAT12 geometry, filesystem detection, sector counts,
+  QC, directory listing, and file export against media known to be valid outside
+  Fluxctl.
+- Document any per-filesystem export limitations found during manual testing,
+  especially when a filesystem can list entries but cannot yet extract file
+  data.
