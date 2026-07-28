@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -75,6 +77,15 @@ class HexDumpView:
     title: str
     size: int
     text: str
+
+
+@dataclass(frozen=True)
+class ExportResult:
+    """Summary of a Studio filesystem export operation."""
+
+    path: str
+    files: int
+    bytes: int
 
 
 def run_fluxctl_command(args: list[str], cwd: Optional[Path] = None) -> CommandResult:
@@ -336,6 +347,143 @@ def file_hex_dump(
         raise ValueError("No supported filesystem is available")
     data = filesystem.extract_file(file_path)
     return HexDumpView(title=f"File {file_path}", size=len(data), text=format_hex_dump(data, max_bytes=max_bytes))
+
+
+def _mount_filesystem(path: Path, layout_id: Optional[str], encoding: str):
+    load_builtin_filesystems()
+    image = _prepare_image(path, layout_id, encoding)
+    filesystem = detect_filesystem(image, path_name=path.name).plugin
+    if filesystem is None:
+        raise ValueError("No supported filesystem is available")
+    return filesystem
+
+
+def _filesystem_parent(path: str) -> str:
+    parts = [part for part in path.strip("/").split("/") if part]
+    if len(parts) <= 1:
+        return "/"
+    return "/" + "/".join(parts[:-1])
+
+
+def _filesystem_basename(path: str) -> str:
+    parts = [part for part in path.strip("/").split("/") if part]
+    return parts[-1] if parts else ""
+
+
+def _safe_export_name(name: str) -> str:
+    safe = "".join(char if char not in '/\\:\0' else "_" for char in name).strip()
+    return safe or "unnamed"
+
+
+def _find_entry(filesystem, fs_path: str) -> FileEntryView:
+    parent = _filesystem_parent(fs_path)
+    name = _filesystem_basename(fs_path)
+    if not name:
+        raise ValueError("Choose a file or directory entry to export")
+    for entry in filesystem.list_directory(parent):
+        if entry.name.lower() == name.lower():
+            return FileEntryView(
+                entry.name,
+                "<DIR>" if entry.is_dir else "file",
+                entry.size,
+                _join_filesystem_path(parent, entry.name),
+                entry.is_dir,
+            )
+    raise ValueError(f"Filesystem entry '{fs_path}' was not found")
+
+
+def export_filesystem_entry(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    fs_path: str,
+    destination: Path,
+) -> ExportResult:
+    """Export a selected filesystem file or directory to the host filesystem."""
+
+    filesystem = _mount_filesystem(path, layout_id, encoding)
+    entry = _find_entry(filesystem, fs_path)
+    if entry.is_dir:
+        return _export_directory(filesystem, entry.path, destination)
+    data = filesystem.extract_file(entry.path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(data)
+    return ExportResult(path=str(destination), files=1, bytes=len(data))
+
+
+def export_filesystem_entries(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    fs_paths: list[str],
+    destination_parent: Path,
+) -> ExportResult:
+    """Export multiple selected filesystem entries into one host folder."""
+
+    if not fs_paths:
+        raise ValueError("Choose one or more filesystem entries to export")
+    filesystem = _mount_filesystem(path, layout_id, encoding)
+    destination_parent.mkdir(parents=True, exist_ok=True)
+    files = 0
+    byte_count = 0
+    exported_paths: list[str] = []
+    with tempfile.TemporaryDirectory(prefix=".fluxctl-export.", dir=destination_parent) as temp_name:
+        temp_path = Path(temp_name)
+        for fs_path in fs_paths:
+            entry = _find_entry(filesystem, fs_path)
+            if entry.is_dir:
+                directory_result = _export_directory(filesystem, entry.path, temp_path)
+                files += directory_result.files
+                byte_count += directory_result.bytes
+                exported_paths.append(Path(directory_result.path).name)
+                continue
+            data = filesystem.extract_file(entry.path)
+            host_path = temp_path / _safe_export_name(entry.name)
+            if host_path.exists():
+                raise ValueError(f"Duplicate export name: {entry.name}")
+            host_path.write_bytes(data)
+            files += 1
+            byte_count += len(data)
+            exported_paths.append(host_path.name)
+        for name in exported_paths:
+            final_path = destination_parent / name
+            if final_path.exists():
+                raise ValueError(f"Export destination already exists: {final_path}")
+        for child in temp_path.iterdir():
+            shutil.move(str(child), str(destination_parent / child.name))
+    return ExportResult(path=str(destination_parent), files=files, bytes=byte_count)
+
+
+def _export_directory(filesystem, fs_path: str, destination_parent: Path) -> ExportResult:
+    directory_name = _safe_export_name(_filesystem_basename(fs_path))
+    final_path = destination_parent / directory_name
+    if final_path.exists():
+        raise ValueError(f"Export destination already exists: {final_path}")
+    destination_parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{directory_name}.", dir=destination_parent) as temp_name:
+        temp_path = Path(temp_name)
+        files, byte_count = _export_directory_contents(filesystem, fs_path, temp_path)
+        shutil.move(str(temp_path), str(final_path))
+    return ExportResult(path=str(final_path), files=files, bytes=byte_count)
+
+
+def _export_directory_contents(filesystem, fs_path: str, host_directory: Path) -> tuple[int, int]:
+    host_directory.mkdir(parents=True, exist_ok=True)
+    files = 0
+    byte_count = 0
+    for entry in filesystem.list_directory(fs_path):
+        entry_path = _join_filesystem_path(fs_path, entry.name)
+        host_path = host_directory / _safe_export_name(entry.name)
+        if entry.is_dir:
+            child_files, child_bytes = _export_directory_contents(filesystem, entry_path, host_path)
+            files += child_files
+            byte_count += child_bytes
+            continue
+        data = filesystem.extract_file(entry_path)
+        host_path.write_bytes(data)
+        files += 1
+        byte_count += len(data)
+    return files, byte_count
 
 
 def list_files(

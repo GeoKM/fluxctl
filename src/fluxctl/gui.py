@@ -478,17 +478,22 @@ class FluxctlStudio(QMainWindow):
         self.file_root_button.clicked.connect(self.open_root_directory)
         self.file_hex_button = QPushButton("View File Hex")
         self.file_hex_button.clicked.connect(self.view_selected_file_hex)
+        self.file_export_button = QPushButton("Export Selected...")
+        self.file_export_button.clicked.connect(self.export_selected_file_entry)
         file_nav = QHBoxLayout()
         file_nav.addWidget(QLabel("Directory"))
         file_nav.addWidget(self.file_path_label, 1)
         file_nav.addWidget(self.file_up_button)
         file_nav.addWidget(self.file_root_button)
         file_nav.addWidget(self.file_hex_button)
+        file_nav.addWidget(self.file_export_button)
         self.files_table = QTableWidget(0, 3)
         self.files_table.setMinimumHeight(260)
         self.files_table.setHorizontalHeaderLabels(["Name", "Kind", "Size"])
         self.files_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.files_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.files_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.files_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.files_table.itemDoubleClicked.connect(self.open_selected_file_entry)
         self.file_panel = QWidget()
         file_panel_layout = QVBoxLayout(self.file_panel)
@@ -834,16 +839,26 @@ class FluxctlStudio(QMainWindow):
         self.run_list_files()
 
     def _selected_file_entry_path(self) -> tuple[str, bool]:
-        row = self.files_table.currentRow()
-        if row < 0:
-            items = self.files_table.selectedItems()
-            row = items[0].row() if items else -1
-        if row < 0:
+        entries = self._selected_file_entries()
+        if not entries:
             return "", False
-        name_item = self.files_table.item(row, 0)
-        if name_item is None:
-            return "", False
-        return str(name_item.data(Qt.UserRole) or ""), bool(name_item.data(Qt.UserRole + 1))
+        return entries[-1]
+
+    def _selected_file_entries(self) -> list[tuple[str, bool]]:
+        rows = [index.row() for index in self.files_table.selectionModel().selectedRows()]
+        if not rows:
+            row = self.files_table.currentRow()
+            rows = [row] if row >= 0 else []
+        selected: list[tuple[str, bool]] = []
+        for row in sorted(set(rows)):
+            name_item = self.files_table.item(row, 0)
+            if name_item is None:
+                continue
+            entry_path = str(name_item.data(Qt.UserRole) or "")
+            if not entry_path:
+                continue
+            selected.append((entry_path, bool(name_item.data(Qt.UserRole + 1))))
+        return selected
 
     def view_selected_file_hex(self) -> None:
         if not self._require_image():
@@ -863,6 +878,54 @@ class FluxctlStudio(QMainWindow):
             lambda: services.file_hex_dump(self.current_path, layout, encoding, file_path, max_bytes=65536),
             self._show_hex_dump,
         )
+
+    def export_selected_file_entry(self) -> None:
+        if not self._require_image():
+            return
+        selected_entries = self._selected_file_entries()
+        if not selected_entries:
+            self._warn("Select a file or directory entry before exporting.")
+            return
+        assert self.current_path is not None
+        if len(selected_entries) == 1 and not selected_entries[0][1]:
+            file_path = selected_entries[0][0]
+            filename, _ = QFileDialog.getSaveFileName(self, "Export selected file", Path(file_path).name, "All files (*)")
+            if not filename:
+                return
+            destination = Path(filename)
+            layout = self._selected_layout() or None
+            encoding = self._selected_encoding()
+            self._run_job(
+                f"export {file_path}",
+                lambda: services.export_filesystem_entry(self.current_path, layout, encoding, file_path, destination),
+                self._show_export_result,
+            )
+            return
+        selected_paths = [entry_path for entry_path, _is_dir in selected_entries]
+        if len(selected_entries) == 1:
+            destination_name = QFileDialog.getExistingDirectory(self, "Choose export destination folder", "")
+        else:
+            destination_name = QFileDialog.getExistingDirectory(self, "Choose folder for selected exports", "")
+        if not destination_name:
+            return
+        destination = Path(destination_name)
+        layout = self._selected_layout() or None
+        encoding = self._selected_encoding()
+        self._run_job(
+            f"export {len(selected_paths)} selected item(s)",
+            lambda: services.export_filesystem_entries(
+                self.current_path,
+                layout,
+                encoding,
+                selected_paths,
+                destination,
+            ),
+            self._show_export_result,
+        )
+
+    def _show_export_result(self, result: object) -> None:
+        self.activity_label.setText(f"Exported {result.files} file(s), {result.bytes:,} bytes to {result.path}.")
+        self._append_log(f"Exported {result.files} file(s), {result.bytes:,} bytes to {result.path}")
 
     def view_sector_hex(self) -> None:
         if not self._require_image():

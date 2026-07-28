@@ -136,6 +136,15 @@ def test_studio_lists_1581_cbm_dos_subdirectory() -> None:
     assert any(entry.name == "PAGODA.C" for entry in entries)
 
 
+def test_studio_builds_1581_file_hex_dump() -> None:
+    summary = services.summarize_image(FIXTURE_1581_D81)
+    dump = services.file_hex_dump(FIXTURE_1581_D81, summary.layout_id, summary.encoding, "/PIC.DIR/SUE.C")
+
+    assert dump.title == "File /PIC.DIR/SUE.C"
+    assert dump.size > 5000
+    assert "00 20 EA" in dump.text
+
+
 def test_studio_lists_amiga_dos_root_entries() -> None:
     summary = services.summarize_image(FIXTURE_ADF)
     entries = services.list_files(FIXTURE_ADF, summary.layout_id, summary.encoding)
@@ -178,6 +187,91 @@ def test_studio_builds_file_hex_dump() -> None:
     assert dump.title == "File /AUTOEXEC.BAT"
     assert dump.size == 39
     assert "@ECHO OFF" in dump.text
+
+
+def test_studio_exports_selected_file(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    destination = tmp_path / "AUTOEXEC.BAT"
+
+    result = services.export_filesystem_entry(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/AUTOEXEC.BAT",
+        destination,
+    )
+
+    assert result.files == 1
+    assert result.bytes == 39
+    assert destination.read_bytes() == b"@ECHO OFF\r\nCLS\r\nKEYB US\r\nSELECT MENU\r\n\x1a"
+
+
+def test_studio_exports_selected_directory(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_ADF)
+
+    result = services.export_filesystem_entry(
+        FIXTURE_ADF,
+        summary.layout_id,
+        summary.encoding,
+        "/Expansion",
+        tmp_path,
+    )
+
+    assert result.files == 2
+    assert result.bytes > 0
+    assert (tmp_path / "Expansion" / "HDDisk").exists()
+    assert (tmp_path / "Expansion" / "HDDisk.info").exists()
+
+
+def test_studio_exports_1581_selected_file(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_1581_D81)
+    destination = tmp_path / "HOW TO USE"
+
+    result = services.export_filesystem_entry(
+        FIXTURE_1581_D81,
+        summary.layout_id,
+        summary.encoding,
+        "/HOW TO USE",
+        destination,
+    )
+
+    assert result.files == 1
+    assert result.bytes == destination.stat().st_size
+    assert result.bytes > 12000
+
+
+def test_studio_exports_1581_selected_directory(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_1581_D81)
+
+    result = services.export_filesystem_entry(
+        FIXTURE_1581_D81,
+        summary.layout_id,
+        summary.encoding,
+        "/PIC.DIR",
+        tmp_path,
+    )
+
+    assert result.files == 15
+    assert result.bytes > 70000
+    assert (tmp_path / "PIC.DIR" / "SUE.C").exists()
+    assert (tmp_path / "PIC.DIR" / "PAGODA.C").exists()
+
+
+def test_studio_exports_multiple_selected_files(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+
+    result = services.export_filesystem_entries(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        ["/AUTOEXEC.BAT", "/CONFIG.SYS"],
+        tmp_path,
+    )
+
+    assert result.files == 2
+    assert result.bytes > 39
+    assert (tmp_path / "AUTOEXEC.BAT").read_bytes().startswith(b"@ECHO OFF")
+    assert (tmp_path / "CONFIG.SYS").exists()
 
 
 def test_studio_command_runner_uses_current_fluxctl() -> None:

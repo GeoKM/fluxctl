@@ -7,7 +7,7 @@ pytest.importorskip("PySide6")
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QItemSelectionModel, QTimer
 from PySide6.QtWidgets import QApplication, QAbstractItemView
 
 from fluxctl import studio_services as services
@@ -152,6 +152,32 @@ def test_file_panel_selected_file_hex_updates_hex_tab() -> None:
     assert window.lower_tabs.currentWidget() == window.hex_panel
     assert "File /README.TXT" in window.hex_title_label.text()
     assert "48 45 4C 4C 4F" in window.hex_text.toPlainText()
+    window.close()
+
+
+def test_file_panel_tracks_multiple_selected_entries() -> None:
+    window = FluxctlStudio()
+    entries = [
+        services.FileEntryView("ONE.TXT", "file", 1, "/ONE.TXT", False),
+        services.FileEntryView("TWO.TXT", "file", 2, "/TWO.TXT", False),
+        services.FileEntryView("DIR", "<DIR>", 0, "/DIR", True),
+    ]
+    window._show_files(entries)
+    selection = window.files_table.selectionModel()
+    selection.select(window.files_table.model().index(0, 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
+    selection.select(window.files_table.model().index(2, 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
+
+    assert window._selected_file_entries() == [("/ONE.TXT", False), ("/DIR", True)]
+    window.close()
+
+
+def test_file_panel_export_result_updates_activity() -> None:
+    window = FluxctlStudio()
+
+    window._show_export_result(services.ExportResult("/tmp/exported.bin", 1, 42))
+
+    assert "Exported 1 file(s), 42 bytes" in window.activity_label.text()
+    assert "exported.bin" in window.log.toPlainText()
     window.close()
 
 
