@@ -120,6 +120,7 @@ def parse_scp(path: Path) -> SCPImage:
     # First try the built-in lightweight parser.
     data = path.read_bytes()
     version, revolutions, start_track, end_track, timebase_ns = _read_header(data)
+    timebase_raw = int.from_bytes(data[8:12], "little", signed=False)
 
     if end_track >= OFFSET_TABLE_ENTRIES:
         raise SCPFormatError("Track range exceeds SCP offset table")
@@ -149,6 +150,7 @@ def parse_scp(path: Path) -> SCPImage:
 
     tracks: List[TrackFlux] = []
     warnings: List[str] = []
+    used_salvage_timebase = False
     for idx in range(start_track, end_track + 1):
         if idx >= len(offsets):
             break
@@ -241,7 +243,14 @@ def parse_scp(path: Path) -> SCPImage:
                 and len(track_block) > header_length
             ):
                 flux_bytes = track_block[header_length:]
-                intervals = _parse_flux_bytes(flux_bytes, timebase_ns)
+                salvage_timebase_ns = (
+                    DEFAULT_TIMEBASE_NS
+                    if version > 1 and timebase_raw > 1000
+                    else timebase_ns
+                )
+                intervals = _parse_flux_bytes(flux_bytes, salvage_timebase_ns)
+                if salvage_timebase_ns != timebase_ns:
+                    used_salvage_timebase = True
 
                 if intervals:
                     # Split the flux list into evenly sized revolutions based on
@@ -296,10 +305,12 @@ def parse_scp(path: Path) -> SCPImage:
         path=path,
         version=version,
         revolutions_per_track=revolutions,
-        timebase_ns=timebase_ns,
+        timebase_ns=DEFAULT_TIMEBASE_NS if used_salvage_timebase else timebase_ns,
         tracks=tracks,
         warnings=warnings,
     )
+    if used_salvage_timebase:
+        image.warnings.append("Used 25ns salvage timebase for zeroed SCP revolution headers")
 
     # If every revolution decoded to an empty interval list, try Greaseweazle.
     if all(not rev.interval_ns for trk in image.tracks for rev in trk.revolutions):

@@ -395,7 +395,11 @@ def build_qc_report_from_tracks(
     overall_confidence = (
         sum(track.confidence for track in track_reports) / len(track_reports) if track_reports else 0.0
     )
-    missing_tracks = _compute_missing_tracks(image, layout, track_step)
+    # Flat images are already materialised as complete track/sector rows. When a
+    # shorter concrete format (for example a standard 35-track D64) is matched
+    # against a superset preservation layout, trailing layout-only tracks should
+    # not make an otherwise clean image suspect.
+    missing_tracks = _compute_missing_tracks(image, None, track_step)
     disk_summary = _summarize_disk(track_reports, missing_tracks, trim_trailing_empty=layout is None)
     return DiskQCReport(
         tracks=track_reports,

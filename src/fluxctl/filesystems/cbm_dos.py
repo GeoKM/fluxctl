@@ -45,6 +45,11 @@ class CBMDOS(Filesystem):
             return self.sectors_per_track[track_index]
         return self.sectors_per_track[-1]
 
+    def _logical_to_physical(self, track: int, sector: int) -> Tuple[int, int, int]:
+        if track > 35 and isinstance(self.image, TrackSectorImage):
+            return track - 36, 1, sector
+        return track - 1, 0, sector
+
     def _ts_to_lba(self, track: int, sector: int) -> int:
         track_index = track - 1
         if sector < 0 or sector >= self._sectors_for_track(track_index):
@@ -56,9 +61,10 @@ class CBMDOS(Filesystem):
             raise FilesystemError("Filesystem not initialised")
         if isinstance(self.image, TrackSectorImage):
             lookup = getattr(self.image, "_sector_lookup", {})
-            key = (track - 1, 0, sector)
+            key = self._logical_to_physical(track, sector)
             if key in lookup:
                 return lookup[key]
+            raise FilesystemError("Invalid track/sector reference")
         lba = self._ts_to_lba(track, sector)
         return self.image.read_sector(lba, 1)
 
@@ -90,7 +96,7 @@ class CBMDOS(Filesystem):
                     continue
                 name_bytes = entry[3:19]
                 name = name_bytes.replace(b"\xA0", b" ").rstrip(b" \x00").decode("latin-1")
-                blocks = int.from_bytes(entry[30:32], "little")
+                blocks = int.from_bytes(entry[28:30], "little")
                 self.directory.append(
                     DirectoryRecord(
                         name=name,
@@ -106,7 +112,13 @@ class CBMDOS(Filesystem):
         self.image = image
         layout = getattr(image, "layout", None)
         if layout and getattr(layout, "track_sectors", None):
-            self.sectors_per_track = list(layout.track_sectors)
+            self.sectors_per_track = list(layout.track_sectors) * max(getattr(layout, "sides", 1), 1)
+        if isinstance(image, TrackSectorImage) and image.tracks:
+            actual_tracks = (max(track.track for track in image.tracks) + 1) * (
+                max(track.head for track in image.tracks) + 1
+            )
+            if actual_tracks < len(self.sectors_per_track):
+                self.sectors_per_track = self.sectors_per_track[:actual_tracks]
         bam = None
         try:
             bam = self._read_ts(*BAM_SECTOR)
@@ -122,6 +134,86 @@ class CBMDOS(Filesystem):
         except FilesystemError:
             return False
         return True
+
+    def _bam_sector(self) -> bytes:
+        return self._read_ts(*BAM_SECTOR)
+
+    def bam_blocks(self, max_tracks: Optional[int] = None) -> List[Tuple[int, int, int, str]]:
+        """Return one BAM state for each physical CBM DOS block.
+
+        States are derived from the BAM bitmap and refined with directory-file
+        chains where available:
+        ``bam_file`` is a block reached from a directory entry, ``bam_system``
+        is BAM/directory metadata, ``bam_free`` is marked free in the BAM, and
+        ``bam_used`` is allocated but not reached from the currently parsed root
+        directory.
+        """
+
+        bam = self._bam_sector()
+        file_blocks: set[Tuple[int, int]] = set()
+        for record in self.directory:
+            track, sector = record.start_track, record.start_sector
+            seen: set[Tuple[int, int]] = set()
+            while track != 0 and (track, sector) not in seen:
+                seen.add((track, sector))
+                file_blocks.add((track, sector))
+                try:
+                    data = self._read_ts(track, sector)
+                except FilesystemError:
+                    break
+                if len(data) < 2:
+                    break
+                track, sector = data[0], data[1]
+
+        directory_blocks = {(DIRECTORY_TRACK, 0)}
+        try:
+            track, sector = DIRECTORY_TRACK, DIRECTORY_START_SECTOR
+            seen: set[Tuple[int, int]] = set()
+            while track != 0 and (track, sector) not in seen:
+                seen.add((track, sector))
+                directory_blocks.add((track, sector))
+                data = self._read_ts(track, sector)
+                if len(data) < 2:
+                    break
+                track, sector = data[0], data[1]
+        except FilesystemError:
+            pass
+
+        side1_bam = None
+        if len(self.sectors_per_track) > 35:
+            try:
+                side1_bam = self._read_ts(53, 0)
+                directory_blocks.add((53, 0))
+            except FilesystemError:
+                side1_bam = None
+
+        blocks: List[Tuple[int, int, int, str]] = []
+        track_limit = min(max_tracks or len(self.sectors_per_track), len(self.sectors_per_track))
+        for track in range(1, track_limit + 1):
+            if track <= 35:
+                offset = 4 + (track - 1) * 4
+                bitmap = bam[offset + 1 : offset + 4]
+                head = 0
+            else:
+                side1_index = track - 36
+                bitmap_offset = side1_index * 3
+                bitmap = side1_bam[bitmap_offset : bitmap_offset + 3] if side1_bam is not None else b""
+                head = 1
+            for sector in range(self._sectors_for_track(track - 1)):
+                byte_index = sector // 8
+                bit_index = sector % 8
+                free = byte_index < len(bitmap) and bool(bitmap[byte_index] & (1 << bit_index))
+                key = (track, sector)
+                if key in file_blocks:
+                    state = "bam_file"
+                elif key in directory_blocks:
+                    state = "bam_system"
+                elif free:
+                    state = "bam_free"
+                else:
+                    state = "bam_used"
+                blocks.append((track, head, sector, state))
+        return blocks
 
     def _read_chain(self, start_track: int, start_sector: int) -> bytes:
         chunks: List[bytes] = []

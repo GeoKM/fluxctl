@@ -14,6 +14,7 @@ from .cli import (
     _get_decoder,
     _prepare_image,
     _probe_flat_image,
+    _prefix_track_count_for_size,
 )
 from .decoding import load_builtin_decoders
 from .detection import detect_encoding, detect_layout
@@ -21,7 +22,13 @@ from .filesystem_detection import detect_filesystem
 from .filesystems import TrackSectorImage, load_builtin_filesystems
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from .plugins import registry
-from .reports.map import DiskMap, build_disk_map, build_disk_map_from_tracksectors
+from .reports.map import (
+    DiskMap,
+    apply_c64_cpm_2_2_logical_overlay,
+    build_cbm_bam_block_map,
+    build_disk_map,
+    build_disk_map_from_tracksectors,
+)
 from .reports.qc import DiskQCReport, build_qc_report, build_qc_report_from_tracks
 from .scp import parse_scp
 
@@ -190,22 +197,68 @@ def build_qc_for_image(path: Path, layout_id: Optional[str], encoding: str = "mf
     return build_qc_report_from_tracks(image_obj.tracks, layout=layout, track_step=1)
 
 
-def build_disk_map_for_image(path: Path, layout_id: Optional[str], encoding: str = "mfm") -> DiskMap:
+def build_disk_map_for_image(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str = "mfm",
+    map_view: str = "logical",
+) -> DiskMap:
     """Build an in-memory disk map for the Studio visualizer."""
 
     load_builtin_decoders()
     load_builtin_layouts()
+    load_builtin_filesystems()
+    if map_view == "bam":
+        image_obj = _prepare_image(path, layout_id, encoding)
+        layout = ensure_layout_loaded(layout_id) if layout_id else None
+        max_tracks = (
+            _prefix_track_count_for_size(layout, path.stat().st_size)
+            if layout is not None and path.suffix.lower() in {".d64", ".d71"}
+            else None
+        )
+        detection = detect_filesystem(image_obj, path_name=path.name)
+        if detection.plugin is None or not hasattr(detection.plugin, "bam_blocks"):
+            raise ValueError("No CBM DOS BAM is available for this image")
+        return build_cbm_bam_block_map(detection.plugin.bam_blocks(max_tracks=max_tracks))
+
     if path.suffix.lower() == ".scp":
         image = parse_scp(path)
         layout = ensure_layout_loaded(layout_id) if layout_id else None
         selected_encoding = layout.encoding if layout else encoding
         decoder = _get_decoder(selected_encoding)
-        return build_disk_map(image, decoder, layout=layout)
+        disk_map = build_disk_map(image, decoder, layout=layout)
+        if map_view == "logical" and layout and layout.layout_id == "commodore_gcr_1541_170k":
+            try:
+                image_obj = _prepare_image(path, layout.layout_id, layout.encoding)
+                detection = detect_filesystem(image_obj, path_name=path.name)
+                if detection.primary == "c64_cpm_2_2":
+                    allocated = (
+                        detection.plugin.allocation_blocks()
+                        if detection.plugin is not None and hasattr(detection.plugin, "allocation_blocks")
+                        else None
+                    )
+                    return apply_c64_cpm_2_2_logical_overlay(disk_map, allocated)
+            except Exception:
+                pass
+        return disk_map
 
     image_obj = _prepare_image(path, layout_id, encoding)
     if not isinstance(image_obj, TrackSectorImage):
         raise ValueError("Image could not be reconstructed into sector tracks")
-    return build_disk_map_from_tracksectors(image_obj.tracks)
+    disk_map = build_disk_map_from_tracksectors(image_obj.tracks)
+    if map_view == "logical" and layout_id == "commodore_gcr_1541_170k":
+        try:
+            detection = detect_filesystem(image_obj, path_name=path.name)
+            if detection.primary == "c64_cpm_2_2":
+                allocated = (
+                    detection.plugin.allocation_blocks()
+                    if detection.plugin is not None and hasattr(detection.plugin, "allocation_blocks")
+                    else None
+                )
+                return apply_c64_cpm_2_2_logical_overlay(disk_map, allocated)
+        except Exception:
+            pass
+    return disk_map
 
 
 def list_files(path: Path, layout_id: Optional[str], encoding: str = "mfm") -> list[FileEntryView]:

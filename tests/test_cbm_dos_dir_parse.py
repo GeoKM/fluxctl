@@ -34,6 +34,7 @@ def _build_directory_image():
     bam[0] = 18
     bam[1] = 1
     bam[0xA2:0xA4] = b"2A"
+    bam[4 + (1 - 1) * 4 + 1] = 0b00000100  # Track 1 sector 2 free.
 
     # Directory sector with a single PRG entry
     dir_sector = bytearray(256)
@@ -45,7 +46,7 @@ def _build_directory_image():
     entry[2] = 0  # start sector
     name = "HELLO"
     entry[3:3 + len(name)] = name.encode("ascii")
-    entry[30:32] = (1).to_bytes(2, "little")
+    entry[28:30] = (1).to_bytes(2, "little")
     dir_sector[2:34] = entry
 
     # Data sector for HELLO
@@ -74,8 +75,23 @@ def test_cbm_dos_lists_directory_and_extracts_file():
     entries = fs.list_directory("/")
     assert len(entries) == 1
     assert entries[0].name.startswith("HELLO")
+    assert entries[0].size == 5
     content = fs.extract_file("HELLO")
     assert content == b"HELLO"
+
+
+def test_cbm_dos_reports_bam_block_states():
+    image = _build_directory_image()
+    fs = CBMDOS()
+    assert fs.probe(image) is True
+
+    states = {(track, head, sector): state for track, head, sector, state in fs.bam_blocks()}
+
+    assert states[(1, 0, 0)] == "bam_file"
+    assert states[(1, 0, 1)] == "bam_used"
+    assert states[(1, 0, 2)] == "bam_free"
+    assert states[(18, 0, 0)] == "bam_system"
+    assert states[(18, 0, 1)] == "bam_system"
 
 
 def test_cbm_dos_accepts_empty_directory():

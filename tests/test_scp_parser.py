@@ -74,6 +74,13 @@ def _build_trk_block(
     return bytes(table + b"".join(flux_segments))
 
 
+def _build_zeroed_trk_block(track_index: int, ticks: list[int], revolutions: int) -> bytes:
+    table = bytearray(4 + revolutions * 12)
+    table[:3] = b"TRK"
+    table[3] = track_index
+    return bytes(table + _pack_flux_be(ticks))
+
+
 def _build_scp_image(
     *,
     version: int,
@@ -196,6 +203,32 @@ def test_modern_small_timebase_matches_greaseweazle_default() -> None:
 
     assert image.timebase_ns == 25.0
     assert len(image.tracks) == 156
+
+
+def test_zeroed_modern_revolution_headers_use_25ns_salvage_timebase(tmp_path: Path) -> None:
+    track_block = _build_zeroed_trk_block(0, [1, 1, 1, 1, 1, 1], revolutions=3)
+
+    image_path = tmp_path / "zeroed_modern.scp"
+    image_path.write_bytes(
+        _build_scp_image(
+            version=9,
+            raw_timebase=65_537,
+            revolutions_per_track=3,
+            start_track=0,
+            end_track=0,
+            track_blocks={0: track_block},
+        )
+    )
+
+    image = parse_scp(image_path)
+
+    assert image.timebase_ns == 25.0
+    assert "Used 25ns salvage timebase" in image.warnings[-1]
+    assert [list(rev.interval_ns) for rev in image.tracks[0].revolutions] == [
+        [25, 25],
+        [25, 25],
+        [25, 25],
+    ]
 
 
 def test_long_interval_overflow_round_trips(tmp_path: Path) -> None:

@@ -119,7 +119,9 @@ def test_probe_prefers_commodore_cpm_over_apple_gcr() -> None:
     runner = CliRunner()
     result = runner.invoke(cli.app, ["probe", str(FIXTURE_1541_CPM_170K)])
     assert result.exit_code == 0
-    assert "commodore_gcr_1541_cpm_170k" in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "commodore_gcr_1541_170k"
+    assert payload[0]["filesystem"] == "c64_cpm_2_2"
     assert "apple2_gcr_nofs_140_140k" not in result.stdout
 
 

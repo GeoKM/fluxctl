@@ -150,6 +150,14 @@ class CPMFilesystem(Filesystem):
             )
         return entries
 
+    def allocation_blocks(self) -> set[int]:
+        """Return allocation block numbers referenced by directory entries."""
+
+        blocks = {0, 1}
+        for record in self._records:
+            blocks.update(block for block in record.allocation if block)
+        return blocks
+
     def extract_file(self, path: str) -> bytes:
         raise FilesystemError("CP/M file extraction not implemented")
 
