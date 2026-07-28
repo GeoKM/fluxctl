@@ -17,6 +17,7 @@ FIXTURE_8IN_FM_284K = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWri
 FIXTURE_AMIGA_880K = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.scp")
 FIXTURE_1541_CPM_170K = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64CPM-170K.scp")
 FIXTURE_D64 = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64-170K.d64")
+FIXTURE_DISK_DISECTOR_D64 = Path("tests/fixtures/5.25inch/Commodore/0008-DISC001-Disk_Disector-v5.d64")
 FIXTURE_IMG_720K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.img")
 FIXTURE_ADF = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.adf")
 FIXTURE_IMD_RX02 = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM-RT11-500K.imd")
@@ -132,6 +133,16 @@ def test_probe_supports_flat_d64_images() -> None:
     assert payload[0]["filesystem"] == "cbm_dos"
 
 
+def test_probe_supports_35_track_d64_as_varied_sector_cbm_dos() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_DISK_DISECTOR_D64)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "commodore_gcr_1541_170k"
+    assert payload[0]["encoding"] == "gcr"
+    assert payload[0]["filesystem"] == "cbm_dos"
+
+
 def test_probe_supports_flat_img_images() -> None:
     runner = CliRunner()
     result = runner.invoke(cli.app, ["probe", str(FIXTURE_IMG_720K)])
@@ -226,7 +237,7 @@ def test_probe_supports_d64_cpm_filesystem() -> None:
     result = runner.invoke(cli.app, ["probe", str(FIXTURE_D64_CPM)])
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload[0]["layout_id"] == "commodore_gcr_1541_cpm_170k"
+    assert payload[0]["layout_id"] == "commodore_gcr_1541_170k"
     assert payload[0]["filesystem"] == "c64_cpm_2_2"
 
 

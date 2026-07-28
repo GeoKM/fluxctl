@@ -612,7 +612,12 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
     # instead of trying to decode as SCP.
     if layout_desc and ext not in {".scp", ".imd"}:
         data_bytes = path.read_bytes()
-        track_data = _sectors_from_blob(layout_desc, data_bytes, allow_pad=True)
+        track_data = _sectors_from_blob(
+            layout_desc,
+            data_bytes,
+            allow_pad=True,
+            allow_prefix=ext in {".d64"},
+        )
         if track_data:
             image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
             image.layout = layout_desc
@@ -835,7 +840,41 @@ def _expected_bytes_for_layout(layout: LayoutDescriptor) -> int:
     return total_sectors * layout.sector_size
 
 
-def _sectors_from_blob(layout: LayoutDescriptor, data: bytes, *, allow_pad: bool = False) -> Optional[list[TrackSectors]]:
+def _prefix_track_count_for_size(layout: LayoutDescriptor, data_len: int) -> Optional[int]:
+    if layout.sides != 1 or not layout.track_sectors or layout.sector_size <= 0:
+        return None
+    offset = 0
+    for idx, sectors in enumerate(layout.track_sectors):
+        offset += sectors * layout.sector_size
+        if offset == data_len:
+            return idx + 1
+        if offset > data_len:
+            return None
+    return None
+
+
+def _layout_data_distance(layout: LayoutDescriptor, data_len: int) -> int:
+    if _prefix_track_count_for_size(layout, data_len) is not None:
+        return 0
+    expected_bytes = _expected_bytes_for_layout(layout)
+    return abs(expected_bytes - data_len)
+
+
+def _flat_layout_filesystem_penalty(layout: LayoutDescriptor, filesystem_name: Optional[str]) -> int:
+    if filesystem_name == "c64_cpm_2_2":
+        return 0 if layout.layout_id == "commodore_gcr_1541_cpm_170k" else 1
+    if filesystem_name == "cbm_dos" and layout.layout_id == "commodore_gcr_1541_cpm_170k":
+        return 1
+    return 0
+
+
+def _sectors_from_blob(
+    layout: LayoutDescriptor,
+    data: bytes,
+    *,
+    allow_pad: bool = False,
+    allow_prefix: bool = False,
+) -> Optional[list[TrackSectors]]:
     if layout.sector_size <= 0:
         return None
     size_code = SECTOR_SIZE_TO_CODE.get(layout.sector_size)
@@ -849,19 +888,30 @@ def _sectors_from_blob(layout: LayoutDescriptor, data: bytes, *, allow_pad: bool
     total_sectors = sum(sectors_per_cylinder) * layout.sides
     expected_bytes = total_sectors * layout.sector_size
     if len(data) < expected_bytes:
+        prefix_tracks = _prefix_track_count_for_size(layout, len(data)) if allow_prefix else None
+        if prefix_tracks is not None:
+            sectors_per_cylinder = sectors_per_cylinder[:prefix_tracks]
+            total_sectors = sum(sectors_per_cylinder) * layout.sides
+            expected_bytes = total_sectors * layout.sector_size
+        elif not allow_pad:
+            return None
+        else:
+            missing_ratio = 1 - (len(data) / expected_bytes)
+            if missing_ratio > 0.6:
+                return None
+            data = data.ljust(expected_bytes, b"\x00")
+    if len(data) != expected_bytes:
         if not allow_pad:
             return None
-        missing_ratio = 1 - (len(data) / expected_bytes)
-        if missing_ratio > 0.6:
-            return None
-        data = data.ljust(expected_bytes, b"\x00")
+        data = data[:expected_bytes]
     tracks: list[TrackSectors] = []
     offset = 0
+    effective_tracks = len(sectors_per_cylinder)
     side_blocked_flat = layout.layout_id == "commodore_gcr_1571_341k"
     order = (
-        ((cylinder, head) for head in range(layout.sides) for cylinder in range(layout.tracks))
+        ((cylinder, head) for head in range(layout.sides) for cylinder in range(effective_tracks))
         if side_blocked_flat
-        else ((cylinder, head) for cylinder in range(layout.tracks) for head in range(layout.sides))
+        else ((cylinder, head) for cylinder in range(effective_tracks) for head in range(layout.sides))
     )
     for cylinder, head in order:
         sectors_on_track = sectors_per_cylinder[cylinder]
@@ -1022,12 +1072,17 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
         return penalty
 
     best_candidate: Optional[CandidateFormat] = None
-    best_score: Optional[tuple[int, int]] = None
+    best_score: Optional[tuple[int, int, int]] = None
     for layout in _flat_layout_candidates(ext_for_layouts):
         expected_bytes = _expected_bytes_for_layout(layout)
         if expected_bytes <= 0:
             continue
-        track_data = _sectors_from_blob(layout, data_bytes, allow_pad=ext_for_layouts in {".imd", ".img"})
+        track_data = _sectors_from_blob(
+            layout,
+            data_bytes,
+            allow_pad=ext_for_layouts in {".imd", ".img"},
+            allow_prefix=ext_for_layouts in {".d64"},
+        )
         if track_data is None:
             continue
         image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
@@ -1040,7 +1095,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
         if filesystem_name:
             layout_evidence.append(f"filesystem={filesystem_name}")
         layout_evidence.extend(filesystem_evidence)
-        distance = abs(expected_bytes - len(data_bytes))
+        distance = _layout_data_distance(layout, len(data_bytes))
         candidate = CandidateFormat(
             candidate_id=layout.layout_id,
             encoding=layout.encoding,
@@ -1049,8 +1104,9 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
             score=1.0,
             evidence=layout_evidence,
         )
+        filesystem_penalty = _flat_layout_filesystem_penalty(layout, filesystem_name)
         geometry_penalty = _imd_penalty(layout)
-        score = (geometry_penalty, distance)
+        score = (filesystem_penalty, geometry_penalty, distance)
         if best_score is None or score < best_score:
             best_candidate = candidate
             best_score = score
@@ -1571,16 +1627,23 @@ def extract(
 
     selected_layout = layout
     selected_encoding = encoding
-    if selected_layout is None and path.suffix.lower() == ".scp":
+    if selected_layout is None:
         load_builtin_decoders()
         load_builtin_layouts()
-        scp = parse_scp(path)
-        encoding_candidate = detect_encoding(scp, path=path)
-        if encoding_candidate:
-            selected_encoding = encoding_candidate.encoding
-            layout_candidate = detect_layout(scp, selected_encoding, path)
-            if layout_candidate:
-                selected_layout = layout_candidate.layout.layout_id
+        if path.suffix.lower() == ".scp":
+            scp = parse_scp(path)
+            encoding_candidate = detect_encoding(scp, path=path)
+            if encoding_candidate:
+                selected_encoding = encoding_candidate.encoding
+                layout_candidate = detect_layout(scp, selected_encoding, path)
+                if layout_candidate:
+                    selected_layout = layout_candidate.layout.layout_id
+        else:
+            candidates = _probe_flat_image(path)
+            if candidates:
+                primary = sorted(candidates, key=lambda c: c.score, reverse=True)[0]
+                selected_layout = primary.layout_id
+                selected_encoding = primary.encoding or selected_encoding
 
     image_obj = _prepare_image(path, selected_layout, selected_encoding)
     filesystem = _detect_filesystem(image_obj)
