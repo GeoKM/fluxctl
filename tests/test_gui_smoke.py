@@ -8,8 +8,9 @@ pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QAbstractItemView
 
+from fluxctl import studio_services as services
 from fluxctl.gui import FluxctlStudio
 from fluxctl.gui import DiskMapWidget
 from fluxctl.reports.map import DiskMap, SectorMapEntry
@@ -107,14 +108,50 @@ def test_disk_map_widget_exposes_colour_legend_items() -> None:
 def test_opening_new_image_clears_file_panel() -> None:
     window = FluxctlStudio()
     assert window.map_view.itemData(2) == "bam"
+    assert window.files_table.editTriggers() == QAbstractItemView.NoEditTriggers
     window.files_table.setRowCount(1)
+    window._set_file_browser_path("/SOMEWHERE")
     window.summary_labels["filesystem"].setText("cbm_dos")
 
     window._clear_image_results()
 
     assert window.files_table.rowCount() == 0
+    assert window.file_browser_path == "/"
     assert window.summary_labels["filesystem"].text() == "-"
     assert window.map_widget.disk_map is None
+    window.close()
+
+
+def test_file_panel_double_click_opens_directory(monkeypatch) -> None:
+    window = FluxctlStudio()
+    opened_paths: list[str] = []
+    monkeypatch.setattr(window, "run_list_files", lambda: opened_paths.append(window.file_browser_path))
+    entries = [
+        services.FileEntryView("SUBDIR", "<DIR>", 0, "/SUBDIR", True),
+        services.FileEntryView("README.TXT", "file", 42, "/README.TXT", False),
+    ]
+    window._show_files(entries)
+
+    window.open_selected_file_entry(window.files_table.item(0, 0))
+
+    assert window.file_browser_path == "/SUBDIR"
+    assert opened_paths == ["/SUBDIR"]
+    window.close()
+
+
+def test_file_panel_selected_file_hex_updates_hex_tab() -> None:
+    window = FluxctlStudio()
+    entries = [services.FileEntryView("README.TXT", "file", 42, "/README.TXT", False)]
+    window._show_files(entries)
+    window.files_table.setCurrentCell(0, 0)
+    window.lower_tabs.setCurrentWidget(window.file_panel)
+
+    window._show_hex_dump(services.HexDumpView("File /README.TXT", 5, services.format_hex_dump(b"HELLO")))
+
+    assert window._selected_file_entry_path() == ("/README.TXT", False)
+    assert window.lower_tabs.currentWidget() == window.hex_panel
+    assert "File /README.TXT" in window.hex_title_label.text()
+    assert "48 45 4C 4C 4F" in window.hex_text.toPlainText()
     window.close()
 
 
@@ -148,3 +185,81 @@ def test_disk_map_widget_tooltip_includes_sector_metadata() -> None:
     assert "CRC: bad" in text
     assert "Confidence: 0.42" in text
     assert "Deleted: yes" in text
+
+
+def test_disk_map_widget_resolves_click_to_sector_address() -> None:
+    app = _app()
+    disk_map = DiskMap(
+        tracks=[["good"]],
+        total_tracks=1,
+        max_sectors_per_track=1,
+        track_ids=[(7, 1)],
+        sector_details=[
+            [
+                SectorMapEntry(
+                    sector_id=12,
+                    state="good",
+                    size=256,
+                    crc_ok=True,
+                    confidence=1.0,
+                    has_data=True,
+                )
+            ]
+        ],
+    )
+    widget = DiskMapWidget()
+    widget.resize(300, 300)
+    widget.set_disk_map(disk_map)
+    widget.show()
+    _wait_until(app, lambda: bool(widget._head_layouts))
+
+    assert widget.sector_address_at(150, 140) == (7, 1, 12)
+    widget.close()
+
+
+def test_disk_map_widget_ignores_bam_click_for_sector_hex() -> None:
+    app = _app()
+    disk_map = DiskMap(
+        tracks=[["bam_file"]],
+        total_tracks=1,
+        max_sectors_per_track=1,
+        track_ids=[(7, 1)],
+        sector_details=[
+            [
+                SectorMapEntry(
+                    sector_id=12,
+                    state="bam_file",
+                    size=256,
+                    crc_ok=True,
+                    confidence=1.0,
+                    has_data=True,
+                )
+            ]
+        ],
+        render_style="grid",
+    )
+    widget = DiskMapWidget()
+    widget.resize(300, 300)
+    widget.set_disk_map(disk_map)
+    widget.show()
+    _wait_until(app, lambda: bool(widget._head_layouts))
+
+    assert widget.sector_address_at(54, 52) is None
+    widget.close()
+
+
+def test_map_sector_click_updates_sector_hex_inputs(monkeypatch) -> None:
+    window = FluxctlStudio()
+    loaded: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        window,
+        "view_sector_hex",
+        lambda: loaded.append(
+            (window.hex_track_input.text(), window.hex_head_input.text(), window.hex_sector_input.text())
+        ),
+    )
+
+    window.load_sector_hex_from_map(7, 1, 12)
+
+    assert loaded == [("7", "1", "12")]
+    window.close()

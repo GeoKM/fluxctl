@@ -45,16 +45,15 @@ class AmigaOFS(Filesystem):
             except ValueError:
                 continue
 
-    def _parse_real_directory(self) -> None:
+    def _directory_entries_from_block(self, block_number: int) -> list[_AmigaDirEntry]:
         assert self.image is not None
-        root = self.image.read_sector(880)
-        if len(root) < 512 or self._long(root, 0) != 2 or self._long(root, 3) != 72:
-            raise FilesystemError("Amiga root block not found")
-
         entries: list[_AmigaDirEntry] = []
         seen: set[int] = set()
+        directory = self.image.read_sector(block_number)
+        if len(directory) < 512 or self._long(directory, 0) != 2:
+            raise FilesystemError("Amiga directory block not found")
         for hash_index in range(72):
-            block = self._long(root, 6 + hash_index)
+            block = self._long(directory, 6 + hash_index)
             while block:
                 if block in seen:
                     break
@@ -81,7 +80,10 @@ class AmigaOFS(Filesystem):
                         )
                     )
                 block = self._long(data, 126)
-        self.directory = sorted(entries, key=lambda entry: (not entry.is_dir, entry.name.lower()))
+        return sorted(entries, key=lambda entry: (not entry.is_dir, entry.name.lower()))
+
+    def _parse_real_directory(self) -> None:
+        self.directory = self._directory_entries_from_block(880)
 
     def probe(self, image: SectorImage) -> bool:
         self._reset()
@@ -112,19 +114,40 @@ class AmigaOFS(Filesystem):
     def list_directory(self, path: str = "/") -> List[FileEntry]:
         if self.image is None:
             raise FilesystemError("Filesystem not probed")
+        entries_source = self._entries_for_path(path)
         entries: List[FileEntry] = []
-        for entry in self.directory:
+        for entry in entries_source:
             entries.append(
                 FileEntry(name=entry.name, is_dir=entry.is_dir, size=entry.length, cluster_start=entry.start_sector)
             )
         return entries
 
+    def _entries_for_path(self, path: str) -> list[_AmigaDirEntry]:
+        parts = [part for part in path.strip("/").split("/") if part]
+        entries = self.directory
+        if not parts:
+            return entries
+        for part in parts:
+            match = next((entry for entry in entries if entry.name.lower() == part.lower()), None)
+            if match is None:
+                raise FilesystemError(f"Directory '{path}' not found")
+            if not match.is_dir:
+                raise FilesystemError(f"'{part}' is not a directory")
+            entries = self._directory_entries_from_block(match.start_sector)
+        return entries
+
     def extract_file(self, path: str) -> bytes:
         if self.image is None:
             raise FilesystemError("Filesystem not probed")
-        target = next((e for e in self.directory if e.name == path or f"/{e.name}" == path), None)
+        parts = [part for part in path.strip("/").split("/") if part]
+        if not parts:
+            raise FilesystemError("Path must reference a file")
+        entries = self._entries_for_path("/" + "/".join(parts[:-1]) if len(parts) > 1 else "/")
+        target = next((e for e in entries if e.name.lower() == parts[-1].lower()), None)
         if target is None:
             raise FilesystemError(f"File '{path}' not found")
+        if target.is_dir:
+            raise FilesystemError("Cannot extract a directory entry")
         start = target.start_sector
         count = (target.length + self.image.bytes_per_sector - 1) // self.image.bytes_per_sector
         data = self.image.read_sector(start, count)

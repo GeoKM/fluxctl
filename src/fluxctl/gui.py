@@ -15,6 +15,7 @@ try:  # pragma: no cover - exercised only when GUI dependencies are installed.
     from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
     from PySide6.QtWidgets import (
         QApplication,
+        QAbstractItemView,
         QComboBox,
         QFileDialog,
         QFrame,
@@ -70,6 +71,7 @@ class Job(QRunnable):
 
 
 class DiskMapWidget(QWidget):
+    sectorClicked = Signal(int, int, int)
     STATE_COLORS = {
         "good": QColor("#35d07f"),
         "weak": QColor("#f2c94c"),
@@ -313,6 +315,33 @@ class DiskMapWidget(QWidget):
     def leaveEvent(self, _event) -> None:  # pragma: no cover - GUI interaction.
         QToolTip.hideText()
 
+    def mousePressEvent(self, event) -> None:  # pragma: no cover - GUI interaction.
+        if event.button() != Qt.LeftButton:
+            return
+        address = self.sector_address_at(event.position().x(), event.position().y())
+        if address is not None:
+            track, head, sector_id = address
+            self.sectorClicked.emit(track, head, sector_id)
+
+    def sector_address_at(self, x: float, y: float) -> Optional[tuple[int, int, int]]:
+        hit = self._hit_test(x, y)
+        if hit is None or not self.disk_map:
+            return None
+        row_index, sector_index = hit
+        track_ids = self.disk_map.track_ids or [(idx, 0) for idx, _ in enumerate(self.disk_map.tracks)]
+        if row_index >= len(track_ids):
+            return None
+        track, head = track_ids[row_index]
+        if not self.disk_map.sector_details or row_index >= len(self.disk_map.sector_details):
+            return None
+        details = self.disk_map.sector_details[row_index]
+        if sector_index >= len(details):
+            return None
+        detail = details[sector_index]
+        if detail.state.startswith("bam_") or not detail.has_data:
+            return None
+        return track, head, detail.sector_id
+
     def _hit_test(self, x: float, y: float) -> Optional[tuple[int, int]]:
         for layout in self._head_layouts:
             if layout.get("grid"):
@@ -356,6 +385,7 @@ class FluxctlStudio(QMainWindow):
         self.active_jobs: set[Job] = set()
         self.current_path: Optional[Path] = None
         self.current_summary = None
+        self.file_browser_path = "/"
         self.layout_options = services.load_layout_options()
         self._build_ui()
         self._apply_style()
@@ -438,13 +468,60 @@ class FluxctlStudio(QMainWindow):
             actions.addWidget(button)
 
         self.map_widget = DiskMapWidget()
+        self.map_widget.sectorClicked.connect(self.load_sector_hex_from_map)
+        self.file_path_label = QLabel("/")
+        self.file_path_label.setObjectName("filePath")
+        self.file_path_label.setWordWrap(True)
+        self.file_up_button = QPushButton("Up")
+        self.file_up_button.clicked.connect(self.open_parent_directory)
+        self.file_root_button = QPushButton("Root")
+        self.file_root_button.clicked.connect(self.open_root_directory)
+        self.file_hex_button = QPushButton("View File Hex")
+        self.file_hex_button.clicked.connect(self.view_selected_file_hex)
+        file_nav = QHBoxLayout()
+        file_nav.addWidget(QLabel("Directory"))
+        file_nav.addWidget(self.file_path_label, 1)
+        file_nav.addWidget(self.file_up_button)
+        file_nav.addWidget(self.file_root_button)
+        file_nav.addWidget(self.file_hex_button)
         self.files_table = QTableWidget(0, 3)
         self.files_table.setMinimumHeight(260)
         self.files_table.setHorizontalHeaderLabels(["Name", "Kind", "Size"])
         self.files_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.files_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.files_table.itemDoubleClicked.connect(self.open_selected_file_entry)
+        self.file_panel = QWidget()
+        file_panel_layout = QVBoxLayout(self.file_panel)
+        file_panel_layout.setContentsMargins(0, 0, 0, 0)
+        file_panel_layout.addLayout(file_nav)
+        file_panel_layout.addWidget(self.files_table)
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         self.log.setMinimumHeight(260)
+        self.hex_title_label = QLabel("No hex data loaded")
+        self.hex_title_label.setObjectName("filePath")
+        self.hex_track_input = QLineEdit("0")
+        self.hex_head_input = QLineEdit("0")
+        self.hex_sector_input = QLineEdit("1")
+        self.hex_sector_button = QPushButton("View Sector Hex")
+        self.hex_sector_button.clicked.connect(self.view_sector_hex)
+        hex_controls = QHBoxLayout()
+        hex_controls.addWidget(QLabel("Track"))
+        hex_controls.addWidget(self.hex_track_input)
+        hex_controls.addWidget(QLabel("Head"))
+        hex_controls.addWidget(self.hex_head_input)
+        hex_controls.addWidget(QLabel("Sector"))
+        hex_controls.addWidget(self.hex_sector_input)
+        hex_controls.addWidget(self.hex_sector_button)
+        self.hex_text = QTextEdit()
+        self.hex_text.setReadOnly(True)
+        self.hex_text.setFont(QFont("Menlo"))
+        self.hex_panel = QWidget()
+        hex_panel_layout = QVBoxLayout(self.hex_panel)
+        hex_panel_layout.setContentsMargins(0, 0, 0, 0)
+        hex_panel_layout.addWidget(self.hex_title_label)
+        hex_panel_layout.addLayout(hex_controls)
+        hex_panel_layout.addWidget(self.hex_text)
 
         self.simple_splitter = QSplitter(Qt.Vertical)
         self.simple_splitter.setChildrenCollapsible(False)
@@ -454,12 +531,13 @@ class FluxctlStudio(QMainWindow):
         upper_layout.addWidget(self.activity_label)
         upper_layout.addLayout(actions)
         upper_layout.addWidget(self.map_widget, 1)
-        lower = QTabWidget()
-        lower.setMinimumHeight(300)
-        lower.addTab(self.files_table, "Files")
-        lower.addTab(self.log, "Jobs")
+        self.lower_tabs = QTabWidget()
+        self.lower_tabs.setMinimumHeight(300)
+        self.lower_tabs.addTab(self.file_panel, "Files")
+        self.lower_tabs.addTab(self.hex_panel, "Hex")
+        self.lower_tabs.addTab(self.log, "Jobs")
         self.simple_splitter.addWidget(upper)
-        self.simple_splitter.addWidget(lower)
+        self.simple_splitter.addWidget(self.lower_tabs)
         self.simple_splitter.setStretchFactor(0, 3)
         self.simple_splitter.setStretchFactor(1, 2)
         self.simple_splitter.setSizes([500, 340])
@@ -533,6 +611,7 @@ class FluxctlStudio(QMainWindow):
             #title { font-size: 24px; font-weight: 700; margin-bottom: 16px; }
             QLabel#metric { color: #9ee6b8; font-weight: 600; }
             QLabel#activity { background: #172233; border: 1px solid #2f4158; border-radius: 6px; padding: 8px; color: #dce7f7; }
+            QLabel#filePath { color: #9ee6b8; font-weight: 600; padding: 4px 8px; }
             QPushButton { background: #243348; border: 1px solid #40536c; border-radius: 6px; padding: 8px 10px; }
             QPushButton:hover { background: #2f435f; }
             QComboBox, QLineEdit, QTextEdit, QTableWidget {
@@ -609,7 +688,10 @@ class FluxctlStudio(QMainWindow):
 
     def _clear_image_results(self) -> None:
         self.current_summary = None
+        self._set_file_browser_path("/")
         self.files_table.setRowCount(0)
+        self.hex_title_label.setText("No hex data loaded")
+        self.hex_text.clear()
         self.map_widget.set_disk_map(None)
         self.summary_labels["layout"].setText("-")
         self.summary_labels["encoding"].setText("-")
@@ -695,24 +777,124 @@ class FluxctlStudio(QMainWindow):
         assert self.current_path is not None
         layout = self._selected_layout() or None
         encoding = self._selected_encoding()
-        self._run_job("extract --list", lambda: services.list_files(self.current_path, layout, encoding), self._show_files)
+        directory = self.file_browser_path
+        self._run_job(
+            f"extract --list {directory}",
+            lambda: services.list_files(self.current_path, layout, encoding, directory),
+            self._show_files,
+        )
 
     def _show_files(self, entries: object) -> None:
         if not entries:
             self.files_table.setRowCount(1)
-            self.files_table.setItem(0, 0, QTableWidgetItem("No supported filesystem entries found"))
+            self.files_table.setItem(0, 0, QTableWidgetItem(f"No filesystem entries found in {self.file_browser_path}"))
             self.files_table.setItem(0, 1, QTableWidgetItem("-"))
             self.files_table.setItem(0, 2, QTableWidgetItem("-"))
-            self.activity_label.setText("No supported filesystem was detected for directory listing.")
-            self._append_log("Listed 0 filesystem entries")
+            self.activity_label.setText(f"No supported filesystem entries were found in {self.file_browser_path}.")
+            self._append_log(f"Listed 0 filesystem entries in {self.file_browser_path}")
             return
         self.files_table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
-            self.files_table.setItem(row, 0, QTableWidgetItem(entry.name))
+            name_item = QTableWidgetItem(entry.name)
+            name_item.setData(Qt.UserRole, entry.path)
+            name_item.setData(Qt.UserRole + 1, entry.is_dir)
+            self.files_table.setItem(row, 0, name_item)
             self.files_table.setItem(row, 1, QTableWidgetItem(entry.kind))
             self.files_table.setItem(row, 2, QTableWidgetItem(str(entry.size)))
-        self.activity_label.setText(f"Listed {len(entries)} filesystem entries.")
-        self._append_log(f"Listed {len(entries)} filesystem entries")
+        self.activity_label.setText(f"Listed {len(entries)} filesystem entries in {self.file_browser_path}.")
+        self._append_log(f"Listed {len(entries)} filesystem entries in {self.file_browser_path}")
+
+    def _set_file_browser_path(self, path: str) -> None:
+        parts = [part for part in path.strip("/").split("/") if part]
+        self.file_browser_path = "/" + "/".join(parts) if parts else "/"
+        self.file_path_label.setText(self.file_browser_path)
+        self.file_up_button.setEnabled(self.file_browser_path != "/")
+
+    def open_root_directory(self) -> None:
+        self._set_file_browser_path("/")
+        self.run_list_files()
+
+    def open_parent_directory(self) -> None:
+        if self.file_browser_path == "/":
+            return
+        parent_parts = self.file_browser_path.strip("/").split("/")[:-1]
+        self._set_file_browser_path("/" + "/".join(parent_parts) if parent_parts else "/")
+        self.run_list_files()
+
+    def open_selected_file_entry(self, item: QTableWidgetItem) -> None:
+        name_item = self.files_table.item(item.row(), 0)
+        if name_item is None:
+            return
+        if not bool(name_item.data(Qt.UserRole + 1)):
+            return
+        entry_path = str(name_item.data(Qt.UserRole) or "")
+        if not entry_path:
+            return
+        self._set_file_browser_path(entry_path)
+        self.run_list_files()
+
+    def _selected_file_entry_path(self) -> tuple[str, bool]:
+        row = self.files_table.currentRow()
+        if row < 0:
+            items = self.files_table.selectedItems()
+            row = items[0].row() if items else -1
+        if row < 0:
+            return "", False
+        name_item = self.files_table.item(row, 0)
+        if name_item is None:
+            return "", False
+        return str(name_item.data(Qt.UserRole) or ""), bool(name_item.data(Qt.UserRole + 1))
+
+    def view_selected_file_hex(self) -> None:
+        if not self._require_image():
+            return
+        file_path, is_dir = self._selected_file_entry_path()
+        if not file_path:
+            self._warn("Select a file entry before viewing hex.")
+            return
+        if is_dir:
+            self._warn("Select a file, not a directory, before viewing file hex.")
+            return
+        assert self.current_path is not None
+        layout = self._selected_layout() or None
+        encoding = self._selected_encoding()
+        self._run_job(
+            f"hex file {file_path}",
+            lambda: services.file_hex_dump(self.current_path, layout, encoding, file_path, max_bytes=65536),
+            self._show_hex_dump,
+        )
+
+    def view_sector_hex(self) -> None:
+        if not self._require_image():
+            return
+        assert self.current_path is not None
+        layout = self._selected_layout() or None
+        encoding = self._selected_encoding()
+        try:
+            track = int(self.hex_track_input.text())
+            head = int(self.hex_head_input.text())
+            sector = int(self.hex_sector_input.text())
+        except ValueError:
+            self._warn("Track, head, and sector must be integer values.")
+            return
+        self._run_job(
+            f"hex sector {track}:{head}:{sector}",
+            lambda: services.sector_hex_dump(self.current_path, layout, encoding, track, head, sector),
+            self._show_hex_dump,
+        )
+
+    def load_sector_hex_from_map(self, track: int, head: int, sector: int) -> None:
+        self.hex_track_input.setText(str(track))
+        self.hex_head_input.setText(str(head))
+        self.hex_sector_input.setText(str(sector))
+        self.view_sector_hex()
+
+    def _show_hex_dump(self, dump: object) -> None:
+        self.hex_title_label.setText(f"{dump.title}  ({dump.size:,} bytes)")
+        self.hex_text.setPlainText(dump.text)
+        self.lower_tabs.setCurrentWidget(self.hex_panel)
+        self.activity_label.setText(f"Loaded hex view for {dump.title}.")
+        self._append_log(f"Loaded hex view for {dump.title} ({dump.size:,} bytes)")
 
     def run_info(self) -> None:
         self._run_cli(["info", str(self.current_path)] if self._require_image() else [])

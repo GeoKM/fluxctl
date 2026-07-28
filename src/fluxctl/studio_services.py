@@ -64,6 +64,17 @@ class FileEntryView:
     name: str
     kind: str
     size: int
+    path: str
+    is_dir: bool
+
+
+@dataclass(frozen=True)
+class HexDumpView:
+    """Hex/ASCII bytes suitable for Studio inspection panels."""
+
+    title: str
+    size: int
+    text: str
 
 
 def run_fluxctl_command(args: list[str], cwd: Optional[Path] = None) -> CommandResult:
@@ -261,8 +272,79 @@ def build_disk_map_for_image(
     return disk_map
 
 
-def list_files(path: Path, layout_id: Optional[str], encoding: str = "mfm") -> list[FileEntryView]:
-    """Return root directory entries when a supported filesystem is detected."""
+def _join_filesystem_path(directory: str, name: str) -> str:
+    parts = [part for part in directory.strip("/").split("/") if part]
+    parts.append(name)
+    return "/" + "/".join(parts)
+
+
+def format_hex_dump(data: bytes, *, width: int = 16, max_bytes: Optional[int] = None) -> str:
+    """Render bytes as offset, hex, and ASCII columns."""
+
+    if width <= 0:
+        raise ValueError("Hex dump width must be positive")
+    shown = data[:max_bytes] if max_bytes is not None else data
+    lines: list[str] = []
+    for offset in range(0, len(shown), width):
+        chunk = shown[offset : offset + width]
+        hex_bytes = " ".join(f"{byte:02X}" for byte in chunk)
+        padded_hex = hex_bytes.ljust(width * 3 - 1)
+        ascii_bytes = "".join(chr(byte) if 32 <= byte < 127 else "." for byte in chunk)
+        lines.append(f"{offset:08X}  {padded_hex}  |{ascii_bytes}|")
+    if max_bytes is not None and len(data) > max_bytes:
+        lines.append(f"... truncated, showing {max_bytes:,} of {len(data):,} bytes")
+    return "\n".join(lines)
+
+
+def sector_hex_dump(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    track: int,
+    head: int,
+    sector_id: int,
+    *,
+    max_bytes: Optional[int] = None,
+) -> HexDumpView:
+    """Return a hex dump for one decoded physical sector."""
+
+    image = _prepare_image(path, layout_id, encoding)
+    if not isinstance(image, TrackSectorImage):
+        raise ValueError("Image could not be reconstructed into sector tracks")
+    try:
+        data = image._sector_lookup[(track, head, sector_id)]
+    except KeyError as exc:
+        raise ValueError(f"Sector {track}:{head}:{sector_id} is not available") from exc
+    title = f"Sector T{track} H{head} S{sector_id}"
+    return HexDumpView(title=title, size=len(data), text=format_hex_dump(data, max_bytes=max_bytes))
+
+
+def file_hex_dump(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    file_path: str,
+    *,
+    max_bytes: Optional[int] = None,
+) -> HexDumpView:
+    """Return a hex dump for one filesystem file."""
+
+    load_builtin_filesystems()
+    image = _prepare_image(path, layout_id, encoding)
+    filesystem = detect_filesystem(image, path_name=path.name).plugin
+    if filesystem is None:
+        raise ValueError("No supported filesystem is available")
+    data = filesystem.extract_file(file_path)
+    return HexDumpView(title=f"File {file_path}", size=len(data), text=format_hex_dump(data, max_bytes=max_bytes))
+
+
+def list_files(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str = "mfm",
+    directory: str = "/",
+) -> list[FileEntryView]:
+    """Return directory entries when a supported filesystem is detected."""
 
     load_builtin_filesystems()
     image = _prepare_image(path, layout_id, encoding)
@@ -270,10 +352,19 @@ def list_files(path: Path, layout_id: Optional[str], encoding: str = "mfm") -> l
     if filesystem is None:
         return []
     try:
-        entries = filesystem.list_directory("/")
+        entries = filesystem.list_directory(directory)
     except Exception:
         return []
-    return [FileEntryView(entry.name, "<DIR>" if entry.is_dir else "file", entry.size) for entry in entries]
+    return [
+        FileEntryView(
+            entry.name,
+            "<DIR>" if entry.is_dir else "file",
+            entry.size,
+            _join_filesystem_path(directory, entry.name),
+            entry.is_dir,
+        )
+        for entry in entries
+    ]
 
 
 def provenance_json(path: Path) -> dict:
