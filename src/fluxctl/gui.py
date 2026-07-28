@@ -390,6 +390,7 @@ class FluxctlStudio(QMainWindow):
         self.layout_options = services.load_layout_options()
         self._build_ui()
         self._apply_style()
+        self._update_filesystem_write_actions()
         self.run_doctor()
 
     def _build_ui(self) -> None:
@@ -720,6 +721,7 @@ class FluxctlStudio(QMainWindow):
         self.summary_labels["confidence"].setText("-")
         self.summary_labels["size"].setText("-")
         self.activity_label.setText("Ready")
+        self._update_filesystem_write_actions()
 
     def run_doctor(self) -> None:
         self._run_job("doctor", services.doctor_report, self._show_doctor)
@@ -746,7 +748,33 @@ class FluxctlStudio(QMainWindow):
             f"Probe found {summary.layout_id or 'unknown layout'} with {summary.confidence:.2f} confidence."
         )
         self._append_log(json.dumps(summary.__dict__, indent=2))
+        self._update_filesystem_write_actions()
         self.run_map()
+
+    def _filesystem_write_buttons(self) -> list[QPushButton]:
+        return [
+            self.file_replace_button,
+            self.file_delete_button,
+            self.file_import_button,
+            self.directory_import_button,
+            self.directory_create_button,
+        ]
+
+    def _fat12_img_write_support_reason(self) -> tuple[bool, str]:
+        if self.current_path is None or self.current_summary is None:
+            return False, "Open and probe a disk image before using write actions."
+        if self.current_path.suffix.lower() != ".img":
+            return False, "Write actions currently support FAT12 flat .img images only."
+        if self.current_summary.filesystem != "fat12":
+            filesystem = self.current_summary.filesystem or "unknown"
+            return False, f"Write actions currently support FAT12 only; this image detected as {filesystem}."
+        return True, "Available for FAT12 flat .img images. Operations write a new image copy."
+
+    def _update_filesystem_write_actions(self) -> None:
+        supported, reason = self._fat12_img_write_support_reason()
+        for button in self._filesystem_write_buttons():
+            button.setEnabled(supported)
+            button.setToolTip(reason)
 
     def run_qc(self) -> None:
         if not self._require_image():
