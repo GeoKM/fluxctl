@@ -476,8 +476,9 @@ def replace_file_with_copy(
     """Replace one file in a new image copy without modifying the original.
 
     The first supported writer is intentionally narrow: FAT12 flat ``.img``
-    images with replacement data that is exactly the same size as the existing
-    file. That avoids changing allocation tables or directory metadata.
+    images where replacement data fits in the file's existing FAT chain. That
+    avoids changing allocation tables while still allowing the directory file
+    size to be updated in the copy.
     """
 
     source = path.resolve()
@@ -495,7 +496,7 @@ def replace_file_with_copy(
     if not filesystem.probe(RawSectorImage(image_bytes)):
         raise ValueError("File replacement is currently supported only for FAT12 images")
 
-    patched = filesystem.replace_file_same_size(image_bytes, fs_path, replacement)
+    patched = filesystem.replace_file_with_existing_allocation(image_bytes, fs_path, replacement)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(prefix=f".{output_path.name}.", dir=output_path.parent, delete=False) as temp_file:
         temp_name = Path(temp_file.name)

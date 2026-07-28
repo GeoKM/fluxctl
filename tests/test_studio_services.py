@@ -301,10 +301,52 @@ def test_studio_replaces_fat12_file_in_new_copy(tmp_path: Path) -> None:
     assert filesystem.extract_file("/AUTOEXEC.BAT") == replacement.read_bytes()
 
 
-def test_studio_rejects_fat12_replacement_size_change(tmp_path: Path) -> None:
+def test_studio_replaces_fat12_file_with_shorter_copy(tmp_path: Path) -> None:
     summary = services.summarize_image(FIXTURE_IMG)
     replacement = tmp_path / "AUTOEXEC.BAT"
-    replacement.write_bytes(b"too short")
+    replacement.write_bytes(b"@ECHO OFF\r\nREM SHORTER\r\n")
+    output = tmp_path / "patched.img"
+
+    result = services.replace_file_with_copy(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/AUTOEXEC.BAT",
+        replacement,
+        output,
+    )
+
+    filesystem = FAT12()
+    assert result.bytes == 24
+    assert filesystem.probe(RawSectorImage(output.read_bytes()))
+    assert filesystem.extract_file("/AUTOEXEC.BAT") == replacement.read_bytes()
+
+
+def test_studio_replaces_fat12_file_with_longer_existing_allocation_copy(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    replacement = tmp_path / "AUTOEXEC.BAT"
+    replacement.write_bytes(b"REM FLUXCTL LONGER REPLACEMENT\r\n" * 8)
+    output = tmp_path / "patched.img"
+
+    result = services.replace_file_with_copy(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/AUTOEXEC.BAT",
+        replacement,
+        output,
+    )
+
+    filesystem = FAT12()
+    assert result.bytes == 256
+    assert filesystem.probe(RawSectorImage(output.read_bytes()))
+    assert filesystem.extract_file("/AUTOEXEC.BAT") == replacement.read_bytes()
+
+
+def test_studio_rejects_fat12_replacement_larger_than_existing_allocation(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    replacement = tmp_path / "AUTOEXEC.BAT"
+    replacement.write_bytes(b"x" * 1025)
 
     try:
         services.replace_file_with_copy(
@@ -316,9 +358,9 @@ def test_studio_rejects_fat12_replacement_size_change(tmp_path: Path) -> None:
             tmp_path / "patched.img",
         )
     except Exception as exc:
-        assert "exactly 39 bytes" in str(exc)
+        assert "existing FAT chain holds only 1,024 bytes" in str(exc)
     else:  # pragma: no cover - assertion clarity
-        raise AssertionError("size-changing replacement should fail")
+        raise AssertionError("replacement beyond existing allocation should fail")
 
 
 def test_studio_rejects_replacement_over_original(tmp_path: Path) -> None:

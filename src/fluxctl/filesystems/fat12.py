@@ -25,6 +25,7 @@ class DirectoryEntry:
     start_cluster: int
     size: int
     raw: bytes
+    image_offset: int
 
     @property
     def is_dir(self) -> bool:
@@ -111,15 +112,42 @@ class FAT12(Filesystem):
             raise FilesystemError(
                 f"Replacement must be exactly {entry.size:,} bytes for same-size FAT12 replacement"
             )
-        if not replacement:
-            return bytes(image_bytes)
+        return self._replace_file_with_existing_allocation(image_bytes, entry, replacement, update_size=False)
 
+    def replace_file_with_existing_allocation(self, image_bytes: bytes, path: str, replacement: bytes) -> bytes:
+        """Return a copy with one file replaced inside its existing FAT chain.
+
+        The FAT chain is not extended or shortened. The directory size field is
+        updated in the returned bytes, and any unused tail of the final cluster
+        is left as-is.
+        """
+
+        entry = self._entry_for_file(path)
+        return self._replace_file_with_existing_allocation(image_bytes, entry, replacement, update_size=True)
+
+    def _replace_file_with_existing_allocation(
+        self,
+        image_bytes: bytes,
+        entry: DirectoryEntry,
+        replacement: bytes,
+        *,
+        update_size: bool,
+    ) -> bytes:
         clusters = self._cluster_chain(entry.start_cluster)
         capacity = len(clusters) * self.sectors_per_cluster * self.bytes_per_sector
         if len(replacement) > capacity:
-            raise FilesystemError("FAT chain is too short for the file size")
+            raise FilesystemError(
+                f"Replacement is {len(replacement):,} bytes but existing FAT chain holds only {capacity:,} bytes"
+            )
 
         patched = bytearray(image_bytes)
+        if update_size:
+            size_offset = entry.image_offset + 28
+            if size_offset + 4 > len(patched):
+                raise FilesystemError("Directory entry size field exceeds image size")
+            patched[size_offset : size_offset + 4] = len(replacement).to_bytes(4, "little")
+        if not replacement:
+            return bytes(patched)
         written = 0
         cluster_size = self.sectors_per_cluster * self.bytes_per_sector
         for cluster in clusters:
@@ -250,7 +278,8 @@ class FAT12(Filesystem):
         if self.image is None:
             raise FilesystemError("Filesystem not initialised")
         parts = [p for p in path.strip("/").split("/") if p]
-        entries = self._parse_directory(self.root_dir_data)
+        root_lba = self.reserved_sectors + self.fat_count * self.sectors_per_fat
+        entries = self._parse_directory(self.root_dir_data, root_lba)
         if not parts:
             return entries
         for part in parts:
@@ -259,11 +288,17 @@ class FAT12(Filesystem):
                 raise FilesystemError(f"Directory '{path}' not found")
             if not match.is_dir:
                 raise FilesystemError(f"'{part}' is not a directory")
-            dir_bytes = self._read_cluster_chain(match.start_cluster)
-            entries = self._parse_directory(dir_bytes)
+            entries = self._entries_for_cluster_chain(match.start_cluster)
         return entries
 
-    def _parse_directory(self, data: bytes) -> List[DirectoryEntry]:
+    def _entries_for_cluster_chain(self, start_cluster: int) -> List[DirectoryEntry]:
+        entries: List[DirectoryEntry] = []
+        for cluster in self._cluster_chain(start_cluster):
+            cluster_lba = self._cluster_to_lba(cluster)
+            entries.extend(self._parse_directory(self._read_cluster(cluster), cluster_lba))
+        return entries
+
+    def _parse_directory(self, data: bytes, base_lba: int) -> List[DirectoryEntry]:
         entries: List[DirectoryEntry] = []
         for idx in range(0, len(data), 32):
             entry = data[idx : idx + 32]
@@ -290,6 +325,7 @@ class FAT12(Filesystem):
                     start_cluster=start_cluster,
                     size=size,
                     raw=entry,
+                    image_offset=base_lba * self.bytes_per_sector + idx,
                 )
             )
         return entries
