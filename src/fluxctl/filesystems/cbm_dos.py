@@ -146,8 +146,13 @@ class CBMDOS(Filesystem):
             raise FilesystemError("CBM DOS reader only supports root directory")
         entries: List[FileEntry] = []
         for record in self.directory:
-            content = self._read_chain(record.start_track, record.start_sector)
-            size = len(content)
+            if record.blocks:
+                try:
+                    size = len(self._read_chain(record.start_track, record.start_sector))
+                except FilesystemError:
+                    size = record.blocks * (SECTOR_SIZE - 2)
+            else:
+                size = 0
             entries.append(
                 FileEntry(
                     name=record.name,

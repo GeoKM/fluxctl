@@ -174,6 +174,15 @@ def _detect_commodore(image, layout_id: str) -> FilesystemDetection:
         )
 
     if layout_id == "commodore_gcr_1541_170k":
+        if cpm_ok:
+            cpm_name = "c64_cpm_2_2"
+            return FilesystemDetection(
+                primary=cpm_name,
+                confidence=0.75,
+                evidence=evidence,
+                regions=[FilesystemRegion("head0", cpm_name, ["CP/M directory-like entries detected"])],
+                plugin=cpm_fs,
+            )
         if cbm_ok:
             return FilesystemDetection(
                 primary="cbm_dos",
@@ -181,15 +190,6 @@ def _detect_commodore(image, layout_id: str) -> FilesystemDetection:
                 evidence=evidence + ["cbm_dos_1541=1"],
                 regions=[FilesystemRegion("head0", "cbm_dos", ["1541 BAM/directory detected"])],
                 plugin=cbm_fs,
-            )
-        if cpm_ok:
-            cpm_name = _metadata_name("cpm", cpm_fs) if cpm_fs else "cpm"
-            return FilesystemDetection(
-                primary=cpm_name,
-                confidence=0.7,
-                evidence=evidence,
-                regions=[FilesystemRegion("head0", cpm_name, ["CP/M directory-like entries detected"])],
-                plugin=cpm_fs,
             )
 
     if layout_id == "commodore_gcr_1541_cpm_170k":
@@ -200,6 +200,14 @@ def _detect_commodore(image, layout_id: str) -> FilesystemDetection:
                 evidence=evidence,
                 regions=[FilesystemRegion("head0", "c64_cpm_2_2", ["CP/M directory-like entries detected"])],
                 plugin=cpm_fs,
+            )
+        if cbm_ok:
+            return FilesystemDetection(
+                primary="cbm_dos",
+                confidence=0.68,
+                evidence=evidence + ["cbm_dos_1541=1", "layout_cpm_mismatch=1"],
+                regions=[FilesystemRegion("head0", "cbm_dos", ["1541 BAM/directory detected"])],
+                plugin=cbm_fs,
             )
         return FilesystemDetection(
             primary="c64_cpm_2_2",

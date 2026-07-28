@@ -7,6 +7,7 @@ from fluxctl.layouts.loader import load_builtin_layouts
 
 FIXTURE_D64 = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64-170K.d64")
 FIXTURE_D64_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64CPM-170K.d64")
+FIXTURE_DISK_DISECTOR_D64 = Path("tests/fixtures/5.25inch/Commodore/0008-DISC001-Disk_Disector-v5.d64")
 FIXTURE_D71 = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C128-341K.d71")
 FIXTURE_D71_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-MFM-C128CPM-340K.d71")
 
@@ -37,7 +38,7 @@ def test_detects_1571_gcr_as_cbm_dos_family_with_regions() -> None:
 
 def test_detects_c64_cpm_from_directory_not_filename() -> None:
     load_builtin_layouts()
-    image = _prepare_image(FIXTURE_D64_CPM, "commodore_gcr_1541_cpm_170k", "gcr")
+    image = _prepare_image(FIXTURE_D64_CPM, "commodore_gcr_1541_170k", "gcr")
 
     detection = detect_filesystem(image, path_name="definitely-not-cpm.d64")
 
@@ -45,6 +46,20 @@ def test_detects_c64_cpm_from_directory_not_filename() -> None:
     assert detection.regions[0].filesystem == "c64_cpm_2_2"
     assert detection.plugin is not None
     assert "PIP.COM" in [entry.name for entry in detection.plugin.list_directory("/")]
+
+
+def test_detects_35_track_d64_as_cbm_dos_not_cpm() -> None:
+    load_builtin_layouts()
+    image = _prepare_image(FIXTURE_DISK_DISECTOR_D64, "commodore_gcr_1541_170k", "gcr")
+
+    detection = detect_filesystem(image, path_name="disk-disector.d64")
+
+    assert detection.primary == "cbm_dos"
+    assert detection.plugin is not None
+    assert len(getattr(image, "tracks", [])) == 35
+    names = [entry.name for entry in detection.plugin.list_directory("/")]
+    assert "DISK RESCUE" in names
+    assert "PIP.COM" not in names
 
 
 def test_detects_c128_cpm_from_directory_not_filename() -> None:
