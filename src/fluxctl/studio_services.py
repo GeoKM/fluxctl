@@ -99,6 +99,17 @@ class ReplaceResult:
     filesystem: str
 
 
+@dataclass(frozen=True)
+class MutationResult:
+    """Summary of a safe copy-on-write filesystem mutation operation."""
+
+    path: str
+    operation: str
+    entries: int
+    bytes: int
+    filesystem: str
+
+
 def run_fluxctl_command(args: list[str], cwd: Optional[Path] = None) -> CommandResult:
     """Run a fluxctl CLI command using the current interpreter."""
 
@@ -507,6 +518,126 @@ def replace_file_with_copy(
         bytes=len(replacement),
         filesystem="fat12",
     )
+
+
+def delete_filesystem_entry_with_copy(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    fs_path: str,
+    output_path: Path,
+) -> MutationResult:
+    """Delete one FAT12 file or empty directory in a new image copy."""
+
+    image_bytes = _read_fat12_source_for_mutation(path, output_path)
+    filesystem = _probe_fat12_bytes(image_bytes)
+    entry = _find_entry(filesystem, fs_path)
+    patched = filesystem.delete_entry(image_bytes, fs_path)
+    _write_new_image_copy(output_path, patched)
+    return MutationResult(str(output_path), "delete", 1, entry.size, "fat12")
+
+
+def create_directory_with_copy(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    parent: str,
+    name: str,
+    output_path: Path,
+) -> MutationResult:
+    """Create one empty FAT12 directory in a new image copy."""
+
+    image_bytes = _read_fat12_source_for_mutation(path, output_path)
+    filesystem = _probe_fat12_bytes(image_bytes)
+    patched = filesystem.create_directory(image_bytes, parent, name)
+    _write_new_image_copy(output_path, patched)
+    return MutationResult(str(output_path), "create-directory", 1, 0, "fat12")
+
+
+def import_file_with_copy(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    directory: str,
+    host_file: Path,
+    output_path: Path,
+) -> MutationResult:
+    """Import one host file into a FAT12 directory in a new image copy."""
+
+    data = host_file.read_bytes()
+    image_bytes = _read_fat12_source_for_mutation(path, output_path)
+    filesystem = _probe_fat12_bytes(image_bytes)
+    patched = filesystem.import_file(image_bytes, directory, host_file.name, data)
+    _write_new_image_copy(output_path, patched)
+    return MutationResult(str(output_path), "import-file", 1, len(data), "fat12")
+
+
+def import_directory_with_copy(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    directory: str,
+    host_directory: Path,
+    output_path: Path,
+) -> MutationResult:
+    """Recursively import a host directory tree into FAT12 in a new image copy."""
+
+    if not host_directory.is_dir():
+        raise ValueError("Choose a host directory to import")
+    image_bytes = _read_fat12_source_for_mutation(path, output_path)
+    entries, byte_count, patched = _import_directory_tree(image_bytes, directory, host_directory)
+    _write_new_image_copy(output_path, patched)
+    return MutationResult(str(output_path), "import-directory", entries, byte_count, "fat12")
+
+
+def _read_fat12_source_for_mutation(path: Path, output_path: Path) -> bytes:
+    source = path.resolve()
+    output = output_path.resolve()
+    if source == output:
+        raise ValueError("Output image must be a new copy, not the original image")
+    if output_path.exists():
+        raise ValueError(f"Output image already exists: {output_path}")
+    if path.suffix.lower() != ".img":
+        raise ValueError("FAT12 mutation is currently supported only for flat .img images")
+    return path.read_bytes()
+
+
+def _probe_fat12_bytes(image_bytes: bytes) -> FAT12:
+    filesystem = FAT12()
+    if not filesystem.probe(RawSectorImage(image_bytes)):
+        raise ValueError("FAT12 mutation is currently supported only for FAT12 images")
+    return filesystem
+
+
+def _write_new_image_copy(output_path: Path, image_bytes: bytes) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix=f".{output_path.name}.", dir=output_path.parent, delete=False) as temp_file:
+        temp_name = Path(temp_file.name)
+        temp_file.write(image_bytes)
+    shutil.move(str(temp_name), str(output_path))
+
+
+def _import_directory_tree(image_bytes: bytes, directory: str, host_directory: Path) -> tuple[int, int, bytes]:
+    filesystem = _probe_fat12_bytes(image_bytes)
+    patched = filesystem.create_directory(image_bytes, directory, host_directory.name)
+    target_directory = _join_filesystem_path(directory, host_directory.name)
+    entries = 1
+    byte_count = 0
+    for child in sorted(host_directory.iterdir(), key=lambda item: item.name.upper()):
+        if child.name.startswith("."):
+            continue
+        if child.is_dir():
+            child_entries, child_bytes, patched = _import_directory_tree(patched, target_directory, child)
+            entries += child_entries
+            byte_count += child_bytes
+            continue
+        if child.is_file():
+            data = child.read_bytes()
+            filesystem = _probe_fat12_bytes(patched)
+            patched = filesystem.import_file(patched, target_directory, child.name, data)
+            entries += 1
+            byte_count += len(data)
+    return entries, byte_count, patched
 
 
 def _export_directory(filesystem, fs_path: str, destination_parent: Path) -> ExportResult:

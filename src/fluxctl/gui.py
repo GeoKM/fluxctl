@@ -24,6 +24,7 @@ try:  # pragma: no cover - exercised only when GUI dependencies are installed.
         QHeaderView,
         QLabel,
         QLineEdit,
+        QInputDialog,
         QMainWindow,
         QMessageBox,
         QPushButton,
@@ -482,6 +483,14 @@ class FluxctlStudio(QMainWindow):
         self.file_export_button.clicked.connect(self.export_selected_file_entry)
         self.file_replace_button = QPushButton("Replace With Copy...")
         self.file_replace_button.clicked.connect(self.replace_selected_file_with_copy)
+        self.file_delete_button = QPushButton("Delete From Copy...")
+        self.file_delete_button.clicked.connect(self.delete_selected_entry_with_copy)
+        self.file_import_button = QPushButton("Import File...")
+        self.file_import_button.clicked.connect(self.import_file_into_copy)
+        self.directory_import_button = QPushButton("Import Directory...")
+        self.directory_import_button.clicked.connect(self.import_directory_into_copy)
+        self.directory_create_button = QPushButton("New Directory...")
+        self.directory_create_button.clicked.connect(self.create_directory_in_copy)
         file_nav = QHBoxLayout()
         file_nav.addWidget(QLabel("Directory"))
         file_nav.addWidget(self.file_path_label, 1)
@@ -490,6 +499,10 @@ class FluxctlStudio(QMainWindow):
         file_nav.addWidget(self.file_hex_button)
         file_nav.addWidget(self.file_export_button)
         file_nav.addWidget(self.file_replace_button)
+        file_nav.addWidget(self.file_delete_button)
+        file_nav.addWidget(self.file_import_button)
+        file_nav.addWidget(self.directory_import_button)
+        file_nav.addWidget(self.directory_create_button)
         self.files_table = QTableWidget(0, 3)
         self.files_table.setMinimumHeight(260)
         self.files_table.setHorizontalHeaderLabels(["Name", "Kind", "Size"])
@@ -1001,6 +1014,177 @@ class FluxctlStudio(QMainWindow):
         )
         self._append_log(
             f"Replaced {result.file_path} with {result.bytes:,} bytes in new {result.filesystem} image copy: {result.path}"
+        )
+
+    def delete_selected_entry_with_copy(self) -> None:
+        if not self._require_image():
+            return
+        selected_entries = self._selected_file_entries()
+        if len(selected_entries) != 1:
+            self._warn("Select exactly one file or empty directory before deleting.")
+            return
+        entry_path, is_dir = selected_entries[0]
+        assert self.current_path is not None
+        output = self._choose_mutation_output("Save image copy after delete")
+        if output is None:
+            return
+        entry_kind = "empty directory" if is_dir else "file"
+        question = (
+            "Fluxctl will create a new image copy and delete the selected filesystem "
+            f"{entry_kind} in that copy only.\n\n"
+            f"Original image:\n{self.current_path}\n\n"
+            f"Filesystem entry to delete:\n{entry_path}\n\n"
+            f"New image copy:\n{output}\n\n"
+            "Directory delete currently requires an empty directory. The original image will not be modified. Continue?"
+        )
+        if not self._confirm_mutation("Delete entry in image copy", question):
+            return
+        layout = self._selected_layout() or None
+        encoding = self._selected_encoding()
+        self._run_job(
+            f"delete {entry_path} with copy",
+            lambda: services.delete_filesystem_entry_with_copy(
+                self.current_path,
+                layout,
+                encoding,
+                entry_path,
+                output,
+            ),
+            self._show_mutation_result,
+        )
+
+    def import_file_into_copy(self) -> None:
+        if not self._require_image():
+            return
+        assert self.current_path is not None
+        host_name, _ = QFileDialog.getOpenFileName(self, "Choose host file to import", "", "All files (*)")
+        if not host_name:
+            return
+        host_file = Path(host_name)
+        output = self._choose_mutation_output("Save image copy after file import")
+        if output is None:
+            return
+        question = (
+            "Fluxctl will create a new image copy and import the host file into the current filesystem directory.\n\n"
+            f"Original image:\n{self.current_path}\n\n"
+            f"Current filesystem directory:\n{self.file_browser_path}\n\n"
+            f"Host file to import:\n{host_file}\n\n"
+            f"New image copy:\n{output}\n\n"
+            "FAT12 import currently requires an 8.3-compatible file name and does not overwrite existing entries. "
+            "The original image will not be modified. Continue?"
+        )
+        if not self._confirm_mutation("Import file into image copy", question):
+            return
+        layout = self._selected_layout() or None
+        encoding = self._selected_encoding()
+        self._run_job(
+            f"import file {host_file.name} with copy",
+            lambda: services.import_file_with_copy(
+                self.current_path,
+                layout,
+                encoding,
+                self.file_browser_path,
+                host_file,
+                output,
+            ),
+            self._show_mutation_result,
+        )
+
+    def import_directory_into_copy(self) -> None:
+        if not self._require_image():
+            return
+        assert self.current_path is not None
+        host_name = QFileDialog.getExistingDirectory(self, "Choose host directory to import", "")
+        if not host_name:
+            return
+        host_directory = Path(host_name)
+        output = self._choose_mutation_output("Save image copy after directory import")
+        if output is None:
+            return
+        question = (
+            "Fluxctl will create a new image copy and recursively import the host directory into the current "
+            "filesystem directory.\n\n"
+            f"Original image:\n{self.current_path}\n\n"
+            f"Current filesystem directory:\n{self.file_browser_path}\n\n"
+            f"Host directory to import:\n{host_directory}\n\n"
+            f"New image copy:\n{output}\n\n"
+            "FAT12 import currently requires 8.3-compatible file and directory names and does not overwrite "
+            "existing entries. The original image will not be modified. Continue?"
+        )
+        if not self._confirm_mutation("Import directory into image copy", question):
+            return
+        layout = self._selected_layout() or None
+        encoding = self._selected_encoding()
+        self._run_job(
+            f"import directory {host_directory.name} with copy",
+            lambda: services.import_directory_with_copy(
+                self.current_path,
+                layout,
+                encoding,
+                self.file_browser_path,
+                host_directory,
+                output,
+            ),
+            self._show_mutation_result,
+        )
+
+    def create_directory_in_copy(self) -> None:
+        if not self._require_image():
+            return
+        assert self.current_path is not None
+        name, accepted = QInputDialog.getText(self, "Create directory", "Directory name")
+        if not accepted or not name:
+            return
+        output = self._choose_mutation_output("Save image copy after directory creation")
+        if output is None:
+            return
+        question = (
+            "Fluxctl will create a new image copy and create one empty directory in the current filesystem directory.\n\n"
+            f"Original image:\n{self.current_path}\n\n"
+            f"Current filesystem directory:\n{self.file_browser_path}\n\n"
+            f"New directory name:\n{name}\n\n"
+            f"New image copy:\n{output}\n\n"
+            "FAT12 directory creation currently requires an 8.3-compatible name and does not overwrite existing "
+            "entries. The original image will not be modified. Continue?"
+        )
+        if not self._confirm_mutation("Create directory in image copy", question):
+            return
+        layout = self._selected_layout() or None
+        encoding = self._selected_encoding()
+        self._run_job(
+            f"mkdir {name} with copy",
+            lambda: services.create_directory_with_copy(
+                self.current_path,
+                layout,
+                encoding,
+                self.file_browser_path,
+                name,
+                output,
+            ),
+            self._show_mutation_result,
+        )
+
+    def _choose_mutation_output(self, title: str) -> Optional[Path]:
+        assert self.current_path is not None
+        default_output = self._default_replacement_output_path(self.current_path)
+        output_name, _ = QFileDialog.getSaveFileName(
+            self,
+            title,
+            str(default_output),
+            "Disk images (*.img);;All files (*)",
+        )
+        return Path(output_name) if output_name else None
+
+    def _confirm_mutation(self, title: str, question: str) -> bool:
+        answer = QMessageBox.question(self, title, question, QMessageBox.Yes | QMessageBox.No)
+        return answer == QMessageBox.Yes
+
+    def _show_mutation_result(self, result: object) -> None:
+        self.activity_label.setText(
+            f"{result.operation} wrote {result.entries} entries, {result.bytes:,} bytes to new {result.filesystem} image copy: {result.path}."
+        )
+        self._append_log(
+            f"{result.operation} wrote {result.entries} entries, {result.bytes:,} bytes to new {result.filesystem} image copy: {result.path}"
         )
 
     def view_sector_hex(self) -> None:
