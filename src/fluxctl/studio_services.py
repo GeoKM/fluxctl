@@ -21,7 +21,8 @@ from .cli import (
 from .decoding import load_builtin_decoders
 from .detection import detect_encoding, detect_layout
 from .filesystem_detection import detect_filesystem
-from .filesystems import TrackSectorImage, load_builtin_filesystems
+from .filesystems import RawSectorImage, TrackSectorImage, load_builtin_filesystems
+from .filesystems.fat12 import FAT12
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from .plugins import registry
 from .reports.map import (
@@ -86,6 +87,16 @@ class ExportResult:
     path: str
     files: int
     bytes: int
+
+
+@dataclass(frozen=True)
+class ReplaceResult:
+    """Summary of a safe copy-on-write filesystem replacement operation."""
+
+    path: str
+    file_path: str
+    bytes: int
+    filesystem: str
 
 
 def run_fluxctl_command(args: list[str], cwd: Optional[Path] = None) -> CommandResult:
@@ -452,6 +463,50 @@ def export_filesystem_entries(
         for child in temp_path.iterdir():
             shutil.move(str(child), str(destination_parent / child.name))
     return ExportResult(path=str(destination_parent), files=files, bytes=byte_count)
+
+
+def replace_file_with_copy(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    fs_path: str,
+    replacement_path: Path,
+    output_path: Path,
+) -> ReplaceResult:
+    """Replace one file in a new image copy without modifying the original.
+
+    The first supported writer is intentionally narrow: FAT12 flat ``.img``
+    images with replacement data that is exactly the same size as the existing
+    file. That avoids changing allocation tables or directory metadata.
+    """
+
+    source = path.resolve()
+    output = output_path.resolve()
+    if source == output:
+        raise ValueError("Output image must be a new copy, not the original image")
+    if output_path.exists():
+        raise ValueError(f"Output image already exists: {output_path}")
+    if path.suffix.lower() != ".img":
+        raise ValueError("File replacement is currently supported only for flat FAT12 .img images")
+
+    replacement = replacement_path.read_bytes()
+    image_bytes = path.read_bytes()
+    filesystem = FAT12()
+    if not filesystem.probe(RawSectorImage(image_bytes)):
+        raise ValueError("File replacement is currently supported only for FAT12 images")
+
+    patched = filesystem.replace_file_same_size(image_bytes, fs_path, replacement)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix=f".{output_path.name}.", dir=output_path.parent, delete=False) as temp_file:
+        temp_name = Path(temp_file.name)
+        temp_file.write(patched)
+    shutil.move(str(temp_name), str(output_path))
+    return ReplaceResult(
+        path=str(output_path),
+        file_path=fs_path,
+        bytes=len(replacement),
+        filesystem="fat12",
+    )
 
 
 def _export_directory(filesystem, fs_path: str, destination_parent: Path) -> ExportResult:

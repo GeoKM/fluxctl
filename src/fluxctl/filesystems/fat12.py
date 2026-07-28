@@ -95,22 +95,44 @@ class FAT12(Filesystem):
         return [self._to_file_entry(e) for e in entries]
 
     def extract_file(self, path: str) -> bytes:
-        if self.image is None:
-            raise FilesystemError("Filesystem not initialised")
-
-        parts = [p for p in path.strip("/").split("/") if p]
-        if not parts:
-            raise FilesystemError("Path must reference a file")
-        filename = parts[-1]
-        directory_path = "/" + "/".join(parts[:-1]) if len(parts) > 1 else "/"
-        directory_entries = self._entries_for_path(directory_path)
-        entry = self._find_entry(directory_entries, filename)
-        if entry is None:
-            raise FilesystemError(f"File '{path}' not found")
-        if entry.is_dir:
-            raise FilesystemError("Cannot extract a directory entry")
+        entry = self._entry_for_file(path)
         data = self._read_cluster_chain(entry.start_cluster)
         return data[: entry.size]
+
+    def replace_file_same_size(self, image_bytes: bytes, path: str, replacement: bytes) -> bytes:
+        """Return a copy of ``image_bytes`` with one file's cluster data replaced.
+
+        This intentionally supports only same-size replacement. No FAT entries,
+        directory sizes, timestamps, or allocation structures are modified.
+        """
+
+        entry = self._entry_for_file(path)
+        if len(replacement) != entry.size:
+            raise FilesystemError(
+                f"Replacement must be exactly {entry.size:,} bytes for same-size FAT12 replacement"
+            )
+        if not replacement:
+            return bytes(image_bytes)
+
+        clusters = self._cluster_chain(entry.start_cluster)
+        capacity = len(clusters) * self.sectors_per_cluster * self.bytes_per_sector
+        if len(replacement) > capacity:
+            raise FilesystemError("FAT chain is too short for the file size")
+
+        patched = bytearray(image_bytes)
+        written = 0
+        cluster_size = self.sectors_per_cluster * self.bytes_per_sector
+        for cluster in clusters:
+            if written >= len(replacement):
+                break
+            offset = self._cluster_to_lba(cluster) * self.bytes_per_sector
+            chunk = replacement[written : written + cluster_size]
+            end = offset + len(chunk)
+            if end > len(patched):
+                raise FilesystemError("Cluster data exceeds image size")
+            patched[offset:end] = chunk
+            written += len(chunk)
+        return bytes(patched)
 
     def metadata(self) -> Dict[str, int]:
         return {
@@ -171,6 +193,10 @@ class FAT12(Filesystem):
         )
 
     def _read_cluster_chain(self, start_cluster: int) -> bytes:
+        data_segments = [self._read_cluster(cluster) for cluster in self._cluster_chain(start_cluster)]
+        return b"".join(data_segments)
+
+    def _cluster_chain(self, start_cluster: int) -> List[int]:
         clusters: List[int] = []
         current = start_cluster
         visited = set()
@@ -180,8 +206,24 @@ class FAT12(Filesystem):
             visited.add(current)
             clusters.append(current)
             current = self._fat_entry(current)
-        data_segments = [self._read_cluster(cluster) for cluster in clusters]
-        return b"".join(data_segments)
+        return clusters
+
+    def _entry_for_file(self, path: str) -> DirectoryEntry:
+        if self.image is None:
+            raise FilesystemError("Filesystem not initialised")
+
+        parts = [p for p in path.strip("/").split("/") if p]
+        if not parts:
+            raise FilesystemError("Path must reference a file")
+        filename = parts[-1]
+        directory_path = "/" + "/".join(parts[:-1]) if len(parts) > 1 else "/"
+        directory_entries = self._entries_for_path(directory_path)
+        entry = self._find_entry(directory_entries, filename)
+        if entry is None:
+            raise FilesystemError(f"File '{path}' not found")
+        if entry.is_dir:
+            raise FilesystemError("Cannot extract a directory entry")
+        return entry
 
     def _fat_entry(self, cluster: int) -> int:
         offset = cluster + cluster // 2

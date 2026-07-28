@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from fluxctl import studio_services as services
+from fluxctl.filesystems import RawSectorImage
+from fluxctl.filesystems.fat12 import FAT12
 
 
 FIXTURE_IMG = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.img")
@@ -272,6 +274,71 @@ def test_studio_exports_multiple_selected_files(tmp_path: Path) -> None:
     assert result.bytes > 39
     assert (tmp_path / "AUTOEXEC.BAT").read_bytes().startswith(b"@ECHO OFF")
     assert (tmp_path / "CONFIG.SYS").exists()
+
+
+def test_studio_replaces_fat12_file_in_new_copy(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    replacement = tmp_path / "AUTOEXEC.BAT"
+    replacement.write_bytes(b"@ECHO OFF\r\nCLS\r\nREM FLUXCTL COPY TEST\r\n")
+    output = tmp_path / "patched.img"
+    original = FIXTURE_IMG.read_bytes()
+
+    result = services.replace_file_with_copy(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/AUTOEXEC.BAT",
+        replacement,
+        output,
+    )
+
+    assert result.filesystem == "fat12"
+    assert result.path == str(output)
+    assert result.bytes == 39
+    assert FIXTURE_IMG.read_bytes() == original
+    filesystem = FAT12()
+    assert filesystem.probe(RawSectorImage(output.read_bytes()))
+    assert filesystem.extract_file("/AUTOEXEC.BAT") == replacement.read_bytes()
+
+
+def test_studio_rejects_fat12_replacement_size_change(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    replacement = tmp_path / "AUTOEXEC.BAT"
+    replacement.write_bytes(b"too short")
+
+    try:
+        services.replace_file_with_copy(
+            FIXTURE_IMG,
+            summary.layout_id,
+            summary.encoding,
+            "/AUTOEXEC.BAT",
+            replacement,
+            tmp_path / "patched.img",
+        )
+    except Exception as exc:
+        assert "exactly 39 bytes" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("size-changing replacement should fail")
+
+
+def test_studio_rejects_replacement_over_original(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    replacement = tmp_path / "AUTOEXEC.BAT"
+    replacement.write_bytes(b"@ECHO OFF\r\nCLS\r\nREM FLUXCTL COPY TEST\r\n")
+
+    try:
+        services.replace_file_with_copy(
+            FIXTURE_IMG,
+            summary.layout_id,
+            summary.encoding,
+            "/AUTOEXEC.BAT",
+            replacement,
+            FIXTURE_IMG,
+        )
+    except Exception as exc:
+        assert "new copy" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("replacement over original should fail")
 
 
 def test_studio_command_runner_uses_current_fluxctl() -> None:

@@ -480,6 +480,8 @@ class FluxctlStudio(QMainWindow):
         self.file_hex_button.clicked.connect(self.view_selected_file_hex)
         self.file_export_button = QPushButton("Export Selected...")
         self.file_export_button.clicked.connect(self.export_selected_file_entry)
+        self.file_replace_button = QPushButton("Replace With Copy...")
+        self.file_replace_button.clicked.connect(self.replace_selected_file_with_copy)
         file_nav = QHBoxLayout()
         file_nav.addWidget(QLabel("Directory"))
         file_nav.addWidget(self.file_path_label, 1)
@@ -487,6 +489,7 @@ class FluxctlStudio(QMainWindow):
         file_nav.addWidget(self.file_root_button)
         file_nav.addWidget(self.file_hex_button)
         file_nav.addWidget(self.file_export_button)
+        file_nav.addWidget(self.file_replace_button)
         self.files_table = QTableWidget(0, 3)
         self.files_table.setMinimumHeight(260)
         self.files_table.setHorizontalHeaderLabels(["Name", "Kind", "Size"])
@@ -926,6 +929,79 @@ class FluxctlStudio(QMainWindow):
     def _show_export_result(self, result: object) -> None:
         self.activity_label.setText(f"Exported {result.files} file(s), {result.bytes:,} bytes to {result.path}.")
         self._append_log(f"Exported {result.files} file(s), {result.bytes:,} bytes to {result.path}")
+
+    def replace_selected_file_with_copy(self) -> None:
+        if not self._require_image():
+            return
+        selected_entries = self._selected_file_entries()
+        if len(selected_entries) != 1:
+            self._warn("Select exactly one file entry before replacing.")
+            return
+        file_path, is_dir = selected_entries[0]
+        if is_dir:
+            self._warn("Select a file, not a directory, before replacing.")
+            return
+        assert self.current_path is not None
+        replacement_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose replacement file",
+            "",
+            "All files (*)",
+        )
+        if not replacement_name:
+            return
+        replacement = Path(replacement_name)
+        default_output = self._default_replacement_output_path(self.current_path)
+        output_name, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save modified image copy",
+            str(default_output),
+            "Disk images (*.img);;All files (*)",
+        )
+        if not output_name:
+            return
+        output = Path(output_name)
+        question = (
+            "Fluxctl will create a new image copy and replace one file in that copy only.\n\n"
+            f"Original image:\n{self.current_path}\n\n"
+            f"Filesystem file:\n{file_path}\n\n"
+            f"Replacement file:\n{replacement}\n\n"
+            f"New image copy:\n{output}\n\n"
+            "The original image will not be modified. Continue?"
+        )
+        answer = QMessageBox.question(self, "Replace file in image copy", question, QMessageBox.Yes | QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+        layout = self._selected_layout() or None
+        encoding = self._selected_encoding()
+        self._run_job(
+            f"replace {file_path} with copy",
+            lambda: services.replace_file_with_copy(
+                self.current_path,
+                layout,
+                encoding,
+                file_path,
+                replacement,
+                output,
+            ),
+            self._show_replace_result,
+        )
+
+    def _default_replacement_output_path(self, path: Path) -> Path:
+        candidate = path.with_name(f"{path.stem}-modified{path.suffix}")
+        counter = 2
+        while candidate.exists():
+            candidate = path.with_name(f"{path.stem}-modified-{counter}{path.suffix}")
+            counter += 1
+        return candidate
+
+    def _show_replace_result(self, result: object) -> None:
+        self.activity_label.setText(
+            f"Replaced {result.file_path} with {result.bytes:,} bytes in new {result.filesystem} image copy: {result.path}."
+        )
+        self._append_log(
+            f"Replaced {result.file_path} with {result.bytes:,} bytes in new {result.filesystem} image copy: {result.path}"
+        )
 
     def view_sector_hex(self) -> None:
         if not self._require_image():
