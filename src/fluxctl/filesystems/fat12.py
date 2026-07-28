@@ -125,6 +125,29 @@ class FAT12(Filesystem):
         entry = self._entry_for_file(path)
         return self._replace_file_with_existing_allocation(image_bytes, entry, replacement, update_size=True)
 
+    def replace_file_allocating_clusters(self, image_bytes: bytes, path: str, replacement: bytes) -> bytes:
+        """Return a copy with one file replaced, extending its FAT chain if needed."""
+
+        entry = self._entry_for_file(path)
+        existing_clusters = self._cluster_chain(entry.start_cluster)
+        cluster_size = self.sectors_per_cluster * self.bytes_per_sector
+        required_clusters = (len(replacement) + cluster_size - 1) // cluster_size if replacement else 0
+        if required_clusters <= len(existing_clusters):
+            return self._replace_file_with_existing_allocation(image_bytes, entry, replacement, update_size=True)
+        if not existing_clusters:
+            raise FilesystemError("Cannot grow a file without a starting cluster")
+
+        needed = required_clusters - len(existing_clusters)
+        free_clusters = self._find_free_clusters(needed)
+        clusters = existing_clusters + free_clusters
+        patched = bytearray(image_bytes)
+        self._write_file_size(patched, entry, len(replacement))
+        for current, next_cluster in zip(clusters, clusters[1:]):
+            self._set_fat_entry_in_all_copies(patched, current, next_cluster)
+        self._set_fat_entry_in_all_copies(patched, clusters[-1], END_OF_CLUSTER)
+        self._write_file_clusters(patched, clusters, replacement)
+        return bytes(patched)
+
     def _replace_file_with_existing_allocation(
         self,
         image_bytes: bytes,
@@ -142,25 +165,31 @@ class FAT12(Filesystem):
 
         patched = bytearray(image_bytes)
         if update_size:
-            size_offset = entry.image_offset + 28
-            if size_offset + 4 > len(patched):
-                raise FilesystemError("Directory entry size field exceeds image size")
-            patched[size_offset : size_offset + 4] = len(replacement).to_bytes(4, "little")
+            self._write_file_size(patched, entry, len(replacement))
         if not replacement:
             return bytes(patched)
+        self._write_file_clusters(patched, clusters, replacement)
+        return bytes(patched)
+
+    def _write_file_size(self, image_bytes: bytearray, entry: DirectoryEntry, size: int) -> None:
+        size_offset = entry.image_offset + 28
+        if size_offset + 4 > len(image_bytes):
+            raise FilesystemError("Directory entry size field exceeds image size")
+        image_bytes[size_offset : size_offset + 4] = size.to_bytes(4, "little")
+
+    def _write_file_clusters(self, image_bytes: bytearray, clusters: List[int], data: bytes) -> None:
         written = 0
         cluster_size = self.sectors_per_cluster * self.bytes_per_sector
         for cluster in clusters:
-            if written >= len(replacement):
+            if written >= len(data):
                 break
             offset = self._cluster_to_lba(cluster) * self.bytes_per_sector
-            chunk = replacement[written : written + cluster_size]
+            chunk = data[written : written + cluster_size]
             end = offset + len(chunk)
-            if end > len(patched):
+            if end > len(image_bytes):
                 raise FilesystemError("Cluster data exceeds image size")
-            patched[offset:end] = chunk
+            image_bytes[offset:end] = chunk
             written += len(chunk)
-        return bytes(patched)
 
     def metadata(self) -> Dict[str, int]:
         return {
@@ -264,6 +293,34 @@ class FAT12(Filesystem):
         else:
             value = ((first & 0xF0) >> 4) | (second << 4)
         return value & 0xFFF
+
+    def _find_free_clusters(self, count: int) -> List[int]:
+        clusters: List[int] = []
+        for cluster in range(2, self.total_clusters + 2):
+            if self._fat_entry(cluster) == 0:
+                clusters.append(cluster)
+                if len(clusters) == count:
+                    return clusters
+        raise FilesystemError(f"Need {count:,} free FAT12 cluster(s), found {len(clusters):,}")
+
+    def _set_fat_entry_in_all_copies(self, image_bytes: bytearray, cluster: int, value: int) -> None:
+        if not 0 <= value <= 0xFFF:
+            raise FilesystemError("FAT12 value out of range")
+        fat_byte_offset = cluster + cluster // 2
+        if fat_byte_offset + 2 > self.sectors_per_fat * self.bytes_per_sector:
+            raise FilesystemError("FAT entry out of range")
+        for fat_index in range(self.fat_count):
+            offset = (self.reserved_sectors + fat_index * self.sectors_per_fat) * self.bytes_per_sector + fat_byte_offset
+            if offset + 2 > len(image_bytes):
+                raise FilesystemError("FAT copy exceeds image size")
+            first = image_bytes[offset]
+            second = image_bytes[offset + 1]
+            if cluster % 2 == 0:
+                image_bytes[offset] = value & 0xFF
+                image_bytes[offset + 1] = (second & 0xF0) | ((value >> 8) & 0x0F)
+            else:
+                image_bytes[offset] = (first & 0x0F) | ((value << 4) & 0xF0)
+                image_bytes[offset + 1] = (value >> 4) & 0xFF
 
     def _cluster_to_lba(self, cluster: int) -> int:
         return self.data_region_start + (cluster - 2) * self.sectors_per_cluster

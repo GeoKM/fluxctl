@@ -962,12 +962,12 @@ class FluxctlStudio(QMainWindow):
             return
         output = Path(output_name)
         question = (
-            "Fluxctl will create a new image copy and replace one file in that copy only.\n\n"
+            "Fluxctl will create a new image copy and replace the selected file's contents in that copy only.\n\n"
             f"Original image:\n{self.current_path}\n\n"
-            f"Filesystem file:\n{file_path}\n\n"
-            f"Replacement file:\n{replacement}\n\n"
+            f"Filesystem file whose contents will be replaced:\n{file_path}\n\n"
+            f"Host file to read replacement contents from:\n{replacement}\n\n"
             f"New image copy:\n{output}\n\n"
-            "The original image will not be modified. Continue?"
+            "The filesystem file name and path will not be changed. The original image will not be modified. Continue?"
         )
         answer = QMessageBox.question(self, "Replace file in image copy", question, QMessageBox.Yes | QMessageBox.No)
         if answer != QMessageBox.Yes:

@@ -343,10 +343,31 @@ def test_studio_replaces_fat12_file_with_longer_existing_allocation_copy(tmp_pat
     assert filesystem.extract_file("/AUTOEXEC.BAT") == replacement.read_bytes()
 
 
-def test_studio_rejects_fat12_replacement_larger_than_existing_allocation(tmp_path: Path) -> None:
+def test_studio_replaces_fat12_file_by_allocating_more_clusters(tmp_path: Path) -> None:
     summary = services.summarize_image(FIXTURE_IMG)
     replacement = tmp_path / "AUTOEXEC.BAT"
-    replacement.write_bytes(b"x" * 1025)
+    replacement.write_bytes(b"REM GROWN FILE\r\n" * 100)
+    output = tmp_path / "patched.img"
+
+    result = services.replace_file_with_copy(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/AUTOEXEC.BAT",
+        replacement,
+        output,
+    )
+
+    filesystem = FAT12()
+    assert result.bytes == 1_600
+    assert filesystem.probe(RawSectorImage(output.read_bytes()))
+    assert filesystem.extract_file("/AUTOEXEC.BAT") == replacement.read_bytes()
+
+
+def test_studio_rejects_fat12_replacement_larger_than_free_space(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    replacement = tmp_path / "AUTOEXEC.BAT"
+    replacement.write_bytes(b"x" * 2_000_000)
 
     try:
         services.replace_file_with_copy(
@@ -358,9 +379,9 @@ def test_studio_rejects_fat12_replacement_larger_than_existing_allocation(tmp_pa
             tmp_path / "patched.img",
         )
     except Exception as exc:
-        assert "existing FAT chain holds only 1,024 bytes" in str(exc)
+        assert "free FAT12 cluster" in str(exc)
     else:  # pragma: no cover - assertion clarity
-        raise AssertionError("replacement beyond existing allocation should fail")
+        raise AssertionError("replacement beyond free space should fail")
 
 
 def test_studio_rejects_replacement_over_original(tmp_path: Path) -> None:
