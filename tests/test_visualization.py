@@ -1,7 +1,14 @@
 from pathlib import Path
 
 from fluxctl.decoding.mfm import mfm_decoder
-from fluxctl.reports.map import build_disk_map, build_disk_map_from_tracksectors, render_ascii, render_svg
+from fluxctl.reports.map import (
+    apply_c64_cpm_2_2_logical_overlay,
+    build_cbm_bam_block_map,
+    build_disk_map,
+    build_disk_map_from_tracksectors,
+    render_ascii,
+    render_svg,
+)
 from fluxctl.scp import parse_scp
 from fluxctl.sector.models import Sector, TrackSectors
 
@@ -61,3 +68,34 @@ def test_disk_map_preserves_zoned_sector_counts() -> None:
     assert [len(row) for row in disk_map.tracks] == [21, 19, 18, 17]
     assert disk_map.max_sectors_per_track == 21
     assert [len(row) for row in disk_map.sector_details] == [21, 19, 18, 17]
+
+
+def test_c64_cpm_overlay_marks_logically_unused_physical_sectors() -> None:
+    disk_map = build_disk_map_from_tracksectors(
+        [
+            TrackSectors(track=2, head=0, sectors=[_sector(idx) for idx in range(21)]),
+            TrackSectors(track=17, head=0, sectors=[_sector(idx) for idx in range(19)]),
+            TrackSectors(track=34, head=0, sectors=[_sector(idx) for idx in range(17)]),
+        ]
+    )
+
+    apply_c64_cpm_2_2_logical_overlay(disk_map, allocated_blocks={0, 8})
+
+    assert disk_map.tracks[0][:4] == ["good"] * 4
+    assert disk_map.tracks[0][4:] == ["unused"] * 17
+    assert disk_map.tracks[1] == ["unused"] * 19
+    assert disk_map.tracks[2] == ["unused"] * 17
+
+
+def test_cbm_bam_block_map_uses_grid_style() -> None:
+    disk_map = build_cbm_bam_block_map(
+        [
+            (1, 0, 0, "bam_file"),
+            (1, 0, 1, "bam_free"),
+            (36, 1, 0, "bam_system"),
+        ]
+    )
+
+    assert disk_map.render_style == "grid"
+    assert disk_map.tracks == [["bam_file", "bam_free"], ["bam_system"]]
+    assert disk_map.track_ids == [(0, 0), (0, 1)]

@@ -46,7 +46,7 @@ def test_simple_mode_buttons_update_visible_activity() -> None:
     window.file_label.setText(str(FIXTURE_IMG))
 
     window.run_probe()
-    _wait_until(app, lambda: "Rendered map" in window.activity_label.text())
+    _wait_until(app, lambda: "Rendered" in window.activity_label.text())
     assert window.current_summary is not None
 
     window.run_qc()
@@ -54,8 +54,11 @@ def test_simple_mode_buttons_update_visible_activity() -> None:
     assert window.summary_labels["status"].text() in {"good", "suspect"}
 
     window.run_map()
-    _wait_until(app, lambda: "Rendered map" in window.activity_label.text())
+    _wait_until(app, lambda: "Rendered" in window.activity_label.text())
     assert window.map_widget.disk_map is not None
+
+    window.map_view.setCurrentIndex(1)
+    _wait_until(app, lambda: "whole physical disk map" in window.activity_label.text().lower())
 
     window.run_list_files()
     _wait_until(app, lambda: window.files_table.rowCount() >= 1)
@@ -84,8 +87,26 @@ def test_disk_map_widget_groups_double_sided_media_by_head() -> None:
     assert [track_id for _row_index, track_id, _sectors in groups[1][1]] == [(0, 1), (1, 1)]
 
 
+def test_disk_map_widget_exposes_colour_legend_items() -> None:
+    widget = DiskMapWidget()
+    assert widget.legend_items() == [
+        ("good", "Good"),
+        ("weak", "Weak"),
+        ("bad", "Bad"),
+        ("unused", "Unused/free"),
+    ]
+    widget.set_disk_map(DiskMap([["bam_file"]], 1, 1, render_style="grid"))
+    assert widget.legend_items() == [
+        ("bam_file", "File"),
+        ("bam_system", "System"),
+        ("bam_used", "Allocated"),
+        ("bam_free", "Free"),
+    ]
+
+
 def test_opening_new_image_clears_file_panel() -> None:
     window = FluxctlStudio()
+    assert window.map_view.itemData(2) == "bam"
     window.files_table.setRowCount(1)
     window.summary_labels["filesystem"].setText("cbm_dos")
 

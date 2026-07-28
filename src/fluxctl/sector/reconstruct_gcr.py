@@ -309,14 +309,9 @@ def _fallback_parse_decoded_stream(
         if data_start + 260 > n:
             continue
         data_blk = decoded[data_start : data_start + 260]
-        data_checksum = 0
-        for b in data_blk[1:258]:
-            data_checksum ^= b
-        if data_checksum != data_blk[258]:
-            crc_ok = False
-        else:
-            crc_ok = True
         payload = bytes(data_blk[1:257])
+        checksum = data_blk[257]
+        crc_ok = _xor_checksum(payload) == checksum
         sector = Sector(
             cylinder=cylinder,
             head=head,
@@ -338,21 +333,17 @@ def _fallback_parse_decoded_stream(
     return TrackSectors(track=cylinder, head=head, sectors=list(sectors.values()))
 
 
-def reconstruct_gcr_track(
+def _track_quality_key(track: TrackSectors) -> tuple[int, int, int, float]:
+    good = sum(1 for sector in track.sectors if sector.data and sector.crc_ok)
+    populated = sum(1 for sector in track.sectors if sector.data)
+    weak = sum(1 for sector in track.sectors if sector.data and not sector.crc_ok) + track.missing
+    confidence = sum((sector.confidence or 0.0) for sector in track.sectors)
+    return (good, populated, -weak, confidence)
+
+
+def _reconstruct_gcr_decoded_track(
     bitstream: Bitstream, cylinder: int = 0, head: int = 0, expected_sectors: Optional[int] = None
 ) -> TrackSectors:
-    # Try Greaseweazle codec if available and intervals present.
-    if hasattr(bitstream, "intervals"):
-        gw = reconstruct_gcr_greaseweazle(
-            [bitstream],
-            cylinder,
-            head,
-            expected_sectors=expected_sectors,
-            timebase_ns=getattr(bitstream, "timebase_ns", 25.0),
-        )
-        if gw is not None:
-            return gw
-
     bits = bitstream.bits
     # If the bitstream has no bits but we have raw intervals, attempt PLL re-decode.
     if (not bits or len(bits) < 1000) and hasattr(bitstream, "intervals"):
@@ -412,8 +403,7 @@ def reconstruct_gcr_track(
                 continue
             data_bytes = data_block.bytes[1 : 1 + DATA_LENGTH]
             checksum = data_block.bytes[1 + DATA_LENGTH]
-            trailer_bytes = data_block.bytes[1 + DATA_LENGTH + 1 : 1 + DATA_LENGTH + 1 + TAIL_BYTES]
-            data_ok = _xor_checksum(data_bytes) == checksum and trailer_bytes == b"\x0f\x0f"
+            data_ok = _xor_checksum(data_bytes) == checksum
             score = (0 if data_ok else 1, data_block.errors)
             if best_data_score is None or score < best_data_score:
                 best_data_score = score
@@ -425,6 +415,8 @@ def reconstruct_gcr_track(
         _, data_bytes, data_ok = best_data
 
         crc_ok = data_ok and header_ok
+        if expected_sectors is not None and sector_id >= expected_sectors:
+            continue
         confidence = bitstream.metrics.confidence or 0.0
         sector = Sector(
             cylinder=cylinder,
@@ -464,6 +456,56 @@ def reconstruct_gcr_track(
         missing = max(expected_sectors - len(sectors), 0)
 
     return TrackSectors(track=cylinder, head=head, sectors=sector_list, weak=weak, missing=missing)
+
+
+def reconstruct_gcr_track(
+    bitstream: Bitstream, cylinder: int = 0, head: int = 0, expected_sectors: Optional[int] = None
+) -> TrackSectors:
+    # Try Greaseweazle codec if available and intervals present.
+    if hasattr(bitstream, "intervals"):
+        gw = reconstruct_gcr_greaseweazle(
+            [bitstream],
+            cylinder,
+            head,
+            expected_sectors=expected_sectors,
+            timebase_ns=getattr(bitstream, "timebase_ns", 25.0),
+        )
+        if gw is not None:
+            return gw
+
+    candidates = [_reconstruct_gcr_decoded_track(bitstream, cylinder, head, expected_sectors)]
+    intervals = getattr(bitstream, "intervals", None)
+    if intervals:
+        try:
+            from ..decoding.gcr import GCRDecoder, cell_ns_for_1541_track
+            from ..models import BitDecodeMetrics
+
+            cell_candidates = [
+                cell_ns_for_1541_track(cylinder + 1),
+                3250.0,
+                3500.0,
+                3750.0,
+                4000.0,
+            ]
+            seen: set[float] = set()
+            for cell_ns in cell_candidates:
+                if cell_ns in seen:
+                    continue
+                seen.add(cell_ns)
+                decoder = GCRDecoder(cell_ns)
+                bits = decoder._intervals_to_bits(intervals, cell_ns)  # noqa: SLF001 - adaptive GCR recovery path.
+                confidence = decoder._estimate_confidence(bits)  # noqa: SLF001 - adaptive GCR recovery path.
+                metrics = BitDecodeMetrics(
+                    pll_lock_score=confidence,
+                    rpm_estimate=None,
+                    confidence=confidence,
+                )
+                candidate = Bitstream(bits=bits, metrics=metrics, source_revs=bitstream.source_revs)
+                candidates.append(_reconstruct_gcr_decoded_track(candidate, cylinder, head, expected_sectors))
+        except Exception:
+            pass
+
+    return max(candidates, key=_track_quality_key)
 
 
 __all__ = ["extract_best_gcr_nibble_stream", "reconstruct_gcr_track", "score_gcr_alignment"]

@@ -21,8 +21,26 @@ from ..sector.reconstruct import build_track_sectors_from_revolutions
 # Slightly lower than QC to avoid over-reporting weak sectors in visuals.
 WEAK_CONFIDENCE_THRESHOLD = 0.7
 
-STATE_TO_GLYPH = {"good": "■", "weak": "□", "bad": "×"}
-STATE_TO_COLOR = {"good": "#2ecc71", "weak": "#f1c40f", "bad": "#e74c3c"}
+STATE_TO_GLYPH = {
+    "good": "■",
+    "weak": "□",
+    "bad": "×",
+    "unused": "·",
+    "bam_file": "F",
+    "bam_system": "S",
+    "bam_used": "U",
+    "bam_free": ".",
+}
+STATE_TO_COLOR = {
+    "good": "#2ecc71",
+    "weak": "#f1c40f",
+    "bad": "#e74c3c",
+    "unused": "#566173",
+    "bam_file": "#35d07f",
+    "bam_system": "#4aa3ff",
+    "bam_used": "#f2c94c",
+    "bam_free": "#4f5b6f",
+}
 
 
 @dataclass
@@ -64,6 +82,7 @@ class DiskMap:
     tracks: List[List[str]]
     total_tracks: int
     max_sectors_per_track: int
+    render_style: str = "radial"
     track_ids: List[Tuple[int, int]] = field(default_factory=list)
     track_confidence: List[float] = field(default_factory=list)
     sector_details: List[List[SectorMapEntry]] = field(default_factory=list)
@@ -287,10 +306,89 @@ def build_disk_map_from_tracksectors(tracks: list[TrackSectors]) -> DiskMap:
         tracks=track_states,
         total_tracks=len(track_states),
         max_sectors_per_track=max_sectors,
+        render_style="radial",
         track_ids=track_ids,
         track_confidence=track_confidence,
         sector_details=sector_details,
     )
+
+
+def build_cbm_bam_block_map(blocks: list[tuple[int, int, int, str]]) -> DiskMap:
+    """Build a square-per-block BAM display from ``(track, sector, state)`` rows."""
+
+    if not blocks:
+        return DiskMap([], 0, 0, render_style="grid")
+
+    by_track: dict[tuple[int, int], list[tuple[int, str]]] = {}
+    for track, head, sector, state in blocks:
+        by_track.setdefault((track, head), []).append((sector, state))
+
+    track_states: list[list[str]] = []
+    track_ids: list[tuple[int, int]] = []
+    sector_details: list[list[SectorMapEntry]] = []
+    for track, head in sorted(by_track, key=lambda item: (item[1], item[0])):
+        entries = sorted(by_track[(track, head)])
+        states = [state for _sector, state in entries]
+        details = [
+            SectorMapEntry(
+                sector_id=sector,
+                state=state,
+                size=256,
+                crc_ok=True,
+                confidence=1.0,
+                has_data=state != "bam_free",
+            )
+            for sector, state in entries
+        ]
+        track_states.append(states)
+        display_track = (track - 36) if head == 1 else (track - 1)
+        track_ids.append((display_track, head))
+        sector_details.append(details)
+
+    return DiskMap(
+        tracks=track_states,
+        total_tracks=len(track_states),
+        max_sectors_per_track=max(len(row) for row in track_states),
+        render_style="grid",
+        track_ids=track_ids,
+        track_confidence=[1.0] * len(track_states),
+        sector_details=sector_details,
+    )
+
+
+def _c64_cpm_logical_block(track: int, sector_id: int) -> int | None:
+    if track < 2 or track == 17 or track > 34 or sector_id >= 17:
+        return None
+    logical_track = track - 2 if track < 17 else 15 + (track - 18)
+    logical_sector = logical_track * 17 + sector_id
+    return logical_sector // 4
+
+
+def apply_c64_cpm_2_2_logical_overlay(
+    disk_map: DiskMap,
+    allocated_blocks: set[int] | None = None,
+) -> DiskMap:
+    """Mark sectors outside the C64 CP/M 2.2 logical disk as unused.
+
+    C64 CP/M 2.2 is stored on normal 1541 GCR media, but its CP/M DPB exposes
+    17 logical 256-byte sectors per track. Wider 1541 zone sectors are unused
+    by CP/M, and physical track 18 remains the CBM DOS reserve/directory track.
+    The overlay preserves the physical ring geometry while preventing these
+    intentionally unused areas from looking like filesystem damage.
+    """
+
+    for row_index, states in enumerate(disk_map.tracks):
+        track = disk_map.track_ids[row_index][0] if row_index < len(disk_map.track_ids) else row_index
+        details = disk_map.sector_details[row_index] if row_index < len(disk_map.sector_details) else []
+        for sector_index, state in enumerate(list(states)):
+            detail = details[sector_index] if sector_index < len(details) else None
+            sector_id = detail.sector_id if detail is not None else sector_index
+            logical_block = _c64_cpm_logical_block(track, sector_id)
+            if logical_block is None or (allocated_blocks is not None and logical_block not in allocated_blocks):
+                states[sector_index] = "unused"
+                if detail is not None:
+                    detail.state = "unused"
+    return disk_map
 
 
 def render_ascii(disk_map: DiskMap) -> str:
@@ -403,7 +501,9 @@ __all__ = [
     "DiskMap",
     "SectorMapEntry",
     "build_disk_map",
+    "build_cbm_bam_block_map",
     "build_disk_map_from_tracksectors",
+    "apply_c64_cpm_2_2_logical_overlay",
     "render_ascii",
     "render_svg",
 ]

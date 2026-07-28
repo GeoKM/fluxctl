@@ -1,7 +1,7 @@
 from fluxctl.encoding.gcr import GCR_ENCODE_4TO5
 from fluxctl.models import BitDecodeMetrics, Bitstream, RevolutionFlux
 from fluxctl.sector.reconstruct import build_track_sectors
-from fluxctl.sector.reconstruct_gcr import reconstruct_gcr_track
+from fluxctl.sector.reconstruct_gcr import _fallback_parse_decoded_stream, reconstruct_gcr_track
 
 
 TRACK = 1
@@ -59,7 +59,7 @@ def test_reconstruct_valid_sector():
 def test_reconstruct_bad_checksum_marks_crc_false():
     data = bytes(range(256))
     bits = _build_sector_bits(sector_id=1, data=data, corrupt_checksum=True)
-    track = reconstruct_gcr_track(_make_bitstream(bits), cylinder=TRACK, head=HEAD, expected_sectors=1)
+    track = reconstruct_gcr_track(_make_bitstream(bits), cylinder=TRACK, head=HEAD, expected_sectors=2)
     assert len(track.sectors) == 1
     assert track.sectors[0].crc_ok is False
 
@@ -69,7 +69,7 @@ def test_reconstruct_prefers_best_duplicate():
     bad_bits = _build_sector_bits(sector_id=2, data=data, corrupt_checksum=True)
     good_bits = _build_sector_bits(sector_id=2, data=data)
     combined = bad_bits + good_bits
-    track = reconstruct_gcr_track(_make_bitstream(combined), cylinder=TRACK, head=HEAD, expected_sectors=1)
+    track = reconstruct_gcr_track(_make_bitstream(combined), cylinder=TRACK, head=HEAD, expected_sectors=3)
     assert len(track.sectors) == 1
     assert track.sectors[0].crc_ok is True
 
@@ -86,6 +86,32 @@ def test_build_track_sectors_dispatches_to_gcr_path():
             return bitstream
 
     rev = RevolutionFlux(index=0, interval_ns=[])
-    track = build_track_sectors(rev, FakeDecoder(), cylinder=TRACK, head=HEAD, expected_sectors=1, encoding="gcr")
+    track = build_track_sectors(rev, FakeDecoder(), cylinder=TRACK, head=HEAD, expected_sectors=4, encoding="gcr")
     assert track.sectors and track.sectors[0].sector_id == 3
+    assert track.sectors[0].crc_ok is True
+
+
+def test_fallback_parser_checks_data_checksum_before_trailer():
+    data = bytes(range(256))
+    header_checksum = 4 ^ TRACK
+    bits = _encode_bytes_to_bits(
+        b"\xff\xff\xff" + bytes([0x08, header_checksum, 4, TRACK, 0, 0, 0x0F, 0x0F])
+    )
+    bits.extend(_encode_bytes_to_bits(b"\xff\xff\xff"))
+    checksum = 0
+    for value in data:
+        checksum ^= value
+    bits.extend(_encode_bytes_to_bits(bytes([0x07]) + data + bytes([checksum, 0x00, 0x00])))
+
+    track = _fallback_parse_decoded_stream(
+        _make_bitstream(bits),
+        cylinder=TRACK,
+        head=HEAD,
+        expected_sectors=5,
+        tracknr_expected=TRACK,
+    )
+
+    assert len(track.sectors) == 1
+    assert track.sectors[0].sector_id == 4
+    assert track.sectors[0].data == data
     assert track.sectors[0].crc_ok is True
