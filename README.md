@@ -107,11 +107,11 @@ workflows. Outputs such as converted images, QC reports, and provenance sidecars
 therefore follow the same behavior documented above.
 
 File replacement is intentionally conservative. Studio currently supports
-replacement for FAT12 files in flat `.img` images only when the new file fits
-inside the original file's existing FAT cluster chain, and always writes a new
-image copy instead of modifying the original image. Replacement that would
-require allocation changes or format-specific sector rewrites is rejected until
-dedicated writers exist for those filesystems.
+replacement for FAT12 files in flat `.img` images only, and always writes a new
+image copy instead of modifying the original image. FAT12 replacements may grow
+the selected file by allocating free clusters in the copied image. Replacement
+for other filesystems or image containers that would require format-specific
+sector rewrites is rejected until dedicated writers exist.
 
 ### Commodore exports
 
