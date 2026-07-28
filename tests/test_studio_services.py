@@ -128,6 +128,14 @@ def test_studio_lists_1581_cbm_dos_files() -> None:
     assert any(entry.name == "PIC.DIR" and entry.kind == "<DIR>" for entry in entries)
 
 
+def test_studio_lists_1581_cbm_dos_subdirectory() -> None:
+    summary = services.summarize_image(FIXTURE_1581_D81)
+    entries = services.list_files(FIXTURE_1581_D81, summary.layout_id, summary.encoding, "/PIC.DIR")
+
+    assert any(entry.name == "SUE.C" and entry.path == "/PIC.DIR/SUE.C" for entry in entries)
+    assert any(entry.name == "PAGODA.C" for entry in entries)
+
+
 def test_studio_lists_amiga_dos_root_entries() -> None:
     summary = services.summarize_image(FIXTURE_ADF)
     entries = services.list_files(FIXTURE_ADF, summary.layout_id, summary.encoding)
@@ -135,6 +143,41 @@ def test_studio_lists_amiga_dos_root_entries() -> None:
     assert summary.filesystem == "amiga_ffs"
     assert any(entry.name == "Devs" and entry.kind == "<DIR>" for entry in entries)
     assert any(entry.name == "Install" and entry.kind == "<DIR>" for entry in entries)
+
+
+def test_studio_lists_amiga_dos_subdirectory() -> None:
+    summary = services.summarize_image(FIXTURE_ADF)
+    entries = services.list_files(FIXTURE_ADF, summary.layout_id, summary.encoding, "/C")
+
+    assert any(entry.name == "Assign" and entry.path == "/C/Assign" for entry in entries)
+    assert any(entry.name == "Execute" for entry in entries)
+
+
+def test_studio_formats_hex_dump_with_ascii_column() -> None:
+    text = services.format_hex_dump(b"ABC\x00\xff", width=4)
+
+    assert text.splitlines() == [
+        "00000000  41 42 43 00  |ABC.|",
+        "00000004  FF           |.|",
+    ]
+
+
+def test_studio_builds_sector_hex_dump() -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    dump = services.sector_hex_dump(FIXTURE_IMG, summary.layout_id, summary.encoding, 0, 0, 1)
+
+    assert dump.title == "Sector T0 H0 S1"
+    assert dump.size == 512
+    assert "MSDOS4.0" in dump.text
+
+
+def test_studio_builds_file_hex_dump() -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    dump = services.file_hex_dump(FIXTURE_IMG, summary.layout_id, summary.encoding, "/AUTOEXEC.BAT")
+
+    assert dump.title == "File /AUTOEXEC.BAT"
+    assert dump.size == 39
+    assert "@ECHO OFF" in dump.text
 
 
 def test_studio_command_runner_uses_current_fluxctl() -> None:
