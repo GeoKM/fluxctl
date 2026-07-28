@@ -119,6 +119,52 @@ def test_opening_new_image_clears_file_panel() -> None:
     assert window.file_browser_path == "/"
     assert window.summary_labels["filesystem"].text() == "-"
     assert window.map_widget.disk_map is None
+    assert not window.file_import_button.isEnabled()
+    assert "Open and probe" in window.file_import_button.toolTip()
+    window.close()
+
+
+def test_fat12_write_actions_enable_only_for_supported_flat_img() -> None:
+    window = FluxctlStudio()
+
+    window.current_path = Path("/tmp/example.d64")
+    window.current_summary = services.ImageSummary(
+        path="/tmp/example.d64",
+        size=174848,
+        kind="d64",
+        layout_id="commodore_gcr_1541_170k",
+        encoding="gcr",
+        filesystem="cbm_dos",
+        confidence=1.0,
+        evidence=[],
+    )
+    window._update_filesystem_write_actions()
+
+    assert not window.file_replace_button.isEnabled()
+    assert "FAT12 flat .img" in window.file_replace_button.toolTip()
+
+    window.current_path = FIXTURE_IMG
+    window.current_summary = services.ImageSummary(
+        path=str(FIXTURE_IMG),
+        size=FIXTURE_IMG.stat().st_size,
+        kind="img",
+        layout_id="ibm_mfm_720k",
+        encoding="mfm",
+        filesystem="fat12",
+        confidence=1.0,
+        evidence=[],
+    )
+    window._update_filesystem_write_actions()
+
+    for button in [
+        window.file_replace_button,
+        window.file_delete_button,
+        window.file_import_button,
+        window.directory_import_button,
+        window.directory_create_button,
+    ]:
+        assert button.isEnabled()
+        assert "new image copy" in button.toolTip()
     window.close()
 
 
