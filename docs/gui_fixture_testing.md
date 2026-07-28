@@ -40,3 +40,13 @@ shape later implementation work.
 - Document any per-filesystem export limitations found during manual testing,
   especially when a filesystem can list entries but cannot yet extract file
   data.
+- Extend copy-only file and directory manipulation beyond the current FAT12
+  flat `.img` support. Add delete, replace, import file, import directory, and
+  create-directory writers for CBM DOS 1541/1571, CBM DOS 1581, Amiga OFS/FFS,
+  CP/M variants, and any other filesystem plugin once each format's allocation
+  structures can be updated correctly.
+- Extend copy-only manipulation beyond flat `.img` containers. Define safe
+  write-back/export paths for `.d64`, `.d71`, `.d81`, `.adf`, `.imd`, and
+  decoded `.scp` workflows, including clear GUI gating when a filesystem is
+  writable but the current image container cannot preserve or rewrite the
+  required sector format safely.
