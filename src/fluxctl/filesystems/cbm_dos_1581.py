@@ -158,8 +158,40 @@ class CBMDOS1581(Filesystem):
             records = self._parse_directory_from(match.start_track, match.start_sector)
         return records
 
+    def _record_for_file_path(self, path: str) -> DirectoryRecord1581:
+        parts = [part for part in path.strip("/").split("/") if part]
+        if not parts:
+            raise FilesystemError("Path must reference a file")
+        records = self._records_for_path("/" + "/".join(parts[:-1]) if len(parts) > 1 else "/")
+        target = parts[-1].lower()
+        for record in records:
+            if record.name.lower() == target:
+                if record.is_dir:
+                    raise FilesystemError("Cannot extract a directory entry")
+                return record
+        raise FilesystemError(f"File not found: {path}")
+
+    def _read_chain(self, start_track: int, start_sector: int) -> bytes:
+        chunks: List[bytes] = []
+        seen: set[tuple[int, int]] = set()
+        track, sector = start_track, start_sector
+        while track != 0 and (track, sector) not in seen:
+            seen.add((track, sector))
+            data = self._read_logical_sector(track, sector)
+            if len(data) < 2:
+                break
+            next_track, next_sector = data[0], data[1]
+            if next_track == 0:
+                used = min(next_sector, len(data) - 2)
+                chunks.append(data[2 : 2 + used])
+                break
+            chunks.append(data[2:])
+            track, sector = next_track, next_sector
+        return b"".join(chunks)
+
     def extract_file(self, path: str) -> bytes:
-        raise FilesystemError("1581 file extraction not implemented")
+        record = self._record_for_file_path(path)
+        return self._read_chain(record.start_track, record.start_sector)
 
     def metadata(self) -> Dict[str, str]:
         return {"filesystem": "cbm_dos_1581", "dos_type": self.dos_type}
