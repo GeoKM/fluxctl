@@ -23,6 +23,18 @@ def test_doctor_json_reports_core_capabilities() -> None:
     assert "native_candidates" in report
 
 
+def test_doctor_greaseweazle_hint_mentions_actual_package_install() -> None:
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    checks = {check["name"]: check for check in report["checks"]}
+    suggestion = checks["greaseweazle"]["suggestion"]
+    if checks["greaseweazle"]["status"] == "warn":
+        assert ".[greaseweazle]" in suggestion
+        assert "../greaseweazle" in suggestion
+
+
 def test_doctor_rejects_missing_hxcfe_path() -> None:
     result = runner.invoke(app, ["doctor", "--json", "--hxcfe", "/definitely/not/hxcfe"])
 

@@ -170,7 +170,7 @@ def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
                 "greaseweazle",
                 "warn",
                 "optional package not importable",
-                "Install with `.venv/bin/pip install -e .[greaseweazle]` for Amiga and IBM FM/MFM PLL fallback support.",
+                "Install support deps with `.venv/bin/pip install -e \".[greaseweazle]\"`, then install Greaseweazle itself with `.venv/bin/pip install -e ../greaseweazle`.",
             )
         )
     else:

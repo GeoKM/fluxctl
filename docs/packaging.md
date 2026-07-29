@@ -42,9 +42,18 @@ python3 scripts/install_fluxctl.py --no-gui --no-greaseweazle
 
 Greaseweazle support has two levels:
 
-- `fluxctl[greaseweazle]` installs Python support dependencies.
+- `fluxctl[greaseweazle]` installs Fluxctl's Python support dependencies only.
 - If a sibling `../greaseweazle` or `../Greaseweazle` checkout exists, the
-  installer can install it editable.
+  installer can install the actual Greaseweazle package editable.
+
+If `fluxctl doctor` still reports `greaseweazle: optional package not
+importable` after installing `.[greaseweazle]`, install Greaseweazle itself into
+the same venv:
+
+```bash
+git clone https://github.com/keirf/Greaseweazle.git ../greaseweazle
+.venv/bin/python -m pip install -e ../greaseweazle
+```
 
 HxCFE remains an external optional binary. The installer checks `--hxcfe`,
 `PATH`, and a sibling `../HxCFloppyEmulator` checkout for a built `hxcfe`.
