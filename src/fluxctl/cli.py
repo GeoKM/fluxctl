@@ -183,7 +183,7 @@ def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
                 "hxcfe",
                 "warn",
                 "optional binary not found on PATH",
-                "Clone/build with `git clone https://github.com/jfdelnero/HxCFloppyEmulator.git ../HxCFloppyEmulator` and `make -C ../HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build`, then pass --hxcfe or add hxcfe to PATH.",
+                "Clone/build with `git clone https://github.com/jfdelnero/HxCFloppyEmulator.git ../HxCFloppyEmulator` and `make -C ../HxCFloppyEmulator/build HxCFloppyEmulator_cmdline`, then pass --hxcfe or add hxcfe to PATH.",
             )
         )
     elif not hxcfe_path.exists():

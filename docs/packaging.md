@@ -63,13 +63,14 @@ HxCFE remains an external optional binary. The installer checks `--hxcfe`,
 `PATH`, and a sibling `../HxCFloppyEmulator` checkout for a built `hxcfe`.
 Use `--clone-hxcfe` to clone `https://github.com/jfdelnero/HxCFloppyEmulator.git`
 into `../HxCFloppyEmulator`, and `--build-hxcfe` to run `make` in the first
-known HxCFE build directory.
+known HxCFE build directory. The preferred build command uses the top-level
+Makefile target so HxCFE's supporting libraries are built first.
 
 Manual HxCFE setup:
 
 ```bash
 git clone https://github.com/jfdelnero/HxCFloppyEmulator.git ../HxCFloppyEmulator
-make -C ../HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build
+make -C ../HxCFloppyEmulator/build HxCFloppyEmulator_cmdline
 ```
 
 ## Python Package Artifacts

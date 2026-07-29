@@ -140,13 +140,13 @@ def test_greaseweazle_build_hint_mentions_python_headers(capsys, tmp_path):
 def test_build_hxcfe_failure_prints_build_tool_hint(monkeypatch, capsys, tmp_path):
     installer = _load_installer()
     checkout = tmp_path / "HxCFloppyEmulator"
-    build_dir = checkout / "HxCFloppyEmulator_cmdline" / "build"
+    build_dir = checkout / "build"
     build_dir.mkdir(parents=True)
     (build_dir / "Makefile").write_text("all:\n\tfalse\n", encoding="utf-8")
-    seen: list[Path] = []
+    seen: list[tuple[list[str], Path]] = []
 
     def fake_run_optional(args, *, cwd=installer.ROOT):
-        seen.append(cwd)
+        seen.append(([str(arg) for arg in args], cwd))
         return False
 
     monkeypatch.setattr(installer, "_run_optional", fake_run_optional)
@@ -154,6 +154,6 @@ def test_build_hxcfe_failure_prints_build_tool_hint(monkeypatch, capsys, tmp_pat
     installer._build_hxcfe_checkout(checkout)
 
     output = capsys.readouterr().out
-    assert seen == [build_dir]
+    assert seen == [(["make", "HxCFloppyEmulator_cmdline"], build_dir)]
     assert "build-essential" in output
-    assert f"make -C {build_dir}" in output
+    assert f"make -C {build_dir} HxCFloppyEmulator_cmdline" in output

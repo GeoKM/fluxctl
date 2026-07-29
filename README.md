@@ -170,7 +170,7 @@ Steps:
    Makefile build with `--build-hxcfe`; manually:
    ```
    git clone https://github.com/jfdelnero/HxCFloppyEmulator.git ../HxCFloppyEmulator
-   make -C ../HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build
+   make -C ../HxCFloppyEmulator/build HxCFloppyEmulator_cmdline
    ```
 2. Point fluxctl at the binary when running commands that accept `--hxcfe`, e.g.:
    ```
