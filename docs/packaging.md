@@ -24,6 +24,14 @@ The installer creates `.venv`, offers GUI dependencies, offers Greaseweazle
 support dependencies, checks for `hxcfe`, and prints the resulting command
 paths. It never modifies system Python.
 
+On Debian/Ubuntu minimal installs, Python venv support may be split into OS
+packages. If the installer reports that pip or ensurepip is unavailable, run:
+
+```bash
+sudo apt install python3-venv python3-pip
+python3 scripts/install_fluxctl.py --recreate-venv
+```
+
 Non-interactive examples:
 
 ```bash
