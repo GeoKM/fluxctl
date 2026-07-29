@@ -10,6 +10,13 @@ fluxctl is a modular toolkit for inspecting and converting floppy disk flux capt
   native acceleration, Greaseweazle support, and HxCFE discovery before working
   on real media.
 
+For an interactive source-checkout install that can also offer GUI and optional
+Greaseweazle/HxCFE setup checks, run:
+
+```bash
+python3 scripts/install_fluxctl.py
+```
+
 ## Supported operations
 - **info**: inspect SCP headers and inferred geometry.
 - **doctor**: check the local installation and optional helper integrations.
@@ -98,7 +105,7 @@ the CLI. It is designed around two workflows:
 
 Install the GUI dependency and launch it:
 ```bash
-.venv/bin/python -m pip install -e .[gui]
+.venv/bin/python -m pip install -e ".[gui]"
 .venv/bin/fluxctl-studio
 ```
 
@@ -142,7 +149,7 @@ Fluxctl can fall back to Greaseweazle’s Amiga and IBM FM/MFM codecs for higher
 Steps:
 1. Get dependencies:
    ```
-   .venv/bin/pip install -e .[greaseweazle]
+   .venv/bin/pip install -e ".[greaseweazle]"
    ```
 2. Clone Greaseweazle alongside fluxctl (sibling directory) and install it editable:
    ```
@@ -184,6 +191,8 @@ Python fallback.
 
 ## Contributor guide
 See [AGENTS.md](AGENTS.md) for coding standards, workflows, and review expectations.
+See [docs/packaging.md](docs/packaging.md) for wheel, source distribution, and
+standalone GUI/CLI packaging notes.
 
 ## Provenance
 Commands that create output files write provenance sidecars by default:
