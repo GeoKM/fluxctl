@@ -147,23 +147,23 @@ def _check_hxcfe(explicit_path: Path | None) -> str:
     return (
         "HxCFE not found. It is optional. Clone and build HxCFloppyEmulator with:\n"
         f"  git clone {HXCFE_REPO} ../HxCFloppyEmulator\n"
-        "  make -C ../HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build\n"
+        "  make -C ../HxCFloppyEmulator/build HxCFloppyEmulator_cmdline\n"
         "Then put hxcfe on PATH or pass --hxcfe /path/to/hxcfe to fluxctl commands."
     )
 
 
 def _build_hxcfe_checkout(checkout: Path) -> None:
-    build_dirs = [
-        checkout / "HxCFloppyEmulator_cmdline" / "build",
-        checkout / "build",
+    build_commands = [
+        (checkout / "build", ["make", "HxCFloppyEmulator_cmdline"]),
+        (checkout / "HxCFloppyEmulator_cmdline" / "build", ["make"]),
     ]
-    for build_dir in build_dirs:
+    for build_dir, command in build_commands:
         if (build_dir / "Makefile").exists():
-            if not _run_optional(["make"], cwd=build_dir):
+            if not _run_optional(command, cwd=build_dir):
                 print(
                     "HxCFE build failed. On Debian/Ubuntu, install build tools first:\n"
                     "  sudo apt install build-essential\n"
-                    f"Then rerun: make -C {build_dir}"
+                    f"Then rerun: make -C {checkout / 'build'} HxCFloppyEmulator_cmdline"
                 )
             return
     print(f"Could not find an HxCFE Makefile under {checkout}. Build it manually and pass --hxcfe.")

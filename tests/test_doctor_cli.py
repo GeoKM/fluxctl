@@ -56,6 +56,7 @@ def test_doctor_hxcfe_hint_mentions_clone_and_build_when_missing() -> None:
     if checks["hxcfe"]["status"] == "warn":
         assert "git clone" in suggestion
         assert "make -C" in suggestion
+        assert "HxCFloppyEmulator_cmdline" in suggestion
         assert "HxCFloppyEmulator" in suggestion
 
 
