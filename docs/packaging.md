@@ -54,9 +54,11 @@ need extra native build tools:
   `--hxcfe C:\path\to\hxcfe.exe`.
 - Rust native acceleration is optional but needs Rust plus the MSVC linker.
   Install Rust from `https://rustup.rs` and Microsoft C++ Build Tools 14.0 or
-  newer with the "Desktop development with C++" workload. Use the Native Tools
-  prompt matching your Rust target. On Windows ARM64, use "ARM64 Native Tools
-  Command Prompt for VS" or run
+  newer with the "Desktop development with C++" workload. The Rust DLL must
+  match the Python process architecture shown by
+  `python -c "import platform; print(platform.machine())"`. Use the Native
+  Tools prompt matching your Rust target. On Windows ARM64, use "ARM64 Native
+  Tools Command Prompt for VS" or run
   `"C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" arm64`,
   then run
   `cargo build --manifest-path native\fluxctl_native\Cargo.toml --release`.
@@ -205,6 +207,11 @@ Native Tools prompt, or run:
 ```cmd
 "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" arm64
 ```
+
+If a built library still shows as unavailable, run `fluxctl doctor` again. It
+reports the native load error for the candidate DLL, shared object, or dylib.
+On Windows, errors such as "not a valid Win32 application" usually mean Python
+and the Rust DLL were built for different architectures.
 
 ## Optional Integration Policy
 

@@ -28,6 +28,7 @@ class _NativeU32Buffer(ctypes.Structure):
 
 _LIB = None
 _LOAD_ATTEMPTED = False
+_LOAD_ERRORS: list[str] = []
 
 
 def _library_filename() -> str:
@@ -60,100 +61,120 @@ def native_candidate_paths() -> list[Path]:
 
 
 def _load_library():
-    global _LIB, _LOAD_ATTEMPTED
+    global _LIB, _LOAD_ATTEMPTED, _LOAD_ERRORS
     if os.environ.get("FLUXCTL_DISABLE_NATIVE") == "1":
+        _LOAD_ERRORS = ["disabled by FLUXCTL_DISABLE_NATIVE=1"]
         return None
     if _LOAD_ATTEMPTED:
         return _LIB
     _LOAD_ATTEMPTED = True
+    _LOAD_ERRORS = []
 
     for path in _candidate_paths():
         if not path.exists():
+            _LOAD_ERRORS.append(f"{path}: not found")
             continue
         try:
             lib = ctypes.CDLL(str(path))
-        except OSError:
+        except OSError as exc:
+            _LOAD_ERRORS.append(f"{path}: {exc}")
             continue
-        lib.fluxctl_free_buffer.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_size_t,
-            ctypes.c_size_t,
-        ]
-        lib.fluxctl_free_buffer.restype = None
-        lib.fluxctl_free_u32_buffer.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_size_t,
-            ctypes.c_size_t,
-        ]
-        lib.fluxctl_free_u32_buffer.restype = None
-        lib.fluxctl_parse_scp_flux_bytes.argtypes = [
-            ctypes.POINTER(ctypes.c_uint8),
-            ctypes.c_size_t,
-            ctypes.c_double,
-            ctypes.POINTER(_NativeU32Buffer),
-        ]
-        lib.fluxctl_parse_scp_flux_bytes.restype = ctypes.c_int
-        lib.fluxctl_mfm_intervals_to_bits.argtypes = [
-            ctypes.POINTER(ctypes.c_uint32),
-            ctypes.c_size_t,
-            ctypes.c_double,
-            ctypes.c_size_t,
-            ctypes.POINTER(_NativeBuffer),
-        ]
-        lib.fluxctl_mfm_intervals_to_bits.restype = ctypes.c_int
-        lib.fluxctl_mfm_decode_best.argtypes = [
-            ctypes.POINTER(ctypes.c_uint32),
-            ctypes.c_size_t,
-            ctypes.POINTER(ctypes.c_double),
-            ctypes.c_size_t,
-            ctypes.c_size_t,
-            ctypes.POINTER(_NativeBuffer),
-            ctypes.POINTER(ctypes.c_double),
-            ctypes.POINTER(ctypes.c_size_t),
-        ]
-        lib.fluxctl_mfm_decode_best.restype = ctypes.c_int
-        lib.fluxctl_mfm_decode_auto.argtypes = [
-            ctypes.POINTER(ctypes.c_uint32),
-            ctypes.c_size_t,
-            ctypes.c_double,
-            ctypes.c_bool,
-            ctypes.c_size_t,
-            ctypes.POINTER(_NativeBuffer),
-            ctypes.POINTER(ctypes.c_double),
-            ctypes.POINTER(ctypes.c_size_t),
-        ]
-        lib.fluxctl_mfm_decode_auto.restype = ctypes.c_int
-        lib.fluxctl_mfm_reconstruct_track.argtypes = [
-            ctypes.POINTER(ctypes.c_uint8),
-            ctypes.c_size_t,
-            ctypes.c_size_t,
-            ctypes.POINTER(_NativeBuffer),
-            ctypes.POINTER(ctypes.c_size_t),
-        ]
-        lib.fluxctl_mfm_reconstruct_track.restype = ctypes.c_int
-        lib.fluxctl_gcr_intervals_to_bits.argtypes = [
-            ctypes.POINTER(ctypes.c_uint32),
-            ctypes.c_size_t,
-            ctypes.c_double,
-            ctypes.c_double,
-            ctypes.POINTER(_NativeBuffer),
-        ]
-        lib.fluxctl_gcr_intervals_to_bits.restype = ctypes.c_int
-        lib.fluxctl_gcr_estimate_confidence.argtypes = [
-            ctypes.POINTER(ctypes.c_uint8),
-            ctypes.c_size_t,
-            ctypes.POINTER(ctypes.c_double),
-        ]
-        lib.fluxctl_gcr_estimate_confidence.restype = ctypes.c_int
+        try:
+            _configure_library(lib)
+        except AttributeError as exc:
+            _LOAD_ERRORS.append(f"{path}: missing native symbol {exc}")
+            continue
         _LIB = lib
+        _LOAD_ERRORS = []
         return _LIB
     return None
+
+
+def _configure_library(lib) -> None:
+    lib.fluxctl_free_buffer.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+    ]
+    lib.fluxctl_free_buffer.restype = None
+    lib.fluxctl_free_u32_buffer.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+    ]
+    lib.fluxctl_free_u32_buffer.restype = None
+    lib.fluxctl_parse_scp_flux_bytes.argtypes = [
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.POINTER(_NativeU32Buffer),
+    ]
+    lib.fluxctl_parse_scp_flux_bytes.restype = ctypes.c_int
+    lib.fluxctl_mfm_intervals_to_bits.argtypes = [
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_size_t,
+        ctypes.POINTER(_NativeBuffer),
+    ]
+    lib.fluxctl_mfm_intervals_to_bits.restype = ctypes.c_int
+    lib.fluxctl_mfm_decode_best.argtypes = [
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.POINTER(_NativeBuffer),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    lib.fluxctl_mfm_decode_best.restype = ctypes.c_int
+    lib.fluxctl_mfm_decode_auto.argtypes = [
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_bool,
+        ctypes.c_size_t,
+        ctypes.POINTER(_NativeBuffer),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    lib.fluxctl_mfm_decode_auto.restype = ctypes.c_int
+    lib.fluxctl_mfm_reconstruct_track.argtypes = [
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.POINTER(_NativeBuffer),
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    lib.fluxctl_mfm_reconstruct_track.restype = ctypes.c_int
+    lib.fluxctl_gcr_intervals_to_bits.argtypes = [
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.POINTER(_NativeBuffer),
+    ]
+    lib.fluxctl_gcr_intervals_to_bits.restype = ctypes.c_int
+    lib.fluxctl_gcr_estimate_confidence.argtypes = [
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_double),
+    ]
+    lib.fluxctl_gcr_estimate_confidence.restype = ctypes.c_int
 
 
 def is_native_available() -> bool:
     """Return whether the optional native library can be loaded."""
 
     return _load_library() is not None
+
+
+def native_load_errors() -> list[str]:
+    """Return diagnostics from the most recent native library load attempt."""
+
+    _load_library()
+    return list(_LOAD_ERRORS)
 
 
 def _interval_array(intervals_ns: Sequence[int]) -> array:
@@ -376,5 +397,6 @@ __all__ = [
     "mfm_decode_best",
     "mfm_intervals_to_bits",
     "mfm_reconstruct_track",
+    "native_load_errors",
     "parse_scp_flux_bytes",
 ]

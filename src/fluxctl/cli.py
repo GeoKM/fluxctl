@@ -39,7 +39,7 @@ from .sector.reconstruct_gcr import (
 )
 from .external.hxc import probe_hxcfe
 from .geohints import LayoutHint
-from .native import is_native_available, native_candidate_paths
+from .native import is_native_available, native_candidate_paths, native_load_errors
 
 APP_HELP = """Inspect, verify, recover, and convert floppy flux captures.
 
@@ -152,6 +152,8 @@ def _native_build_suggestion() -> str:
         return (
             "Install Rust from https://rustup.rs and Microsoft C++ Build Tools 14.0+ "
             "with the Desktop development with C++ workload so link.exe is available. "
+            "Build a DLL matching the Python process architecture shown by "
+            "`python -c \"import platform; print(platform.machine())\"`. "
             "Use the Native Tools prompt matching your Rust target, such as ARM64 Native Tools "
             "for aarch64-pc-windows-msvc, then run "
             f"`{build_command}`."
@@ -214,7 +216,10 @@ def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
         native_suggestion = ""
     else:
         native_status = "warn"
+        load_errors = native_load_errors()
         native_detail = "not built or not loadable"
+        if load_errors:
+            native_detail = f"{native_detail}: {load_errors[-1]}"
         native_suggestion = _native_build_suggestion()
     checks.append(
         _status_check(
