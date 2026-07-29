@@ -153,8 +153,8 @@ Steps:
    ```
 2. Install the actual Greaseweazle Python package into the same venv. The
    source-checkout installer can do this automatically if a sibling checkout
-   exists; otherwise clone Greaseweazle alongside fluxctl and install it
-   editable:
+   exists, or can clone it with `--clone-greaseweazle`; otherwise clone
+   Greaseweazle alongside fluxctl and install it editable:
    ```
    git clone https://github.com/keirf/Greaseweazle.git ../greaseweazle
    .venv/bin/pip install -e ../greaseweazle
@@ -165,11 +165,12 @@ No configuration is required; fluxctl will auto-detect the import at runtime whe
 HxCFE can provide layout hints and ADF conversions for Amiga and other formats.
 
 Steps:
-1. Clone and build `hxcfe` (the CLI from HxCFloppyEmulator). Example:
+1. Clone and build `hxcfe` (the CLI from HxCFloppyEmulator). The
+   source-checkout installer can clone it with `--clone-hxcfe` and attempt the
+   Makefile build with `--build-hxcfe`; manually:
    ```
    git clone https://github.com/jfdelnero/HxCFloppyEmulator.git ../HxCFloppyEmulator
-   cd ../HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build
-   make       # or use the provided build script for your platform
+   make -C ../HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build
    ```
 2. Point fluxctl at the binary when running commands that accept `--hxcfe`, e.g.:
    ```

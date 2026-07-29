@@ -78,6 +78,37 @@ def test_installable_python_project_accepts_setup_py_or_pyproject(tmp_path):
     assert not installer._is_installable_python_project(empty_project)
 
 
+def test_default_greaseweazle_checkout_is_sibling():
+    installer = _load_installer()
+
+    assert installer._default_greaseweazle_checkout() == installer.ROOT.parent / "greaseweazle"
+
+
+def test_default_hxcfe_checkout_is_sibling():
+    installer = _load_installer()
+
+    assert installer._default_hxcfe_checkout() == installer.ROOT.parent / "HxCFloppyEmulator"
+
+
+def test_hxcfe_candidate_paths_include_known_build_locations(monkeypatch, tmp_path):
+    installer = _load_installer()
+    checkout = tmp_path / "HxCFloppyEmulator"
+    explicit = tmp_path / "custom-hxcfe"
+
+    monkeypatch.setattr(installer, "_find_sibling", lambda name: checkout if name == "HxCFloppyEmulator" else None)
+    monkeypatch.setattr(installer.shutil, "which", lambda name: None)
+
+    candidates = installer._hxcfe_candidate_paths(explicit)
+
+    assert candidates == [
+        explicit,
+        checkout / "HxCFloppyEmulator_cmdline" / "build" / "hxcfe",
+        checkout / "HxCFloppyEmulator_cmdline" / "build" / "hxcfe.exe",
+        checkout / "build" / "hxcfe",
+        checkout / "build" / "hxcfe.exe",
+    ]
+
+
 def test_is_importable_uses_target_python(monkeypatch, tmp_path):
     installer = _load_installer()
     python = tmp_path / "venv" / "bin" / "python"

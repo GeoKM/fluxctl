@@ -31,6 +31,7 @@ def test_doctor_greaseweazle_hint_mentions_actual_package_install() -> None:
     checks = {check["name"]: check for check in report["checks"]}
     suggestion = checks["greaseweazle"]["suggestion"]
     if checks["greaseweazle"]["status"] == "warn":
+        assert "git clone" in suggestion
         assert ".[greaseweazle]" in suggestion
         assert "../greaseweazle" in suggestion
 
@@ -43,6 +44,19 @@ def test_doctor_rejects_missing_hxcfe_path() -> None:
     checks = {check["name"]: check for check in report["checks"]}
     assert checks["hxcfe"]["status"] == "fail"
     assert report["overall"] == "fail"
+
+
+def test_doctor_hxcfe_hint_mentions_clone_and_build_when_missing() -> None:
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    checks = {check["name"]: check for check in report["checks"]}
+    suggestion = checks["hxcfe"]["suggestion"]
+    if checks["hxcfe"]["status"] == "warn":
+        assert "git clone" in suggestion
+        assert "make -C" in suggestion
+        assert "HxCFloppyEmulator" in suggestion
 
 
 def test_top_level_help_guides_real_workflows() -> None:
