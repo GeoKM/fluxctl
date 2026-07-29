@@ -146,6 +146,19 @@ def _first_executable_hxcfe(explicit_path: Optional[Path] = None) -> Path | None
     return None
 
 
+def _native_build_suggestion() -> str:
+    build_command = "cargo build --manifest-path native/fluxctl_native/Cargo.toml --release"
+    if os.name == "nt":
+        return (
+            "Install Rust from https://rustup.rs, open a new PowerShell so cargo is on PATH, "
+            f"then run `{build_command}`."
+        )
+    return (
+        "Install Rust with `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` "
+        f"if cargo is missing, then run `{build_command}`."
+    )
+
+
 def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
     load_builtin_decoders()
     load_builtin_exporters()
@@ -199,7 +212,7 @@ def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
     else:
         native_status = "warn"
         native_detail = "not built or not loadable"
-        native_suggestion = "Install Rust with `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` if cargo is missing, then run `cargo build --manifest-path native/fluxctl_native/Cargo.toml --release`."
+        native_suggestion = _native_build_suggestion()
     checks.append(
         _status_check(
             "native acceleration",

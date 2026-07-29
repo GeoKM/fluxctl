@@ -124,17 +124,33 @@ def test_is_importable_uses_target_python(monkeypatch, tmp_path):
     assert seen == [[str(python), "-c", "import greaseweazle"]]
 
 
-def test_greaseweazle_build_hint_mentions_python_headers(capsys, tmp_path):
+def test_greaseweazle_build_hint_mentions_python_headers(monkeypatch, capsys, tmp_path):
     installer = _load_installer()
     checkout = tmp_path / "greaseweazle"
     python = tmp_path / "venv" / "bin" / "python"
 
+    monkeypatch.setattr(installer.os, "name", "posix")
+    monkeypatch.setattr(installer.sys, "platform", "linux")
     installer._print_greaseweazle_build_hint(checkout, python)
 
     output = capsys.readouterr().out
     assert "python3-dev" in output
     assert "build-essential" in output
     assert str(checkout) in output
+
+
+def test_greaseweazle_build_hint_mentions_windows_cpp_tools(monkeypatch, tmp_path):
+    installer = _load_installer()
+    checkout = tmp_path / "greaseweazle"
+    python = tmp_path / "venv" / "Scripts" / "python.exe"
+
+    monkeypatch.setattr(installer.os, "name", "nt")
+
+    hint = installer._greaseweazle_build_hint(checkout, python)
+
+    assert "Microsoft C++ Build Tools" in hint
+    assert "Desktop development with C++" in hint
+    assert str(checkout) in hint
 
 
 def test_build_hxcfe_failure_prints_build_tool_hint(monkeypatch, capsys, tmp_path):
@@ -149,6 +165,8 @@ def test_build_hxcfe_failure_prints_build_tool_hint(monkeypatch, capsys, tmp_pat
         seen.append(([str(arg) for arg in args], cwd))
         return False
 
+    monkeypatch.setattr(installer.os, "name", "posix")
+    monkeypatch.setattr(installer.sys, "platform", "linux")
     monkeypatch.setattr(installer, "_run_optional", fake_run_optional)
 
     installer._build_hxcfe_checkout(checkout)
@@ -157,3 +175,16 @@ def test_build_hxcfe_failure_prints_build_tool_hint(monkeypatch, capsys, tmp_pat
     assert seen == [(["make", "HxCFloppyEmulator_cmdline"], build_dir)]
     assert "build-essential" in output
     assert f"make -C {build_dir} HxCFloppyEmulator_cmdline" in output
+
+
+def test_hxcfe_build_hint_mentions_windows_msys2(monkeypatch, tmp_path):
+    installer = _load_installer()
+    checkout = tmp_path / "HxCFloppyEmulator"
+
+    monkeypatch.setattr(installer.os, "name", "nt")
+
+    hint = installer._hxcfe_build_hint(checkout)
+
+    assert "MSYS2" in hint
+    assert "mingw-w64-x86_64-toolchain" in hint
+    assert "hxcfe.exe" in hint

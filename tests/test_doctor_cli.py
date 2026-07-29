@@ -51,6 +51,16 @@ def test_doctor_native_hint_mentions_rust_install(monkeypatch) -> None:
     assert "cargo build" in suggestion
 
 
+def test_doctor_native_hint_is_windows_friendly(monkeypatch) -> None:
+    monkeypatch.setattr(cli.os, "name", "nt")
+
+    suggestion = cli._native_build_suggestion()
+
+    assert "PowerShell" in suggestion
+    assert "rustup.rs" in suggestion
+    assert "cargo build" in suggestion
+
+
 def test_doctor_rejects_missing_hxcfe_path() -> None:
     result = runner.invoke(app, ["doctor", "--json", "--hxcfe", "/definitely/not/hxcfe"])
 

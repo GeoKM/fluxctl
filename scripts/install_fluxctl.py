@@ -148,7 +148,31 @@ def _check_hxcfe(explicit_path: Path | None) -> str:
         "HxCFE not found. It is optional. Clone and build HxCFloppyEmulator with:\n"
         f"  git clone {HXCFE_REPO} ../HxCFloppyEmulator\n"
         "  make -C ../HxCFloppyEmulator/build HxCFloppyEmulator_cmdline\n"
+        "On Windows, build this from an MSYS2/MinGW64 shell or pass a prebuilt hxcfe.exe path.\n"
         "Then put hxcfe on PATH or pass --hxcfe /path/to/hxcfe to fluxctl commands."
+    )
+
+
+def _hxcfe_build_hint(checkout: Path) -> str:
+    command = f"make -C {checkout / 'build'} HxCFloppyEmulator_cmdline"
+    if os.name == "nt":
+        return (
+            "HxCFE build needs GNU Make and GCC. On Windows, use an MSYS2 "
+            "MinGW64 shell, install the build tools, then retry:\n"
+            "  pacman -S --needed base-devel mingw-w64-x86_64-toolchain git make\n"
+            f"  {command}\n"
+            "Alternatively, install a prebuilt hxcfe.exe and pass --hxcfe C:\\path\\to\\hxcfe.exe."
+        )
+    if sys.platform == "darwin":
+        return (
+            "HxCFE build failed. On macOS, install Apple's Command Line Tools first:\n"
+            "  xcode-select --install\n"
+            f"Then rerun: {command}"
+        )
+    return (
+        "HxCFE build failed. On Debian/Ubuntu, install build tools first:\n"
+        "  sudo apt install build-essential\n"
+        f"Then rerun: {command}"
     )
 
 
@@ -160,24 +184,39 @@ def _build_hxcfe_checkout(checkout: Path) -> None:
     for build_dir, command in build_commands:
         if (build_dir / "Makefile").exists():
             if not _run_optional(command, cwd=build_dir):
-                print(
-                    "HxCFE build failed. On Debian/Ubuntu, install build tools first:\n"
-                    "  sudo apt install build-essential\n"
-                    f"Then rerun: make -C {checkout / 'build'} HxCFloppyEmulator_cmdline"
-                )
+                print(_hxcfe_build_hint(checkout))
             return
     print(f"Could not find an HxCFE Makefile under {checkout}. Build it manually and pass --hxcfe.")
 
 
-def _print_greaseweazle_build_hint(checkout: Path, python: Path) -> None:
-    print(
+def _greaseweazle_build_hint(checkout: Path, python: Path) -> str:
+    retry = f"{python} -m pip install -e {checkout}"
+    if os.name == "nt":
+        return (
+            "Greaseweazle package install failed. It builds a small C extension.\n"
+            "On Windows, install Microsoft C++ Build Tools 14.0 or newer "
+            "with the Desktop development with C++ workload:\n"
+            "  https://visualstudio.microsoft.com/visual-cpp-build-tools/\n"
+            f"Then retry: {retry}"
+        )
+    if sys.platform == "darwin":
+        return (
+            "Greaseweazle package install failed. It builds a small C extension.\n"
+            "On macOS, install Apple's Command Line Tools first:\n"
+            "  xcode-select --install\n"
+            f"Then retry: {retry}"
+        )
+    return (
         "Greaseweazle package install failed. It builds a small C extension, "
-        "so Python development headers are required."
+        "so Python development headers are required.\n"
+        "On Debian/Ubuntu, install:\n"
+        "  sudo apt install build-essential python3-dev\n"
+        f"Then retry: {retry}"
     )
-    print("On Debian/Ubuntu, install:")
-    print("  sudo apt install build-essential python3-dev")
-    print("Then retry:")
-    print(f"  {python} -m pip install -e {checkout}")
+
+
+def _print_greaseweazle_build_hint(checkout: Path, python: Path) -> None:
+    print(_greaseweazle_build_hint(checkout, python))
 
 
 def main() -> int:
@@ -292,6 +331,8 @@ def main() -> int:
     if args.build_hxcfe:
         if shutil.which("make") is None:
             print("Cannot build HxCFE because make is not available on PATH.")
+            if hxcfe_checkout is not None:
+                print(_hxcfe_build_hint(hxcfe_checkout))
         elif hxcfe_checkout is None:
             print("Cannot build HxCFE because no HxCFloppyEmulator checkout was found.")
         else:
