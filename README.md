@@ -3,12 +3,28 @@
 fluxctl is a modular toolkit for inspecting and converting floppy disk flux captures. It supports decoding flux streams, reconstructing sectors, quality control, visualization, extraction, and exporting to standard image formats.
 
 ## Getting started
-- `python3 -m venv .venv` and `.venv/bin/python -m pip install --upgrade pip` to prepare a local environment.
-- Install the project and CLI helpers with `.venv/bin/python -m pip install -e .`.
-- Run `.venv/bin/fluxctl --help` to confirm the CLI loads and to explore available targets.
-- Run `.venv/bin/fluxctl doctor` to check built-in plugins, layouts, optional
-  native acceleration, Greaseweazle support, and HxCFE discovery before working
-  on real media.
+After the packaging branch is merged to `main`, the easiest source-checkout
+install is:
+
+```bash
+git clone https://github.com/GeoKM/fluxctl.git
+cd fluxctl
+python3 scripts/install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clone-hxcfe --build-hxcfe
+.venv/bin/fluxctl doctor
+```
+
+This creates `.venv`, installs `fluxctl` and Fluxctl Studio, offers optional
+Greaseweazle support, clones/builds optional HxCFE support, and prints the
+installed command paths. Run `.venv/bin/fluxctl --help` to explore available
+targets.
+
+For a minimal manual install instead:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -e .
+```
 
 For an interactive source-checkout install that can also offer GUI and optional
 Greaseweazle/HxCFE setup checks, run:
@@ -189,6 +205,14 @@ Build the native library from the repository root:
 ```
 cargo build --manifest-path native/fluxctl_native/Cargo.toml --release
 ```
+If `cargo` is missing, install Rust first. The standard cross-platform path is:
+```
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+Then open a new shell, or run `source "$HOME/.cargo/env"`, and retry the
+`cargo build` command. On Debian/Ubuntu packaged Rust can also be installed with
+`sudo apt install cargo rustc`, but `rustup` usually provides a newer toolchain.
+
 Fluxctl auto-detects the resulting library under `native/fluxctl_native/target`.
 Set `FLUXCTL_NATIVE_PATH=/path/to/libfluxctl_native.dylib` (or `.so`/`.dll`) to
 override the lookup path. Set `FLUXCTL_DISABLE_NATIVE=1` to force the pure

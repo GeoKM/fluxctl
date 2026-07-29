@@ -38,6 +38,19 @@ def test_doctor_greaseweazle_hint_mentions_actual_package_install() -> None:
         assert "../greaseweazle" in suggestion
 
 
+def test_doctor_native_hint_mentions_rust_install(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "is_native_available", lambda: False)
+    monkeypatch.delenv("FLUXCTL_DISABLE_NATIVE", raising=False)
+
+    report = cli._doctor_report()
+    checks = {check["name"]: check for check in report["checks"]}
+    suggestion = checks["native acceleration"]["suggestion"]
+
+    assert checks["native acceleration"]["status"] == "warn"
+    assert "rustup.rs" in suggestion
+    assert "cargo build" in suggestion
+
+
 def test_doctor_rejects_missing_hxcfe_path() -> None:
     result = runner.invoke(app, ["doctor", "--json", "--hxcfe", "/definitely/not/hxcfe"])
 
