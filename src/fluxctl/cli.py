@@ -170,7 +170,7 @@ def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
                 "greaseweazle",
                 "warn",
                 "optional package not importable",
-                "Install support deps with `.venv/bin/pip install -e \".[greaseweazle]\"`, then install Greaseweazle itself with `.venv/bin/pip install -e ../greaseweazle`.",
+                "Install support deps with `.venv/bin/pip install -e \".[greaseweazle]\"`, then run `git clone https://github.com/keirf/Greaseweazle.git ../greaseweazle` and `.venv/bin/pip install -e ../greaseweazle`.",
             )
         )
     else:
@@ -183,7 +183,7 @@ def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
                 "hxcfe",
                 "warn",
                 "optional binary not found on PATH",
-                "Pass --hxcfe /path/to/hxcfe when using HxC-assisted hints.",
+                "Clone/build with `git clone https://github.com/jfdelnero/HxCFloppyEmulator.git ../HxCFloppyEmulator` and `make -C ../HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build`, then pass --hxcfe or add hxcfe to PATH.",
             )
         )
     elif not hxcfe_path.exists():

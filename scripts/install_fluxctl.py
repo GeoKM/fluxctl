@@ -18,6 +18,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_VENV = ROOT / ".venv"
+GREASEWEAZLE_REPO = "https://github.com/keirf/Greaseweazle.git"
+HXCFE_REPO = "https://github.com/jfdelnero/HxCFloppyEmulator.git"
 
 
 def _python_in_venv(venv_path: Path) -> Path:
@@ -95,6 +97,14 @@ def _find_sibling(name: str) -> Path | None:
     return candidate if candidate.exists() else None
 
 
+def _default_greaseweazle_checkout() -> Path:
+    return ROOT.parent / "greaseweazle"
+
+
+def _default_hxcfe_checkout() -> Path:
+    return ROOT.parent / "HxCFloppyEmulator"
+
+
 def _is_installable_python_project(path: Path) -> bool:
     return (path / "pyproject.toml").exists() or (path / "setup.py").exists()
 
@@ -103,7 +113,7 @@ def _is_importable(python: Path, package: str) -> bool:
     return _run_probe([python, "-c", f"import {package}"]).returncode == 0
 
 
-def _check_hxcfe(explicit_path: Path | None) -> str:
+def _hxcfe_candidate_paths(explicit_path: Path | None = None) -> list[Path]:
     candidates: list[Path] = []
     if explicit_path is not None:
         candidates.append(explicit_path)
@@ -116,15 +126,36 @@ def _check_hxcfe(explicit_path: Path | None) -> str:
             [
                 sibling / "HxCFloppyEmulator_cmdline" / "build" / "hxcfe",
                 sibling / "HxCFloppyEmulator_cmdline" / "build" / "hxcfe.exe",
+                sibling / "build" / "hxcfe",
+                sibling / "build" / "hxcfe.exe",
             ]
         )
+    return candidates
+
+
+def _check_hxcfe(explicit_path: Path | None) -> str:
+    candidates = _hxcfe_candidate_paths(explicit_path)
     for candidate in candidates:
         if candidate.exists() and os.access(candidate, os.X_OK):
             return f"HxCFE found: {candidate}"
     return (
-        "HxCFE not found. It is optional. Install/build HxCFloppyEmulator, then "
-        "either put hxcfe on PATH or pass --hxcfe /path/to/hxcfe to fluxctl commands."
+        "HxCFE not found. It is optional. Clone and build HxCFloppyEmulator with:\n"
+        f"  git clone {HXCFE_REPO} ../HxCFloppyEmulator\n"
+        "  make -C ../HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build\n"
+        "Then put hxcfe on PATH or pass --hxcfe /path/to/hxcfe to fluxctl commands."
     )
+
+
+def _build_hxcfe_checkout(checkout: Path) -> None:
+    build_dirs = [
+        checkout / "HxCFloppyEmulator_cmdline" / "build",
+        checkout / "build",
+    ]
+    for build_dir in build_dirs:
+        if (build_dir / "Makefile").exists():
+            _run(["make"], cwd=build_dir)
+            return
+    print(f"Could not find an HxCFE Makefile under {checkout}. Build it manually and pass --hxcfe.")
 
 
 def main() -> int:
@@ -137,7 +168,10 @@ def main() -> int:
     parser.add_argument("--greaseweazle", action="store_true", help="Install Greaseweazle support dependencies.")
     parser.add_argument("--no-greaseweazle", action="store_true", help="Skip Greaseweazle support dependencies.")
     parser.add_argument("--editable-greaseweazle", type=Path, help="Install a local Greaseweazle checkout editable.")
+    parser.add_argument("--clone-greaseweazle", action="store_true", help="Clone Greaseweazle into ../greaseweazle if no local checkout exists.")
     parser.add_argument("--hxcfe", type=Path, help="Path to an existing hxcfe binary to check.")
+    parser.add_argument("--clone-hxcfe", action="store_true", help="Clone HxCFloppyEmulator into ../HxCFloppyEmulator if no local checkout exists.")
+    parser.add_argument("--build-hxcfe", action="store_true", help="Run make in a discovered HxCFE build directory.")
     args = parser.parse_args()
 
     gui_choice: bool | None = True if args.gui else False if args.no_gui else None
@@ -182,6 +216,21 @@ def main() -> int:
 
     if install_gw:
         gw_checkout = args.editable_greaseweazle or _find_sibling("greaseweazle") or _find_sibling("Greaseweazle")
+        if gw_checkout is None:
+            clone_target = _default_greaseweazle_checkout()
+            clone_requested = args.clone_greaseweazle or (
+                not args.yes
+                and shutil.which("git") is not None
+                and _ask(f"Clone Greaseweazle into {clone_target}?", False)
+            )
+            if clone_requested:
+                if shutil.which("git") is None:
+                    print("Cannot clone Greaseweazle because git is not available on PATH.")
+                elif clone_target.exists():
+                    print(f"Cannot clone Greaseweazle because {clone_target} already exists.")
+                else:
+                    _run(["git", "clone", GREASEWEAZLE_REPO, str(clone_target)])
+                    gw_checkout = clone_target
         if gw_checkout is not None and _is_installable_python_project(gw_checkout):
             if args.yes or _ask(f"Install local Greaseweazle checkout editable from {gw_checkout}?", True):
                 _run([python, "-m", "pip", "install", "-e", str(gw_checkout)])
@@ -198,8 +247,32 @@ def main() -> int:
                 "Greaseweazle checkout was found to install."
             )
             print("To enable the optional Greaseweazle fallback decoder:")
-            print("  git clone https://github.com/keirf/Greaseweazle.git ../greaseweazle")
+            print(f"  git clone {GREASEWEAZLE_REPO} ../greaseweazle")
             print(f"  {python} -m pip install -e ../greaseweazle")
+
+    hxcfe_checkout = _find_sibling("HxCFloppyEmulator")
+    if hxcfe_checkout is None:
+        hxc_clone_target = _default_hxcfe_checkout()
+        clone_hxcfe = args.clone_hxcfe or (
+            not args.yes
+            and shutil.which("git") is not None
+            and _ask(f"Clone HxCFloppyEmulator into {hxc_clone_target}?", False)
+        )
+        if clone_hxcfe:
+            if shutil.which("git") is None:
+                print("Cannot clone HxCFloppyEmulator because git is not available on PATH.")
+            elif hxc_clone_target.exists():
+                print(f"Cannot clone HxCFloppyEmulator because {hxc_clone_target} already exists.")
+            else:
+                _run(["git", "clone", HXCFE_REPO, str(hxc_clone_target)])
+                hxcfe_checkout = hxc_clone_target
+    if args.build_hxcfe:
+        if shutil.which("make") is None:
+            print("Cannot build HxCFE because make is not available on PATH.")
+        elif hxcfe_checkout is None:
+            print("Cannot build HxCFE because no HxCFloppyEmulator checkout was found.")
+        else:
+            _build_hxcfe_checkout(hxcfe_checkout)
 
     print(_check_hxcfe(args.hxcfe))
     print()

@@ -37,6 +37,8 @@ Non-interactive examples:
 ```bash
 python3 scripts/install_fluxctl.py --yes --gui
 python3 scripts/install_fluxctl.py --gui --greaseweazle --hxcfe /path/to/hxcfe
+python3 scripts/install_fluxctl.py --gui --greaseweazle --clone-greaseweazle
+python3 scripts/install_fluxctl.py --clone-hxcfe --build-hxcfe
 python3 scripts/install_fluxctl.py --no-gui --no-greaseweazle
 ```
 
@@ -45,6 +47,8 @@ Greaseweazle support has two levels:
 - `fluxctl[greaseweazle]` installs Fluxctl's Python support dependencies only.
 - If a sibling `../greaseweazle` or `../Greaseweazle` checkout exists, the
   installer can install the actual Greaseweazle package editable.
+- Use `--clone-greaseweazle` to let the installer clone
+  `https://github.com/keirf/Greaseweazle.git` into `../greaseweazle` first.
 
 If `fluxctl doctor` still reports `greaseweazle: optional package not
 importable` after installing `.[greaseweazle]`, install Greaseweazle itself into
@@ -57,6 +61,16 @@ git clone https://github.com/keirf/Greaseweazle.git ../greaseweazle
 
 HxCFE remains an external optional binary. The installer checks `--hxcfe`,
 `PATH`, and a sibling `../HxCFloppyEmulator` checkout for a built `hxcfe`.
+Use `--clone-hxcfe` to clone `https://github.com/jfdelnero/HxCFloppyEmulator.git`
+into `../HxCFloppyEmulator`, and `--build-hxcfe` to run `make` in the first
+known HxCFE build directory.
+
+Manual HxCFE setup:
+
+```bash
+git clone https://github.com/jfdelnero/HxCFloppyEmulator.git ../HxCFloppyEmulator
+make -C ../HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build
+```
 
 ## Python Package Artifacts
 
