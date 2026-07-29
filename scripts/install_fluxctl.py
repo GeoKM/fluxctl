@@ -95,6 +95,14 @@ def _find_sibling(name: str) -> Path | None:
     return candidate if candidate.exists() else None
 
 
+def _is_installable_python_project(path: Path) -> bool:
+    return (path / "pyproject.toml").exists() or (path / "setup.py").exists()
+
+
+def _is_importable(python: Path, package: str) -> bool:
+    return _run_probe([python, "-c", f"import {package}"]).returncode == 0
+
+
 def _check_hxcfe(explicit_path: Path | None) -> str:
     candidates: list[Path] = []
     if explicit_path is not None:
@@ -140,7 +148,11 @@ def main() -> int:
     install_gw = (
         False
         if args.yes and greaseweazle_choice is None
-        else _interactive_default(greaseweazle_choice, "Install optional Greaseweazle support dependencies?", False)
+        else _interactive_default(
+            greaseweazle_choice,
+            "Install optional Greaseweazle support dependencies and check for a local Greaseweazle checkout?",
+            False,
+        )
     )
 
     extras = []
@@ -170,11 +182,24 @@ def main() -> int:
 
     if install_gw:
         gw_checkout = args.editable_greaseweazle or _find_sibling("greaseweazle") or _find_sibling("Greaseweazle")
-        if gw_checkout is not None and (gw_checkout / "setup.py").exists():
+        if gw_checkout is not None and _is_installable_python_project(gw_checkout):
             if args.yes or _ask(f"Install local Greaseweazle checkout editable from {gw_checkout}?", True):
                 _run([python, "-m", "pip", "install", "-e", str(gw_checkout)])
+            if _is_importable(python, "greaseweazle"):
+                print("Greaseweazle Python package import check passed.")
+            else:
+                print(
+                    "Greaseweazle support dependencies are installed, but the "
+                    "Greaseweazle Python package is still not importable."
+                )
         else:
-            print("No sibling Greaseweazle checkout found. Fluxctl will still run without it.")
+            print(
+                "Greaseweazle support dependencies are installed, but no local "
+                "Greaseweazle checkout was found to install."
+            )
+            print("To enable the optional Greaseweazle fallback decoder:")
+            print("  git clone https://github.com/keirf/Greaseweazle.git ../greaseweazle")
+            print(f"  {python} -m pip install -e ../greaseweazle")
 
     print(_check_hxcfe(args.hxcfe))
     print()

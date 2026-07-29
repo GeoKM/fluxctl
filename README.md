@@ -147,11 +147,14 @@ entries.
 Fluxctl can fall back to Greaseweazle’s Amiga and IBM FM/MFM codecs for higher-fidelity PLL decoding. This is **optional**; when missing, fluxctl uses its own PLL/parser.
 
 Steps:
-1. Get dependencies:
+1. Get Fluxctl's Greaseweazle support dependencies:
    ```
    .venv/bin/pip install -e ".[greaseweazle]"
    ```
-2. Clone Greaseweazle alongside fluxctl (sibling directory) and install it editable:
+2. Install the actual Greaseweazle Python package into the same venv. The
+   source-checkout installer can do this automatically if a sibling checkout
+   exists; otherwise clone Greaseweazle alongside fluxctl and install it
+   editable:
    ```
    git clone https://github.com/keirf/Greaseweazle.git ../greaseweazle
    .venv/bin/pip install -e ../greaseweazle
