@@ -387,10 +387,13 @@ class FluxctlStudio(QMainWindow):
         self.current_path: Optional[Path] = None
         self.current_summary = None
         self.file_browser_path = "/"
+        self.advanced_file_browser_path = "/"
+        self._loading_advanced_file_paths = False
         self.layout_options = services.load_layout_options()
         self._build_ui()
         self._apply_style()
         self._update_filesystem_write_actions()
+        self._update_advanced_context()
         self.run_doctor()
 
     def _build_ui(self) -> None:
@@ -581,10 +584,15 @@ class FluxctlStudio(QMainWindow):
         self.encoding_combo.addItems(["mfm", "fm", "gcr", "auto"])
         self.export_combo = QComboBox()
         self.export_combo.addItems(["raw", "imd", "adf", "d64", "g64"])
+        self.dump_mode_combo = QComboBox()
+        self.dump_mode_combo.addItem("Sector", "sector")
+        self.dump_mode_combo.addItem("File", "file")
         self.track_input = QLineEdit("0")
         self.head_input = QLineEdit("0")
         self.sector_input = QLineEdit("1")
-        self.file_path_input = QLineEdit("/")
+        self.file_path_input = QComboBox()
+        self.file_path_input.setEditable(True)
+        self.file_path_input.activated.connect(self._advanced_file_path_activated)
         self.patch_payload_input = QLineEdit("")
         controls.addWidget(QLabel("Layout"), 0, 0)
         controls.addWidget(self.layout_combo, 0, 1, 1, 3)
@@ -592,16 +600,19 @@ class FluxctlStudio(QMainWindow):
         controls.addWidget(self.encoding_combo, 1, 1)
         controls.addWidget(QLabel("Exporter"), 1, 2)
         controls.addWidget(self.export_combo, 1, 3)
-        controls.addWidget(QLabel("Track / Head / Sector"), 2, 0)
-        controls.addWidget(self.track_input, 2, 1)
-        controls.addWidget(self.head_input, 2, 2)
-        controls.addWidget(self.sector_input, 2, 3)
-        controls.addWidget(QLabel("File Path"), 3, 0)
-        controls.addWidget(self.file_path_input, 3, 1, 1, 3)
-        controls.addWidget(QLabel("Patch Hex"), 4, 0)
-        controls.addWidget(self.patch_payload_input, 4, 1, 1, 3)
+        controls.addWidget(QLabel("Dump Mode"), 2, 0)
+        controls.addWidget(self.dump_mode_combo, 2, 1, 1, 3)
+        controls.addWidget(QLabel("Track / Head / Sector"), 3, 0)
+        controls.addWidget(self.track_input, 3, 1)
+        controls.addWidget(self.head_input, 3, 2)
+        controls.addWidget(self.sector_input, 3, 3)
+        controls.addWidget(QLabel("File Path"), 4, 0)
+        controls.addWidget(self.file_path_input, 4, 1, 1, 3)
+        controls.addWidget(QLabel("Patch Hex"), 5, 0)
+        controls.addWidget(self.patch_payload_input, 5, 1, 1, 3)
 
         buttons = QHBoxLayout()
+        self.advanced_image_buttons: list[QPushButton] = []
         for text, handler in [
             ("Info", self.run_info),
             ("Sectors", self.run_sectors),
@@ -617,12 +628,27 @@ class FluxctlStudio(QMainWindow):
             button = QPushButton(text)
             button.clicked.connect(handler)
             buttons.addWidget(button)
+            if text != "Open Provenance...":
+                self.advanced_image_buttons.append(button)
 
         self.advanced_output = QTextEdit()
         self.advanced_output.setReadOnly(True)
+        self.advanced_hex_title_label = QLabel("No hex data loaded")
+        self.advanced_hex_title_label.setObjectName("filePath")
+        self.advanced_hex_text = QTextEdit()
+        self.advanced_hex_text.setReadOnly(True)
+        self.advanced_hex_text.setFont(QFont("Menlo"))
+        advanced_hex_panel = QWidget()
+        advanced_hex_layout = QVBoxLayout(advanced_hex_panel)
+        advanced_hex_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_hex_layout.addWidget(self.advanced_hex_title_label)
+        advanced_hex_layout.addWidget(self.advanced_hex_text)
+        self.advanced_detail_stack = QStackedWidget()
+        self.advanced_detail_stack.addWidget(self.advanced_output)
+        self.advanced_detail_stack.addWidget(advanced_hex_panel)
         layout.addLayout(controls)
         layout.addLayout(buttons)
-        layout.addWidget(self.advanced_output, 1)
+        layout.addWidget(self.advanced_detail_stack, 1)
         return page
 
     def _apply_style(self) -> None:
@@ -722,13 +748,18 @@ class FluxctlStudio(QMainWindow):
         self.summary_labels["size"].setText("-")
         self.activity_label.setText("Ready")
         self._update_filesystem_write_actions()
+        self._update_advanced_context()
 
     def run_doctor(self) -> None:
         self._run_job("doctor", services.doctor_report, self._show_doctor)
 
     def _show_doctor(self, report: object) -> None:
         self.summary_labels["status"].setText(str(report.get("overall", "unknown")) if isinstance(report, dict) else "unknown")
-        self._append_log(json.dumps(report, indent=2))
+        summary = self._doctor_summary_text(report) if isinstance(report, dict) else str(report)
+        self.log.append(json.dumps(report, indent=2))
+        if self.current_path is None:
+            self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
+            self.advanced_output.setPlainText(summary)
 
     def run_probe(self) -> None:
         if not self._require_image():
@@ -749,7 +780,172 @@ class FluxctlStudio(QMainWindow):
         )
         self._append_log(json.dumps(summary.__dict__, indent=2))
         self._update_filesystem_write_actions()
+        self._update_advanced_context()
         self.run_map()
+
+    def _doctor_summary_text(self, report: dict) -> str:
+        lines = [
+            f"Fluxctl Doctor: {report.get('overall', 'unknown')}",
+            f"Version: {report.get('version', 'unknown')}",
+            "",
+            "Checks:",
+        ]
+        for check in report.get("checks", []):
+            status = str(check.get("status", "unknown")).upper()
+            name = check.get("name", "check")
+            detail = check.get("detail", "")
+            lines.append(f"- {status}: {name} - {detail}")
+            suggestion = check.get("suggestion")
+            if suggestion:
+                lines.append(f"  Suggestion: {suggestion}")
+        return "\n".join(lines)
+
+    def _advanced_fields(self) -> list[QWidget]:
+        return [
+            self.layout_combo,
+            self.encoding_combo,
+            self.export_combo,
+            self.dump_mode_combo,
+            self.track_input,
+            self.head_input,
+            self.sector_input,
+            self.file_path_input,
+            self.patch_payload_input,
+        ]
+
+    def _update_advanced_context(self) -> None:
+        has_image = self.current_path is not None and self.current_summary is not None
+        for field in self._advanced_fields():
+            field.setEnabled(has_image)
+        for button in self.advanced_image_buttons:
+            button.setEnabled(has_image)
+            button.setToolTip("" if has_image else "Open and probe a disk image before using this action.")
+
+        if not has_image:
+            self.layout_combo.setCurrentIndex(-1)
+            self.encoding_combo.setCurrentIndex(-1)
+            self.export_combo.setCurrentIndex(-1)
+            self.dump_mode_combo.setCurrentIndex(-1)
+            self.track_input.clear()
+            self.head_input.clear()
+            self.sector_input.clear()
+            self.advanced_file_browser_path = "/"
+            self.file_path_input.clear()
+            self.patch_payload_input.clear()
+            return
+
+        assert self.current_summary is not None
+        self._select_combo_data(self.layout_combo, self.current_summary.layout_id)
+        self._select_combo_text(self.encoding_combo, self.current_summary.encoding)
+        self._select_combo_text(self.export_combo, self._default_exporter_for_image(self.current_summary.kind))
+        self._select_combo_data(self.dump_mode_combo, "sector")
+        self.track_input.setText("0")
+        self.head_input.setText("0")
+        self.sector_input.setText("1")
+        self._load_advanced_file_path_options("/")
+        self.patch_payload_input.clear()
+        self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
+        self.advanced_output.setPlainText(self._image_summary_text(self.current_summary))
+
+    def _advanced_file_path_text(self) -> str:
+        return self.file_path_input.currentText().strip()
+
+    def _advanced_file_path_is_selected_directory(self) -> bool:
+        current_text = self._advanced_file_path_text()
+        for index in range(self.file_path_input.count()):
+            data = self.file_path_input.itemData(index)
+            if not isinstance(data, dict):
+                continue
+            path = str(data.get("path") or "")
+            if path == current_text:
+                return bool(data.get("is_dir"))
+        return False
+
+    def _load_advanced_file_path_options(self, directory: str, selected_path: str = "") -> None:
+        self._loading_advanced_file_paths = True
+        try:
+            self.advanced_file_browser_path = self._normalise_filesystem_path(directory)
+            self.file_path_input.clear()
+            self.file_path_input.addItem(f"Current directory: {self.advanced_file_browser_path}", {"path": self.advanced_file_browser_path, "is_dir": True})
+            self.file_path_input.addItem("Root /", {"path": "/", "is_dir": True})
+            if self.advanced_file_browser_path != "/":
+                self.file_path_input.addItem("Up ..", {"path": self._filesystem_parent_path(self.advanced_file_browser_path), "is_dir": True})
+            if self.current_path is not None:
+                layout = self._selected_layout() or None
+                encoding = self._selected_encoding()
+                entries = services.list_files(self.current_path, layout, encoding, self.advanced_file_browser_path)
+                for entry in sorted(entries, key=lambda item: (not item.is_dir, item.name.upper())):
+                    label = f"{entry.name}/" if entry.is_dir else entry.name
+                    self.file_path_input.addItem(label, {"path": entry.path, "is_dir": entry.is_dir})
+            self.file_path_input.setEditText(selected_path or self.advanced_file_browser_path)
+            self.file_path_input.setToolTip(
+                "Type an image filesystem path, choose a file, or choose a directory to browse into it."
+            )
+        finally:
+            self._loading_advanced_file_paths = False
+
+    def _advanced_file_path_activated(self, index: int) -> None:
+        if self._loading_advanced_file_paths:
+            return
+        data = self.file_path_input.itemData(index)
+        if not isinstance(data, dict):
+            return
+        path = str(data.get("path") or "")
+        if not path:
+            return
+        if bool(data.get("is_dir")):
+            self._load_advanced_file_path_options(path, path)
+            return
+        self.file_path_input.setEditText(path)
+
+    def _normalise_filesystem_path(self, path: str) -> str:
+        parts = [part for part in path.strip().strip("/").split("/") if part]
+        return "/" + "/".join(parts) if parts else "/"
+
+    def _filesystem_parent_path(self, path: str) -> str:
+        parts = [part for part in path.strip("/").split("/") if part]
+        if len(parts) <= 1:
+            return "/"
+        return "/" + "/".join(parts[:-1])
+
+    def _select_combo_data(self, combo: QComboBox, value: str) -> None:
+        index = combo.findData(value)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+
+    def _select_combo_text(self, combo: QComboBox, value: str) -> None:
+        index = combo.findText(value)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+
+    def _default_exporter_for_image(self, kind: str) -> str:
+        if kind in {"img", "raw"}:
+            return "raw"
+        if kind in {"imd", "adf", "d64", "g64"}:
+            return kind
+        if kind == "d71":
+            return "d64"
+        if kind == "d81":
+            return "raw"
+        return "raw"
+
+    def _image_summary_text(self, summary: object) -> str:
+        evidence = "\n".join(f"- {item}" for item in summary.evidence[:12])
+        if len(summary.evidence) > 12:
+            evidence += f"\n- ... {len(summary.evidence) - 12} more evidence item(s)"
+        return "\n".join(
+            [
+                "Loaded Image",
+                f"Path: {summary.path}",
+                f"Size: {summary.size:,} bytes",
+                f"Kind: {summary.kind or 'image'}",
+                f"Layout: {summary.layout_id or 'unknown'}",
+                f"Encoding: {summary.encoding or 'unknown'}",
+                f"Filesystem: {summary.filesystem or 'unknown'}",
+                f"Confidence: {summary.confidence:.2f}",
+                "",
+                "Evidence:",
+                evidence or "- none",
+            ]
+        )
 
     def _filesystem_write_buttons(self) -> list[QPushButton]:
         return [
@@ -1253,39 +1449,62 @@ class FluxctlStudio(QMainWindow):
     def run_sectors(self) -> None:
         if not self._require_image():
             return
-        self._run_cli(
-            [
-                "sectors",
-                str(self.current_path),
-                "--track",
-                self.track_input.text(),
-                "--head",
-                self.head_input.text(),
-                "--encoding",
-                self._selected_encoding(),
-            ]
+        assert self.current_path is not None
+        try:
+            track = int(self.track_input.text())
+            head = int(self.head_input.text())
+        except ValueError:
+            self._warn("Track and head must be integer values.")
+            return
+        layout = self._selected_layout() or None
+        encoding = self._selected_encoding()
+        self._run_job(
+            f"sectors T{track} H{head}",
+            lambda: services.sector_list(self.current_path, layout, encoding, track, head),
+            self._show_text_view,
         )
 
     def run_dump(self) -> None:
         if not self._require_image():
             return
+        mode = str(self.dump_mode_combo.currentData() or "sector")
+        if mode == "file":
+            self.run_file_dump()
+            return
         layout = self._selected_layout()
         if not layout:
             self._warn("Choose a layout before dumping a sector.")
             return
-        self._run_cli(
-            [
-                "dump",
-                str(self.current_path),
-                "--layout",
-                layout,
-                "--track",
-                self.track_input.text(),
-                "--side",
-                self.head_input.text(),
-                "--sector",
-                self.sector_input.text(),
-            ]
+        assert self.current_path is not None
+        try:
+            track = int(self.track_input.text())
+            head = int(self.head_input.text())
+            sector = int(self.sector_input.text())
+        except ValueError:
+            self._warn("Track, head, and sector must be integer values.")
+            return
+        encoding = self._selected_encoding()
+        self._run_job(
+            f"dump T{track} H{head} S{sector}",
+            lambda: services.sector_hex_dump(self.current_path, layout, encoding, track, head, sector),
+            self._show_advanced_hex_dump,
+        )
+
+    def run_file_dump(self) -> None:
+        assert self.current_path is not None
+        file_path = self._advanced_file_path_text()
+        if not file_path or file_path == "/":
+            self._warn("Choose a file path before dumping file contents.")
+            return
+        if self._advanced_file_path_is_selected_directory():
+            self._warn("File Dump requires a file. Choose a file, not a directory.")
+            return
+        layout = self._selected_layout() or None
+        encoding = self._selected_encoding()
+        self._run_job(
+            f"dump file {file_path}",
+            lambda: services.file_hex_dump(self.current_path, layout, encoding, file_path, max_bytes=65536),
+            self._show_advanced_hex_dump,
         )
 
     def qc_export_dialog(self) -> None:
@@ -1315,7 +1534,7 @@ class FluxctlStudio(QMainWindow):
     def extract_dialog(self) -> None:
         if not self._require_image():
             return
-        file_path = self.file_path_input.text().strip()
+        file_path = self._advanced_file_path_text()
         if not file_path or file_path == "/":
             self._warn("Enter a file path to extract.")
             return
@@ -1395,11 +1614,28 @@ class FluxctlStudio(QMainWindow):
         self.activity_label.setText(
             f"Command finished with exit {result.returncode}: {' '.join(result.args)}"
         )
-        self._append_log(f"exit {result.returncode}")
+        lines = [f"$ {' '.join(result.args)}", f"exit {result.returncode}"]
         if result.stdout:
-            self._append_log(result.stdout.rstrip())
+            lines.append(result.stdout.rstrip())
         if result.stderr:
-            self._append_log(result.stderr.rstrip())
+            lines.append(result.stderr.rstrip())
+        text = "\n".join(lines)
+        self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
+        self.advanced_output.setPlainText(text)
+        self.log.append(text)
+
+    def _show_text_view(self, report: object) -> None:
+        self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
+        self.advanced_output.setPlainText(report.text)
+        self.activity_label.setText(f"Loaded {report.title}.")
+        self.log.append(f"{report.title}\n{report.text}")
+
+    def _show_advanced_hex_dump(self, dump: object) -> None:
+        self.advanced_hex_title_label.setText(f"{dump.title}  ({dump.size:,} bytes)")
+        self.advanced_hex_text.setPlainText(dump.text)
+        self.advanced_detail_stack.setCurrentWidget(self.advanced_hex_text.parentWidget())
+        self.activity_label.setText(f"Loaded hex view for {dump.title}.")
+        self.log.append(f"Loaded hex view for {dump.title} ({dump.size:,} bytes)")
 
     def _require_image(self) -> bool:
         if self.current_path is None:
