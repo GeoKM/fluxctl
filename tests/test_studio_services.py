@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from fluxctl import studio_services as services
+from fluxctl.filesystems import RawSectorImage
+from fluxctl.filesystems.fat12 import FAT12
 
 
 FIXTURE_IMG = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.img")
@@ -128,6 +130,23 @@ def test_studio_lists_1581_cbm_dos_files() -> None:
     assert any(entry.name == "PIC.DIR" and entry.kind == "<DIR>" for entry in entries)
 
 
+def test_studio_lists_1581_cbm_dos_subdirectory() -> None:
+    summary = services.summarize_image(FIXTURE_1581_D81)
+    entries = services.list_files(FIXTURE_1581_D81, summary.layout_id, summary.encoding, "/PIC.DIR")
+
+    assert any(entry.name == "SUE.C" and entry.path == "/PIC.DIR/SUE.C" for entry in entries)
+    assert any(entry.name == "PAGODA.C" for entry in entries)
+
+
+def test_studio_builds_1581_file_hex_dump() -> None:
+    summary = services.summarize_image(FIXTURE_1581_D81)
+    dump = services.file_hex_dump(FIXTURE_1581_D81, summary.layout_id, summary.encoding, "/PIC.DIR/SUE.C")
+
+    assert dump.title == "File /PIC.DIR/SUE.C"
+    assert dump.size > 5000
+    assert "00 20 EA" in dump.text
+
+
 def test_studio_lists_amiga_dos_root_entries() -> None:
     summary = services.summarize_image(FIXTURE_ADF)
     entries = services.list_files(FIXTURE_ADF, summary.layout_id, summary.encoding)
@@ -135,6 +154,366 @@ def test_studio_lists_amiga_dos_root_entries() -> None:
     assert summary.filesystem == "amiga_ffs"
     assert any(entry.name == "Devs" and entry.kind == "<DIR>" for entry in entries)
     assert any(entry.name == "Install" and entry.kind == "<DIR>" for entry in entries)
+
+
+def test_studio_lists_amiga_dos_subdirectory() -> None:
+    summary = services.summarize_image(FIXTURE_ADF)
+    entries = services.list_files(FIXTURE_ADF, summary.layout_id, summary.encoding, "/C")
+
+    assert any(entry.name == "Assign" and entry.path == "/C/Assign" for entry in entries)
+    assert any(entry.name == "Execute" for entry in entries)
+
+
+def test_studio_formats_hex_dump_with_ascii_column() -> None:
+    text = services.format_hex_dump(b"ABC\x00\xff", width=4)
+
+    assert text.splitlines() == [
+        "00000000  41 42 43 00  |ABC.|",
+        "00000004  FF           |.|",
+    ]
+
+
+def test_studio_builds_sector_hex_dump() -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    dump = services.sector_hex_dump(FIXTURE_IMG, summary.layout_id, summary.encoding, 0, 0, 1)
+
+    assert dump.title == "Sector T0 H0 S1"
+    assert dump.size == 512
+    assert "MSDOS4.0" in dump.text
+
+
+def test_studio_lists_track_sectors_for_flat_image() -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    report = services.sector_list(FIXTURE_IMG, summary.layout_id, summary.encoding, 0, 0)
+
+    assert report.title == "Sectors T0 H0"
+    assert "Track 0 head 0: 9 sectors" in report.text
+    assert "ID 01 size=512 crc=ok" in report.text
+
+
+def test_studio_builds_file_hex_dump() -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    dump = services.file_hex_dump(FIXTURE_IMG, summary.layout_id, summary.encoding, "/AUTOEXEC.BAT")
+
+    assert dump.title == "File /AUTOEXEC.BAT"
+    assert dump.size == 39
+    assert "@ECHO OFF" in dump.text
+
+
+def test_studio_exports_selected_file(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    destination = tmp_path / "AUTOEXEC.BAT"
+
+    result = services.export_filesystem_entry(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/AUTOEXEC.BAT",
+        destination,
+    )
+
+    assert result.files == 1
+    assert result.bytes == 39
+    assert destination.read_bytes() == b"@ECHO OFF\r\nCLS\r\nKEYB US\r\nSELECT MENU\r\n\x1a"
+
+
+def test_studio_exports_selected_directory(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_ADF)
+
+    result = services.export_filesystem_entry(
+        FIXTURE_ADF,
+        summary.layout_id,
+        summary.encoding,
+        "/Expansion",
+        tmp_path,
+    )
+
+    assert result.files == 2
+    assert result.bytes > 0
+    assert (tmp_path / "Expansion" / "HDDisk").exists()
+    assert (tmp_path / "Expansion" / "HDDisk.info").exists()
+
+
+def test_studio_exports_1581_selected_file(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_1581_D81)
+    destination = tmp_path / "HOW TO USE"
+
+    result = services.export_filesystem_entry(
+        FIXTURE_1581_D81,
+        summary.layout_id,
+        summary.encoding,
+        "/HOW TO USE",
+        destination,
+    )
+
+    assert result.files == 1
+    assert result.bytes == destination.stat().st_size
+    assert result.bytes > 12000
+
+
+def test_studio_exports_1581_selected_directory(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_1581_D81)
+
+    result = services.export_filesystem_entry(
+        FIXTURE_1581_D81,
+        summary.layout_id,
+        summary.encoding,
+        "/PIC.DIR",
+        tmp_path,
+    )
+
+    assert result.files == 15
+    assert result.bytes > 70000
+    assert (tmp_path / "PIC.DIR" / "SUE.C").exists()
+    assert (tmp_path / "PIC.DIR" / "PAGODA.C").exists()
+
+
+def test_studio_exports_multiple_selected_files(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+
+    result = services.export_filesystem_entries(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        ["/AUTOEXEC.BAT", "/CONFIG.SYS"],
+        tmp_path,
+    )
+
+    assert result.files == 2
+    assert result.bytes > 39
+    assert (tmp_path / "AUTOEXEC.BAT").read_bytes().startswith(b"@ECHO OFF")
+    assert (tmp_path / "CONFIG.SYS").exists()
+
+
+def test_studio_replaces_fat12_file_in_new_copy(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    replacement = tmp_path / "AUTOEXEC.BAT"
+    replacement.write_bytes(b"@ECHO OFF\r\nCLS\r\nREM FLUXCTL COPY TEST\r\n")
+    output = tmp_path / "patched.img"
+    original = FIXTURE_IMG.read_bytes()
+
+    result = services.replace_file_with_copy(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/AUTOEXEC.BAT",
+        replacement,
+        output,
+    )
+
+    assert result.filesystem == "fat12"
+    assert result.path == str(output)
+    assert result.bytes == 39
+    assert FIXTURE_IMG.read_bytes() == original
+    filesystem = FAT12()
+    assert filesystem.probe(RawSectorImage(output.read_bytes()))
+    assert filesystem.extract_file("/AUTOEXEC.BAT") == replacement.read_bytes()
+
+
+def test_studio_replaces_fat12_file_with_shorter_copy(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    replacement = tmp_path / "AUTOEXEC.BAT"
+    replacement.write_bytes(b"@ECHO OFF\r\nREM SHORTER\r\n")
+    output = tmp_path / "patched.img"
+
+    result = services.replace_file_with_copy(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/AUTOEXEC.BAT",
+        replacement,
+        output,
+    )
+
+    filesystem = FAT12()
+    assert result.bytes == 24
+    assert filesystem.probe(RawSectorImage(output.read_bytes()))
+    assert filesystem.extract_file("/AUTOEXEC.BAT") == replacement.read_bytes()
+
+
+def test_studio_replaces_fat12_file_with_longer_existing_allocation_copy(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    replacement = tmp_path / "AUTOEXEC.BAT"
+    replacement.write_bytes(b"REM FLUXCTL LONGER REPLACEMENT\r\n" * 8)
+    output = tmp_path / "patched.img"
+
+    result = services.replace_file_with_copy(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/AUTOEXEC.BAT",
+        replacement,
+        output,
+    )
+
+    filesystem = FAT12()
+    assert result.bytes == 256
+    assert filesystem.probe(RawSectorImage(output.read_bytes()))
+    assert filesystem.extract_file("/AUTOEXEC.BAT") == replacement.read_bytes()
+
+
+def test_studio_replaces_fat12_file_by_allocating_more_clusters(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    replacement = tmp_path / "AUTOEXEC.BAT"
+    replacement.write_bytes(b"REM GROWN FILE\r\n" * 100)
+    output = tmp_path / "patched.img"
+
+    result = services.replace_file_with_copy(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/AUTOEXEC.BAT",
+        replacement,
+        output,
+    )
+
+    filesystem = FAT12()
+    assert result.bytes == 1_600
+    assert filesystem.probe(RawSectorImage(output.read_bytes()))
+    assert filesystem.extract_file("/AUTOEXEC.BAT") == replacement.read_bytes()
+
+
+def test_studio_rejects_fat12_replacement_larger_than_free_space(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    replacement = tmp_path / "AUTOEXEC.BAT"
+    replacement.write_bytes(b"x" * 2_000_000)
+
+    try:
+        services.replace_file_with_copy(
+            FIXTURE_IMG,
+            summary.layout_id,
+            summary.encoding,
+            "/AUTOEXEC.BAT",
+            replacement,
+            tmp_path / "patched.img",
+        )
+    except Exception as exc:
+        assert "free FAT12 cluster" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("replacement beyond free space should fail")
+
+
+def test_studio_rejects_replacement_over_original(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    replacement = tmp_path / "AUTOEXEC.BAT"
+    replacement.write_bytes(b"@ECHO OFF\r\nCLS\r\nREM FLUXCTL COPY TEST\r\n")
+
+    try:
+        services.replace_file_with_copy(
+            FIXTURE_IMG,
+            summary.layout_id,
+            summary.encoding,
+            "/AUTOEXEC.BAT",
+            replacement,
+            FIXTURE_IMG,
+        )
+    except Exception as exc:
+        assert "new copy" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("replacement over original should fail")
+
+
+def test_studio_imports_fat12_file_into_new_copy(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    host_file = tmp_path / "README.TXT"
+    host_file.write_bytes(b"Imported from Fluxctl Studio\r\n")
+    output = tmp_path / "imported.img"
+
+    result = services.import_file_with_copy(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/",
+        host_file,
+        output,
+    )
+
+    filesystem = FAT12()
+    assert result.operation == "import-file"
+    assert result.entries == 1
+    assert result.bytes == host_file.stat().st_size
+    assert filesystem.probe(RawSectorImage(output.read_bytes()))
+    assert filesystem.extract_file("/README.TXT") == host_file.read_bytes()
+
+
+def test_studio_creates_and_deletes_fat12_directory_in_new_copies(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    created = tmp_path / "created.img"
+    deleted = tmp_path / "deleted.img"
+
+    create_result = services.create_directory_with_copy(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/",
+        "TOOLS",
+        created,
+    )
+    delete_result = services.delete_filesystem_entry_with_copy(
+        created,
+        summary.layout_id,
+        summary.encoding,
+        "/TOOLS",
+        deleted,
+    )
+
+    created_fs = FAT12()
+    deleted_fs = FAT12()
+    assert create_result.operation == "create-directory"
+    assert delete_result.operation == "delete"
+    assert created_fs.probe(RawSectorImage(created.read_bytes()))
+    assert any(entry.name == "TOOLS" and entry.is_dir for entry in created_fs.list_directory("/"))
+    assert created_fs.list_directory("/TOOLS") == []
+    assert deleted_fs.probe(RawSectorImage(deleted.read_bytes()))
+    assert all(entry.name != "TOOLS" for entry in deleted_fs.list_directory("/"))
+
+
+def test_studio_imports_fat12_directory_tree_into_new_copy(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    host_dir = tmp_path / "TOOLS"
+    nested = host_dir / "BIN"
+    nested.mkdir(parents=True)
+    (host_dir / "README.TXT").write_bytes(b"root file\r\n")
+    (nested / "RUN.BAT").write_bytes(b"echo nested\r\n")
+    output = tmp_path / "tree.img"
+
+    result = services.import_directory_with_copy(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        "/",
+        host_dir,
+        output,
+    )
+
+    filesystem = FAT12()
+    assert result.operation == "import-directory"
+    assert result.entries == 4
+    assert result.bytes == 24
+    assert filesystem.probe(RawSectorImage(output.read_bytes()))
+    assert any(entry.name == "TOOLS" and entry.is_dir for entry in filesystem.list_directory("/"))
+    assert filesystem.extract_file("/TOOLS/README.TXT") == b"root file\r\n"
+    assert filesystem.extract_file("/TOOLS/BIN/RUN.BAT") == b"echo nested\r\n"
+
+
+def test_studio_rejects_fat12_import_with_long_name(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    host_file = tmp_path / "LONGFILENAME.TXT"
+    host_file.write_bytes(b"too long")
+
+    try:
+        services.import_file_with_copy(
+            FIXTURE_IMG,
+            summary.layout_id,
+            summary.encoding,
+            "/",
+            host_file,
+            tmp_path / "imported.img",
+        )
+    except Exception as exc:
+        assert "8.3" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("long FAT12 import name should fail")
 
 
 def test_studio_command_runner_uses_current_fluxctl() -> None:

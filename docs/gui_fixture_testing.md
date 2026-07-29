@@ -29,9 +29,38 @@ shape later implementation work.
 
 ## Deferred GUI Work
 
-- The Files panel currently lists only the root directory. FAT12, 1581 CBM DOS,
-  AmigaDOS, and other hierarchical filesystems need directory navigation before
-  workflows that operate on nested files can be complete.
-- Expected direction: make directory rows actionable, maintain a current path
-  breadcrumb, and call `list_directory(path)` on filesystem plugins that support
-  nested paths.
+- Find or create IBM DOS/FAT12 fixtures that contain real subdirectories, then
+  manually verify Studio directory drill-down, multi-file export, recursive
+  directory export, file hex viewing, and map-click sector hex viewing against
+  those images.
+- Find or create known-good 1.15 MB IBM DOS 8-inch floppy images for fixtures.
+  Use them to verify 8-inch FAT12 geometry, filesystem detection, sector counts,
+  QC, directory listing, and file export against media known to be valid outside
+  Fluxctl.
+- Document any per-filesystem export limitations found during manual testing,
+  especially when a filesystem can list entries but cannot yet extract file
+  data.
+- Improve Studio's file-manipulation layout with a "Hide Disk Map" control
+  that collapses the disk map and expands the lower Files/Hex/Jobs panel upward
+  for directory browsing, hex inspection, and import/export workflows.
+- Add left-panel Studio actions for creating blank supported disk images from
+  common presets, so users can start with an empty FAT12/CBM/Amiga/etc. image
+  and then use file import/manipulation tools without needing an external
+  formatter first.
+- Improve disabled-action clarity in Studio by styling unavailable buttons with
+  an obvious greyed-out visual state, in addition to disabling clicks and
+  showing explanatory tooltips.
+- Add an explicit Advanced "Directory Raw Dump" mode after defining per-filesystem
+  behavior. FAT12 could dump raw 32-byte directory entries from directory
+  clusters; CBM DOS, Amiga, CP/M, and other filesystems need their own directory
+  record/block interpretation instead of overloading File Dump.
+- Extend copy-only file and directory manipulation beyond the current FAT12
+  flat `.img` support. Add delete, replace, import file, import directory, and
+  create-directory writers for CBM DOS 1541/1571, CBM DOS 1581, Amiga OFS/FFS,
+  CP/M variants, and any other filesystem plugin once each format's allocation
+  structures can be updated correctly.
+- Extend copy-only manipulation beyond flat `.img` containers. Define safe
+  write-back/export paths for `.d64`, `.d71`, `.d81`, `.adf`, `.imd`, and
+  decoded `.scp` workflows, including clear GUI gating when a filesystem is
+  writable but the current image container cannot preserve or rewrite the
+  required sector format safely.

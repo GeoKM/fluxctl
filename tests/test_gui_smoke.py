@@ -7,9 +7,10 @@ pytest.importorskip("PySide6")
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QItemSelectionModel, QTimer
+from PySide6.QtWidgets import QApplication, QAbstractItemView
 
+from fluxctl import studio_services as services
 from fluxctl.gui import FluxctlStudio
 from fluxctl.gui import DiskMapWidget
 from fluxctl.reports.map import DiskMap, SectorMapEntry
@@ -107,14 +108,352 @@ def test_disk_map_widget_exposes_colour_legend_items() -> None:
 def test_opening_new_image_clears_file_panel() -> None:
     window = FluxctlStudio()
     assert window.map_view.itemData(2) == "bam"
+    assert window.files_table.editTriggers() == QAbstractItemView.NoEditTriggers
     window.files_table.setRowCount(1)
+    window._set_file_browser_path("/SOMEWHERE")
     window.summary_labels["filesystem"].setText("cbm_dos")
 
     window._clear_image_results()
 
     assert window.files_table.rowCount() == 0
+    assert window.file_browser_path == "/"
     assert window.summary_labels["filesystem"].text() == "-"
     assert window.map_widget.disk_map is None
+    assert not window.file_import_button.isEnabled()
+    assert "Open and probe" in window.file_import_button.toolTip()
+    window.close()
+
+
+def test_fat12_write_actions_enable_only_for_supported_flat_img() -> None:
+    window = FluxctlStudio()
+
+    window.current_path = Path("/tmp/example.d64")
+    window.current_summary = services.ImageSummary(
+        path="/tmp/example.d64",
+        size=174848,
+        kind="d64",
+        layout_id="commodore_gcr_1541_170k",
+        encoding="gcr",
+        filesystem="cbm_dos",
+        confidence=1.0,
+        evidence=[],
+    )
+    window._update_filesystem_write_actions()
+
+    assert not window.file_replace_button.isEnabled()
+    assert "FAT12 flat .img" in window.file_replace_button.toolTip()
+
+    window.current_path = FIXTURE_IMG
+    window.current_summary = services.ImageSummary(
+        path=str(FIXTURE_IMG),
+        size=FIXTURE_IMG.stat().st_size,
+        kind="img",
+        layout_id="ibm_mfm_720k",
+        encoding="mfm",
+        filesystem="fat12",
+        confidence=1.0,
+        evidence=[],
+    )
+    window._update_filesystem_write_actions()
+
+    for button in [
+        window.file_replace_button,
+        window.file_delete_button,
+        window.file_import_button,
+        window.directory_import_button,
+        window.directory_create_button,
+    ]:
+        assert button.isEnabled()
+        assert "new image copy" in button.toolTip()
+    window.close()
+
+
+def test_file_panel_double_click_opens_directory(monkeypatch) -> None:
+    window = FluxctlStudio()
+    opened_paths: list[str] = []
+    monkeypatch.setattr(window, "run_list_files", lambda: opened_paths.append(window.file_browser_path))
+    entries = [
+        services.FileEntryView("SUBDIR", "<DIR>", 0, "/SUBDIR", True),
+        services.FileEntryView("README.TXT", "file", 42, "/README.TXT", False),
+    ]
+    window._show_files(entries)
+
+    window.open_selected_file_entry(window.files_table.item(0, 0))
+
+    assert window.file_browser_path == "/SUBDIR"
+    assert opened_paths == ["/SUBDIR"]
+    window.close()
+
+
+def test_file_panel_selected_file_hex_updates_hex_tab() -> None:
+    window = FluxctlStudio()
+    entries = [services.FileEntryView("README.TXT", "file", 42, "/README.TXT", False)]
+    window._show_files(entries)
+    window.files_table.setCurrentCell(0, 0)
+    window.lower_tabs.setCurrentWidget(window.file_panel)
+
+    window._show_hex_dump(services.HexDumpView("File /README.TXT", 5, services.format_hex_dump(b"HELLO")))
+
+    assert window._selected_file_entry_path() == ("/README.TXT", False)
+    assert window.lower_tabs.currentWidget() == window.hex_panel
+    assert "File /README.TXT" in window.hex_title_label.text()
+    assert "48 45 4C 4C 4F" in window.hex_text.toPlainText()
+    window.close()
+
+
+def test_file_panel_tracks_multiple_selected_entries() -> None:
+    window = FluxctlStudio()
+    entries = [
+        services.FileEntryView("ONE.TXT", "file", 1, "/ONE.TXT", False),
+        services.FileEntryView("TWO.TXT", "file", 2, "/TWO.TXT", False),
+        services.FileEntryView("DIR", "<DIR>", 0, "/DIR", True),
+    ]
+    window._show_files(entries)
+    selection = window.files_table.selectionModel()
+    selection.select(window.files_table.model().index(0, 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
+    selection.select(window.files_table.model().index(2, 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
+
+    assert window._selected_file_entries() == [("/ONE.TXT", False), ("/DIR", True)]
+    window.close()
+
+
+def test_file_panel_export_result_updates_activity() -> None:
+    window = FluxctlStudio()
+
+    window._show_export_result(services.ExportResult("/tmp/exported.bin", 1, 42))
+
+    assert "Exported 1 file(s), 42 bytes" in window.activity_label.text()
+    assert "exported.bin" in window.log.toPlainText()
+    window.close()
+
+
+def test_advanced_command_result_updates_output_panel() -> None:
+    window = FluxctlStudio()
+    window._show_advanced_hex_dump(services.HexDumpView("Sector T0 H0 S1", 1, "00000000  00  |.|"))
+
+    window._show_command_result(
+        services.CommandResult(["info", "disk.img"], 0, "Size: 737280 bytes\nFilesystem: fat12\n", "")
+    )
+
+    assert window.advanced_detail_stack.currentWidget() == window.advanced_output
+    assert "$ info disk.img" in window.advanced_output.toPlainText()
+    assert "Filesystem: fat12" in window.advanced_output.toPlainText()
+    assert "Filesystem: fat12" in window.log.toPlainText()
+    window.close()
+
+
+def test_advanced_sector_report_updates_output_panel() -> None:
+    window = FluxctlStudio()
+    window._show_advanced_hex_dump(services.HexDumpView("Sector T0 H0 S1", 1, "00000000  00  |.|"))
+
+    window._show_text_view(services.TextView("Sectors T0 H0", "Track 0 head 0: 9 sectors"))
+
+    assert window.advanced_detail_stack.currentWidget() == window.advanced_output
+    assert window.activity_label.text() == "Loaded Sectors T0 H0."
+    assert "Track 0 head 0" in window.advanced_output.toPlainText()
+    assert "Track 0 head 0" in window.log.toPlainText()
+    window.close()
+
+
+def test_advanced_dump_hex_updates_hex_panel() -> None:
+    window = FluxctlStudio()
+
+    window._show_advanced_hex_dump(services.HexDumpView("Sector T0 H0 S1", 5, services.format_hex_dump(b"HELLO")))
+
+    assert window.advanced_detail_stack.currentWidget() != window.advanced_output
+    assert "Sector T0 H0 S1" in window.advanced_hex_title_label.text()
+    assert "48 45 4C 4C 4F" in window.advanced_hex_text.toPlainText()
+    assert "Loaded hex view for Sector T0 H0 S1" in window.activity_label.text()
+    window.close()
+
+
+def test_advanced_panel_starts_blank_until_image_is_loaded() -> None:
+    window = FluxctlStudio()
+
+    assert window.layout_combo.currentIndex() == -1
+    assert window.encoding_combo.currentIndex() == -1
+    assert window.export_combo.currentIndex() == -1
+    assert window.dump_mode_combo.currentIndex() == -1
+    assert window.track_input.text() == ""
+    assert window.file_path_input.currentText() == ""
+    assert not window.track_input.isEnabled()
+    assert all(not button.isEnabled() for button in window.advanced_image_buttons)
+    window.close()
+
+
+def test_advanced_panel_shows_doctor_summary_without_image() -> None:
+    window = FluxctlStudio()
+
+    window._show_doctor(
+        {
+            "version": "0.2.0",
+            "overall": "ok",
+            "checks": [{"name": "layouts", "status": "ok", "detail": "114 loaded", "suggestion": ""}],
+        }
+    )
+
+    assert "Fluxctl Doctor: ok" in window.advanced_output.toPlainText()
+    assert "OK: layouts - 114 loaded" in window.advanced_output.toPlainText()
+    window.close()
+
+
+def test_advanced_panel_populates_from_loaded_image_summary() -> None:
+    window = FluxctlStudio()
+    summary = services.ImageSummary(
+        path=str(FIXTURE_IMG),
+        size=FIXTURE_IMG.stat().st_size,
+        kind="img",
+        layout_id="ibm_mfm_720k",
+        encoding="mfm",
+        filesystem="fat12",
+        confidence=1.0,
+        evidence=["boot_sector=valid"],
+    )
+
+    window.current_path = FIXTURE_IMG
+    window.current_summary = summary
+    window._update_advanced_context()
+
+    assert window.layout_combo.currentData() == "ibm_mfm_720k"
+    assert window.encoding_combo.currentText() == "mfm"
+    assert window.export_combo.currentText() == "raw"
+    assert window.dump_mode_combo.currentData() == "sector"
+    assert window.track_input.text() == "0"
+    assert window.head_input.text() == "0"
+    assert window.sector_input.text() == "1"
+    assert window.file_path_input.currentText() == "/"
+    assert window.track_input.isEnabled()
+    assert all(button.isEnabled() for button in window.advanced_image_buttons)
+    assert "Loaded Image" in window.advanced_output.toPlainText()
+    assert "Filesystem: fat12" in window.advanced_output.toPlainText()
+    window.close()
+
+
+def test_advanced_dump_file_mode_loads_file_hex(monkeypatch) -> None:
+    window = FluxctlStudio()
+    window.current_path = FIXTURE_IMG
+    window.current_summary = services.ImageSummary(
+        path=str(FIXTURE_IMG),
+        size=FIXTURE_IMG.stat().st_size,
+        kind="img",
+        layout_id="ibm_mfm_720k",
+        encoding="mfm",
+        filesystem="fat12",
+        confidence=1.0,
+        evidence=[],
+    )
+    window._update_advanced_context()
+    window.dump_mode_combo.setCurrentIndex(window.dump_mode_combo.findData("file"))
+    window.file_path_input.setEditText("/AUTOEXEC.BAT")
+
+    monkeypatch.setattr(
+        services,
+        "file_hex_dump",
+        lambda *_args, **_kwargs: services.HexDumpView("File /AUTOEXEC.BAT", 5, services.format_hex_dump(b"HELLO")),
+    )
+    monkeypatch.setattr(window, "_run_job", lambda _label, fn, done: done(fn()))
+
+    window.run_dump()
+
+    assert "File /AUTOEXEC.BAT" in window.advanced_hex_title_label.text()
+    assert "48 45 4C 4C 4F" in window.advanced_hex_text.toPlainText()
+    assert window.advanced_detail_stack.currentWidget() != window.advanced_output
+    window.close()
+
+
+def test_advanced_dump_file_mode_rejects_selected_directory(monkeypatch) -> None:
+    window = FluxctlStudio()
+    warnings: list[str] = []
+    window.current_path = FIXTURE_IMG
+    window.current_summary = services.ImageSummary(
+        path=str(FIXTURE_IMG),
+        size=FIXTURE_IMG.stat().st_size,
+        kind="img",
+        layout_id="ibm_mfm_720k",
+        encoding="mfm",
+        filesystem="fat12",
+        confidence=1.0,
+        evidence=[],
+    )
+    window._update_advanced_context()
+    window.dump_mode_combo.setCurrentIndex(window.dump_mode_combo.findData("file"))
+    window.file_path_input.addItem("TOOLS/", {"path": "/TOOLS", "is_dir": True})
+    window.file_path_input.setEditText("/TOOLS")
+    monkeypatch.setattr(window, "_warn", lambda message: warnings.append(message))
+    monkeypatch.setattr(
+        services,
+        "file_hex_dump",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("file dump should not run")),
+    )
+
+    window.run_dump()
+
+    assert warnings == ["File Dump requires a file. Choose a file, not a directory."]
+    window.close()
+
+
+def test_advanced_file_path_dropdown_lists_and_selects_files(monkeypatch) -> None:
+    window = FluxctlStudio()
+    window.current_path = FIXTURE_IMG
+    window.current_summary = services.ImageSummary(
+        path=str(FIXTURE_IMG),
+        size=FIXTURE_IMG.stat().st_size,
+        kind="img",
+        layout_id="ibm_mfm_720k",
+        encoding="mfm",
+        filesystem="fat12",
+        confidence=1.0,
+        evidence=[],
+    )
+    monkeypatch.setattr(
+        services,
+        "list_files",
+        lambda *_args: [
+            services.FileEntryView("TOOLS", "<DIR>", 0, "/TOOLS", True),
+            services.FileEntryView("AUTOEXEC.BAT", "file", 39, "/AUTOEXEC.BAT", False),
+        ],
+    )
+
+    window._load_advanced_file_path_options("/")
+
+    file_index = window.file_path_input.findText("AUTOEXEC.BAT")
+    assert file_index >= 0
+    window._advanced_file_path_activated(file_index)
+
+    assert window.file_path_input.currentText() == "/AUTOEXEC.BAT"
+    window.close()
+
+
+def test_advanced_file_path_dropdown_traverses_directories(monkeypatch) -> None:
+    window = FluxctlStudio()
+    window.current_path = FIXTURE_IMG
+    window.current_summary = services.ImageSummary(
+        path=str(FIXTURE_IMG),
+        size=FIXTURE_IMG.stat().st_size,
+        kind="img",
+        layout_id="ibm_mfm_720k",
+        encoding="mfm",
+        filesystem="fat12",
+        confidence=1.0,
+        evidence=[],
+    )
+
+    def fake_list_files(_path, _layout, _encoding, directory):
+        if directory == "/":
+            return [services.FileEntryView("TOOLS", "<DIR>", 0, "/TOOLS", True)]
+        return [services.FileEntryView("README.TXT", "file", 5, "/TOOLS/README.TXT", False)]
+
+    monkeypatch.setattr(services, "list_files", fake_list_files)
+    window._load_advanced_file_path_options("/")
+
+    directory_index = window.file_path_input.findText("TOOLS/")
+    assert directory_index >= 0
+    window._advanced_file_path_activated(directory_index)
+
+    assert window.advanced_file_browser_path == "/TOOLS"
+    assert window.file_path_input.currentText() == "/TOOLS"
+    assert window.file_path_input.findText("README.TXT") >= 0
+    assert window.file_path_input.findText("Up ..") >= 0
     window.close()
 
 
@@ -148,3 +487,81 @@ def test_disk_map_widget_tooltip_includes_sector_metadata() -> None:
     assert "CRC: bad" in text
     assert "Confidence: 0.42" in text
     assert "Deleted: yes" in text
+
+
+def test_disk_map_widget_resolves_click_to_sector_address() -> None:
+    app = _app()
+    disk_map = DiskMap(
+        tracks=[["good"]],
+        total_tracks=1,
+        max_sectors_per_track=1,
+        track_ids=[(7, 1)],
+        sector_details=[
+            [
+                SectorMapEntry(
+                    sector_id=12,
+                    state="good",
+                    size=256,
+                    crc_ok=True,
+                    confidence=1.0,
+                    has_data=True,
+                )
+            ]
+        ],
+    )
+    widget = DiskMapWidget()
+    widget.resize(300, 300)
+    widget.set_disk_map(disk_map)
+    widget.show()
+    _wait_until(app, lambda: bool(widget._head_layouts))
+
+    assert widget.sector_address_at(150, 140) == (7, 1, 12)
+    widget.close()
+
+
+def test_disk_map_widget_ignores_bam_click_for_sector_hex() -> None:
+    app = _app()
+    disk_map = DiskMap(
+        tracks=[["bam_file"]],
+        total_tracks=1,
+        max_sectors_per_track=1,
+        track_ids=[(7, 1)],
+        sector_details=[
+            [
+                SectorMapEntry(
+                    sector_id=12,
+                    state="bam_file",
+                    size=256,
+                    crc_ok=True,
+                    confidence=1.0,
+                    has_data=True,
+                )
+            ]
+        ],
+        render_style="grid",
+    )
+    widget = DiskMapWidget()
+    widget.resize(300, 300)
+    widget.set_disk_map(disk_map)
+    widget.show()
+    _wait_until(app, lambda: bool(widget._head_layouts))
+
+    assert widget.sector_address_at(54, 52) is None
+    widget.close()
+
+
+def test_map_sector_click_updates_sector_hex_inputs(monkeypatch) -> None:
+    window = FluxctlStudio()
+    loaded: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        window,
+        "view_sector_hex",
+        lambda: loaded.append(
+            (window.hex_track_input.text(), window.hex_head_input.text(), window.hex_sector_input.text())
+        ),
+    )
+
+    window.load_sector_hex_from_map(7, 1, 12)
+
+    assert loaded == [("7", "1", "12")]
+    window.close()

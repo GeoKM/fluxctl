@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -19,7 +21,8 @@ from .cli import (
 from .decoding import load_builtin_decoders
 from .detection import detect_encoding, detect_layout
 from .filesystem_detection import detect_filesystem
-from .filesystems import TrackSectorImage, load_builtin_filesystems
+from .filesystems import RawSectorImage, TrackSectorImage, load_builtin_filesystems
+from .filesystems.fat12 import FAT12
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from .plugins import registry
 from .reports.map import (
@@ -64,6 +67,55 @@ class FileEntryView:
     name: str
     kind: str
     size: int
+    path: str
+    is_dir: bool
+
+
+@dataclass(frozen=True)
+class HexDumpView:
+    """Hex/ASCII bytes suitable for Studio inspection panels."""
+
+    title: str
+    size: int
+    text: str
+
+
+@dataclass(frozen=True)
+class TextView:
+    """Text output suitable for Studio report panels."""
+
+    title: str
+    text: str
+
+
+@dataclass(frozen=True)
+class ExportResult:
+    """Summary of a Studio filesystem export operation."""
+
+    path: str
+    files: int
+    bytes: int
+
+
+@dataclass(frozen=True)
+class ReplaceResult:
+    """Summary of a safe copy-on-write filesystem replacement operation."""
+
+    path: str
+    file_path: str
+    bytes: int
+    filesystem: str
+
+
+@dataclass(frozen=True)
+class MutationResult:
+    """Summary of a safe copy-on-write filesystem mutation operation."""
+
+    path: str
+    operation: str
+    entries: int
+    bytes: int
+    filesystem: str
 
 
 def run_fluxctl_command(args: list[str], cwd: Optional[Path] = None) -> CommandResult:
@@ -261,8 +313,412 @@ def build_disk_map_for_image(
     return disk_map
 
 
-def list_files(path: Path, layout_id: Optional[str], encoding: str = "mfm") -> list[FileEntryView]:
-    """Return root directory entries when a supported filesystem is detected."""
+def _join_filesystem_path(directory: str, name: str) -> str:
+    parts = [part for part in directory.strip("/").split("/") if part]
+    parts.append(name)
+    return "/" + "/".join(parts)
+
+
+def format_hex_dump(data: bytes, *, width: int = 16, max_bytes: Optional[int] = None) -> str:
+    """Render bytes as offset, hex, and ASCII columns."""
+
+    if width <= 0:
+        raise ValueError("Hex dump width must be positive")
+    shown = data[:max_bytes] if max_bytes is not None else data
+    lines: list[str] = []
+    for offset in range(0, len(shown), width):
+        chunk = shown[offset : offset + width]
+        hex_bytes = " ".join(f"{byte:02X}" for byte in chunk)
+        padded_hex = hex_bytes.ljust(width * 3 - 1)
+        ascii_bytes = "".join(chr(byte) if 32 <= byte < 127 else "." for byte in chunk)
+        lines.append(f"{offset:08X}  {padded_hex}  |{ascii_bytes}|")
+    if max_bytes is not None and len(data) > max_bytes:
+        lines.append(f"... truncated, showing {max_bytes:,} of {len(data):,} bytes")
+    return "\n".join(lines)
+
+
+def sector_hex_dump(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    track: int,
+    head: int,
+    sector_id: int,
+    *,
+    max_bytes: Optional[int] = None,
+) -> HexDumpView:
+    """Return a hex dump for one decoded physical sector."""
+
+    image = _prepare_image(path, layout_id, encoding)
+    if not isinstance(image, TrackSectorImage):
+        raise ValueError("Image could not be reconstructed into sector tracks")
+    try:
+        data = image._sector_lookup[(track, head, sector_id)]
+    except KeyError as exc:
+        raise ValueError(f"Sector {track}:{head}:{sector_id} is not available") from exc
+    title = f"Sector T{track} H{head} S{sector_id}"
+    return HexDumpView(title=title, size=len(data), text=format_hex_dump(data, max_bytes=max_bytes))
+
+
+def sector_list(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    track: int,
+    head: int,
+) -> TextView:
+    """Return a decoded sector listing for one physical track/head row."""
+
+    image = _prepare_image(path, layout_id, encoding)
+    if not isinstance(image, TrackSectorImage):
+        raise ValueError("Image could not be reconstructed into sector tracks")
+    selected = None
+    for track_sectors in image.tracks:
+        if track_sectors.track == track and track_sectors.head == head:
+            selected = track_sectors
+            break
+    if selected is None:
+        raise ValueError(f"Track {track} head {head} is not available")
+    lines = [
+        f"Track {selected.track} head {selected.head}: "
+        f"{len(selected.sectors)} sectors (weak={selected.weak} missing={selected.missing})"
+    ]
+    for sector in sorted(selected.sectors, key=lambda item: item.sector_id):
+        crc_status = "ok" if sector.crc_ok else "bad"
+        lines.append(
+            f"ID {sector.sector_id:02d} size={sector.size} crc={crc_status} "
+            f"deleted={'yes' if sector.deleted else 'no'} conf={sector.confidence:.2f}"
+        )
+    return TextView(title=f"Sectors T{track} H{head}", text="\n".join(lines))
+
+
+def file_hex_dump(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    file_path: str,
+    *,
+    max_bytes: Optional[int] = None,
+) -> HexDumpView:
+    """Return a hex dump for one filesystem file."""
+
+    load_builtin_filesystems()
+    image = _prepare_image(path, layout_id, encoding)
+    filesystem = detect_filesystem(image, path_name=path.name).plugin
+    if filesystem is None:
+        raise ValueError("No supported filesystem is available")
+    data = filesystem.extract_file(file_path)
+    return HexDumpView(title=f"File {file_path}", size=len(data), text=format_hex_dump(data, max_bytes=max_bytes))
+
+
+def _mount_filesystem(path: Path, layout_id: Optional[str], encoding: str):
+    load_builtin_filesystems()
+    image = _prepare_image(path, layout_id, encoding)
+    filesystem = detect_filesystem(image, path_name=path.name).plugin
+    if filesystem is None:
+        raise ValueError("No supported filesystem is available")
+    return filesystem
+
+
+def _filesystem_parent(path: str) -> str:
+    parts = [part for part in path.strip("/").split("/") if part]
+    if len(parts) <= 1:
+        return "/"
+    return "/" + "/".join(parts[:-1])
+
+
+def _filesystem_basename(path: str) -> str:
+    parts = [part for part in path.strip("/").split("/") if part]
+    return parts[-1] if parts else ""
+
+
+def _safe_export_name(name: str) -> str:
+    safe = "".join(char if char not in '/\\:\0' else "_" for char in name).strip()
+    return safe or "unnamed"
+
+
+def _find_entry(filesystem, fs_path: str) -> FileEntryView:
+    parent = _filesystem_parent(fs_path)
+    name = _filesystem_basename(fs_path)
+    if not name:
+        raise ValueError("Choose a file or directory entry to export")
+    for entry in filesystem.list_directory(parent):
+        if entry.name.lower() == name.lower():
+            return FileEntryView(
+                entry.name,
+                "<DIR>" if entry.is_dir else "file",
+                entry.size,
+                _join_filesystem_path(parent, entry.name),
+                entry.is_dir,
+            )
+    raise ValueError(f"Filesystem entry '{fs_path}' was not found")
+
+
+def export_filesystem_entry(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    fs_path: str,
+    destination: Path,
+) -> ExportResult:
+    """Export a selected filesystem file or directory to the host filesystem."""
+
+    filesystem = _mount_filesystem(path, layout_id, encoding)
+    entry = _find_entry(filesystem, fs_path)
+    if entry.is_dir:
+        return _export_directory(filesystem, entry.path, destination)
+    data = filesystem.extract_file(entry.path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(data)
+    return ExportResult(path=str(destination), files=1, bytes=len(data))
+
+
+def export_filesystem_entries(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    fs_paths: list[str],
+    destination_parent: Path,
+) -> ExportResult:
+    """Export multiple selected filesystem entries into one host folder."""
+
+    if not fs_paths:
+        raise ValueError("Choose one or more filesystem entries to export")
+    filesystem = _mount_filesystem(path, layout_id, encoding)
+    destination_parent.mkdir(parents=True, exist_ok=True)
+    files = 0
+    byte_count = 0
+    exported_paths: list[str] = []
+    with tempfile.TemporaryDirectory(prefix=".fluxctl-export.", dir=destination_parent) as temp_name:
+        temp_path = Path(temp_name)
+        for fs_path in fs_paths:
+            entry = _find_entry(filesystem, fs_path)
+            if entry.is_dir:
+                directory_result = _export_directory(filesystem, entry.path, temp_path)
+                files += directory_result.files
+                byte_count += directory_result.bytes
+                exported_paths.append(Path(directory_result.path).name)
+                continue
+            data = filesystem.extract_file(entry.path)
+            host_path = temp_path / _safe_export_name(entry.name)
+            if host_path.exists():
+                raise ValueError(f"Duplicate export name: {entry.name}")
+            host_path.write_bytes(data)
+            files += 1
+            byte_count += len(data)
+            exported_paths.append(host_path.name)
+        for name in exported_paths:
+            final_path = destination_parent / name
+            if final_path.exists():
+                raise ValueError(f"Export destination already exists: {final_path}")
+        for child in temp_path.iterdir():
+            shutil.move(str(child), str(destination_parent / child.name))
+    return ExportResult(path=str(destination_parent), files=files, bytes=byte_count)
+
+
+def replace_file_with_copy(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    fs_path: str,
+    replacement_path: Path,
+    output_path: Path,
+) -> ReplaceResult:
+    """Replace one file in a new image copy without modifying the original.
+
+    The supported writer is intentionally narrow: FAT12 flat ``.img`` images.
+    Replacement may grow the selected file by allocating free FAT12 clusters,
+    but only in the new image copy.
+    """
+
+    source = path.resolve()
+    output = output_path.resolve()
+    if source == output:
+        raise ValueError("Output image must be a new copy, not the original image")
+    if output_path.exists():
+        raise ValueError(f"Output image already exists: {output_path}")
+    if path.suffix.lower() != ".img":
+        raise ValueError("File replacement is currently supported only for flat FAT12 .img images")
+
+    replacement = replacement_path.read_bytes()
+    image_bytes = path.read_bytes()
+    filesystem = FAT12()
+    if not filesystem.probe(RawSectorImage(image_bytes)):
+        raise ValueError("File replacement is currently supported only for FAT12 images")
+
+    patched = filesystem.replace_file_allocating_clusters(image_bytes, fs_path, replacement)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix=f".{output_path.name}.", dir=output_path.parent, delete=False) as temp_file:
+        temp_name = Path(temp_file.name)
+        temp_file.write(patched)
+    shutil.move(str(temp_name), str(output_path))
+    return ReplaceResult(
+        path=str(output_path),
+        file_path=fs_path,
+        bytes=len(replacement),
+        filesystem="fat12",
+    )
+
+
+def delete_filesystem_entry_with_copy(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    fs_path: str,
+    output_path: Path,
+) -> MutationResult:
+    """Delete one FAT12 file or empty directory in a new image copy."""
+
+    image_bytes = _read_fat12_source_for_mutation(path, output_path)
+    filesystem = _probe_fat12_bytes(image_bytes)
+    entry = _find_entry(filesystem, fs_path)
+    patched = filesystem.delete_entry(image_bytes, fs_path)
+    _write_new_image_copy(output_path, patched)
+    return MutationResult(str(output_path), "delete", 1, entry.size, "fat12")
+
+
+def create_directory_with_copy(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    parent: str,
+    name: str,
+    output_path: Path,
+) -> MutationResult:
+    """Create one empty FAT12 directory in a new image copy."""
+
+    image_bytes = _read_fat12_source_for_mutation(path, output_path)
+    filesystem = _probe_fat12_bytes(image_bytes)
+    patched = filesystem.create_directory(image_bytes, parent, name)
+    _write_new_image_copy(output_path, patched)
+    return MutationResult(str(output_path), "create-directory", 1, 0, "fat12")
+
+
+def import_file_with_copy(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    directory: str,
+    host_file: Path,
+    output_path: Path,
+) -> MutationResult:
+    """Import one host file into a FAT12 directory in a new image copy."""
+
+    data = host_file.read_bytes()
+    image_bytes = _read_fat12_source_for_mutation(path, output_path)
+    filesystem = _probe_fat12_bytes(image_bytes)
+    patched = filesystem.import_file(image_bytes, directory, host_file.name, data)
+    _write_new_image_copy(output_path, patched)
+    return MutationResult(str(output_path), "import-file", 1, len(data), "fat12")
+
+
+def import_directory_with_copy(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    directory: str,
+    host_directory: Path,
+    output_path: Path,
+) -> MutationResult:
+    """Recursively import a host directory tree into FAT12 in a new image copy."""
+
+    if not host_directory.is_dir():
+        raise ValueError("Choose a host directory to import")
+    image_bytes = _read_fat12_source_for_mutation(path, output_path)
+    entries, byte_count, patched = _import_directory_tree(image_bytes, directory, host_directory)
+    _write_new_image_copy(output_path, patched)
+    return MutationResult(str(output_path), "import-directory", entries, byte_count, "fat12")
+
+
+def _read_fat12_source_for_mutation(path: Path, output_path: Path) -> bytes:
+    source = path.resolve()
+    output = output_path.resolve()
+    if source == output:
+        raise ValueError("Output image must be a new copy, not the original image")
+    if output_path.exists():
+        raise ValueError(f"Output image already exists: {output_path}")
+    if path.suffix.lower() != ".img":
+        raise ValueError("FAT12 mutation is currently supported only for flat .img images")
+    return path.read_bytes()
+
+
+def _probe_fat12_bytes(image_bytes: bytes) -> FAT12:
+    filesystem = FAT12()
+    if not filesystem.probe(RawSectorImage(image_bytes)):
+        raise ValueError("FAT12 mutation is currently supported only for FAT12 images")
+    return filesystem
+
+
+def _write_new_image_copy(output_path: Path, image_bytes: bytes) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix=f".{output_path.name}.", dir=output_path.parent, delete=False) as temp_file:
+        temp_name = Path(temp_file.name)
+        temp_file.write(image_bytes)
+    shutil.move(str(temp_name), str(output_path))
+
+
+def _import_directory_tree(image_bytes: bytes, directory: str, host_directory: Path) -> tuple[int, int, bytes]:
+    filesystem = _probe_fat12_bytes(image_bytes)
+    patched = filesystem.create_directory(image_bytes, directory, host_directory.name)
+    target_directory = _join_filesystem_path(directory, host_directory.name)
+    entries = 1
+    byte_count = 0
+    for child in sorted(host_directory.iterdir(), key=lambda item: item.name.upper()):
+        if child.name.startswith("."):
+            continue
+        if child.is_dir():
+            child_entries, child_bytes, patched = _import_directory_tree(patched, target_directory, child)
+            entries += child_entries
+            byte_count += child_bytes
+            continue
+        if child.is_file():
+            data = child.read_bytes()
+            filesystem = _probe_fat12_bytes(patched)
+            patched = filesystem.import_file(patched, target_directory, child.name, data)
+            entries += 1
+            byte_count += len(data)
+    return entries, byte_count, patched
+
+
+def _export_directory(filesystem, fs_path: str, destination_parent: Path) -> ExportResult:
+    directory_name = _safe_export_name(_filesystem_basename(fs_path))
+    final_path = destination_parent / directory_name
+    if final_path.exists():
+        raise ValueError(f"Export destination already exists: {final_path}")
+    destination_parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{directory_name}.", dir=destination_parent) as temp_name:
+        temp_path = Path(temp_name)
+        files, byte_count = _export_directory_contents(filesystem, fs_path, temp_path)
+        shutil.move(str(temp_path), str(final_path))
+    return ExportResult(path=str(final_path), files=files, bytes=byte_count)
+
+
+def _export_directory_contents(filesystem, fs_path: str, host_directory: Path) -> tuple[int, int]:
+    host_directory.mkdir(parents=True, exist_ok=True)
+    files = 0
+    byte_count = 0
+    for entry in filesystem.list_directory(fs_path):
+        entry_path = _join_filesystem_path(fs_path, entry.name)
+        host_path = host_directory / _safe_export_name(entry.name)
+        if entry.is_dir:
+            child_files, child_bytes = _export_directory_contents(filesystem, entry_path, host_path)
+            files += child_files
+            byte_count += child_bytes
+            continue
+        data = filesystem.extract_file(entry_path)
+        host_path.write_bytes(data)
+        files += 1
+        byte_count += len(data)
+    return files, byte_count
+
+
+def list_files(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str = "mfm",
+    directory: str = "/",
+) -> list[FileEntryView]:
+    """Return directory entries when a supported filesystem is detected."""
 
     load_builtin_filesystems()
     image = _prepare_image(path, layout_id, encoding)
@@ -270,10 +726,19 @@ def list_files(path: Path, layout_id: Optional[str], encoding: str = "mfm") -> l
     if filesystem is None:
         return []
     try:
-        entries = filesystem.list_directory("/")
+        entries = filesystem.list_directory(directory)
     except Exception:
         return []
-    return [FileEntryView(entry.name, "<DIR>" if entry.is_dir else "file", entry.size) for entry in entries]
+    return [
+        FileEntryView(
+            entry.name,
+            "<DIR>" if entry.is_dir else "file",
+            entry.size,
+            _join_filesystem_path(directory, entry.name),
+            entry.is_dir,
+        )
+        for entry in entries
+    ]
 
 
 def provenance_json(path: Path) -> dict:
