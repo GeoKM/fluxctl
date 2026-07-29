@@ -78,7 +78,8 @@ unexpectedly. It reports:
 - Whether optional Rust native decoder acceleration is enabled, disabled, or not
   built yet.
 - Whether the optional Greaseweazle Python package can be imported.
-- Whether `hxcfe` is available on `PATH` or at a supplied `--hxcfe` path.
+- Whether `hxcfe` is available on `PATH`, at a supplied `--hxcfe` path, or in a
+  sibling `../HxCFloppyEmulator` checkout built by the installer.
 
 Examples:
 ```bash
