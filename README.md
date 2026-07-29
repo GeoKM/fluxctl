@@ -31,6 +31,17 @@ py -3 scripts\install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clo
 .venv\Scripts\fluxctl.exe doctor
 ```
 
+On Windows, Fluxctl itself needs Git and Python. Optional helper builds need
+extra native build tools:
+
+- Greaseweazle: install Microsoft C++ Build Tools 14.0 or newer with the
+  "Desktop development with C++" workload.
+- HxCFE: install a GNU Make/GCC environment such as MSYS2/MinGW64, or use a
+  prebuilt `hxcfe.exe` and pass `--hxcfe C:\path\to\hxcfe.exe`.
+- Rust native acceleration: install Rust from `https://rustup.rs`, open a new
+  PowerShell so `cargo` is on `PATH`, then run
+  `cargo build --manifest-path native\fluxctl_native\Cargo.toml --release`.
+
 This creates `.venv`, installs `fluxctl` and Fluxctl Studio, offers optional
 Greaseweazle support, clones/builds optional HxCFE support, and prints the
 installed command paths. Run `.venv/bin/fluxctl --help` to explore available
@@ -237,6 +248,8 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 Then open a new shell, or run `source "$HOME/.cargo/env"`, and retry the
 `cargo build` command. On Debian/Ubuntu packaged Rust can also be installed with
 `sudo apt install cargo rustc`, but `rustup` usually provides a newer toolchain.
+On Windows, install Rust from `https://rustup.rs`, open a new PowerShell, and
+retry the same `cargo build` command.
 
 Fluxctl auto-detects the resulting library under `native/fluxctl_native/target`.
 Set `FLUXCTL_NATIVE_PATH=/path/to/libfluxctl_native.dylib` (or `.so`/`.dll`) to

@@ -41,6 +41,21 @@ py -3 scripts\install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clo
 .venv\Scripts\fluxctl.exe doctor
 ```
 
+On Windows, Git and Python are enough for Fluxctl itself. Optional helper builds
+need extra native build tools:
+
+- Greaseweazle builds a C extension. Install Microsoft C++ Build Tools 14.0 or
+  newer with the "Desktop development with C++" workload:
+  `https://visualstudio.microsoft.com/visual-cpp-build-tools/`
+- HxCFE uses GNU Make/GCC-style Makefiles. Build it from an MSYS2/MinGW64 shell
+  after installing build tools, for example:
+  `pacman -S --needed base-devel mingw-w64-x86_64-toolchain git make`
+- If you already have a prebuilt `hxcfe.exe`, skip `--build-hxcfe` and pass
+  `--hxcfe C:\path\to\hxcfe.exe`.
+- Rust native acceleration is optional but needs Rust. Install Rust from
+  `https://rustup.rs`, open a new PowerShell so `cargo` is on `PATH`, then run
+  `cargo build --manifest-path native\fluxctl_native\Cargo.toml --release`.
+
 For testers already inside a checkout, run:
 
 ```bash
@@ -174,6 +189,8 @@ Then open a new shell, or run `source "$HOME/.cargo/env"`, and retry the
 `cargo build` command. On Debian/Ubuntu, `sudo apt install cargo rustc` also
 works, though the distro toolchain may be older than the current `rustup`
 toolchain.
+On Windows, install Rust from `https://rustup.rs`, open a new PowerShell, and
+retry the same `cargo build` command.
 
 ## Optional Integration Policy
 
