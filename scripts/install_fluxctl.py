@@ -39,6 +39,12 @@ def _run(args: list[str], *, cwd: Path = ROOT) -> None:
     subprocess.run([str(arg) for arg in args], cwd=cwd, check=True)
 
 
+def _run_optional(args: list[str], *, cwd: Path = ROOT) -> bool:
+    print("+", " ".join(str(arg) for arg in args))
+    result = subprocess.run([str(arg) for arg in args], cwd=cwd, check=False)
+    return result.returncode == 0
+
+
 def _run_probe(args: list[str], *, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(arg) for arg in args],
@@ -153,9 +159,25 @@ def _build_hxcfe_checkout(checkout: Path) -> None:
     ]
     for build_dir in build_dirs:
         if (build_dir / "Makefile").exists():
-            _run(["make"], cwd=build_dir)
+            if not _run_optional(["make"], cwd=build_dir):
+                print(
+                    "HxCFE build failed. On Debian/Ubuntu, install build tools first:\n"
+                    "  sudo apt install build-essential\n"
+                    f"Then rerun: make -C {build_dir}"
+                )
             return
     print(f"Could not find an HxCFE Makefile under {checkout}. Build it manually and pass --hxcfe.")
+
+
+def _print_greaseweazle_build_hint(checkout: Path, python: Path) -> None:
+    print(
+        "Greaseweazle package install failed. It builds a small C extension, "
+        "so Python development headers are required."
+    )
+    print("On Debian/Ubuntu, install:")
+    print("  sudo apt install build-essential python3-dev")
+    print("Then retry:")
+    print(f"  {python} -m pip install -e {checkout}")
 
 
 def main() -> int:
@@ -233,7 +255,8 @@ def main() -> int:
                     gw_checkout = clone_target
         if gw_checkout is not None and _is_installable_python_project(gw_checkout):
             if args.yes or _ask(f"Install local Greaseweazle checkout editable from {gw_checkout}?", True):
-                _run([python, "-m", "pip", "install", "-e", str(gw_checkout)])
+                if not _run_optional([python, "-m", "pip", "install", "-e", str(gw_checkout)]):
+                    _print_greaseweazle_build_hint(gw_checkout, python)
             if _is_importable(python, "greaseweazle"):
                 print("Greaseweazle Python package import check passed.")
             else:
