@@ -182,6 +182,15 @@ def test_studio_builds_sector_hex_dump() -> None:
     assert "MSDOS4.0" in dump.text
 
 
+def test_studio_lists_track_sectors_for_flat_image() -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    report = services.sector_list(FIXTURE_IMG, summary.layout_id, summary.encoding, 0, 0)
+
+    assert report.title == "Sectors T0 H0"
+    assert "Track 0 head 0: 9 sectors" in report.text
+    assert "ID 01 size=512 crc=ok" in report.text
+
+
 def test_studio_builds_file_hex_dump() -> None:
     summary = services.summarize_image(FIXTURE_IMG)
     dump = services.file_hex_dump(FIXTURE_IMG, summary.layout_id, summary.encoding, "/AUTOEXEC.BAT")

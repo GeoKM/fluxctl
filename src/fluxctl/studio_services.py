@@ -81,6 +81,14 @@ class HexDumpView:
 
 
 @dataclass(frozen=True)
+class TextView:
+    """Text output suitable for Studio report panels."""
+
+    title: str
+    text: str
+
+
+@dataclass(frozen=True)
 class ExportResult:
     """Summary of a Studio filesystem export operation."""
 
@@ -350,6 +358,38 @@ def sector_hex_dump(
         raise ValueError(f"Sector {track}:{head}:{sector_id} is not available") from exc
     title = f"Sector T{track} H{head} S{sector_id}"
     return HexDumpView(title=title, size=len(data), text=format_hex_dump(data, max_bytes=max_bytes))
+
+
+def sector_list(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    track: int,
+    head: int,
+) -> TextView:
+    """Return a decoded sector listing for one physical track/head row."""
+
+    image = _prepare_image(path, layout_id, encoding)
+    if not isinstance(image, TrackSectorImage):
+        raise ValueError("Image could not be reconstructed into sector tracks")
+    selected = None
+    for track_sectors in image.tracks:
+        if track_sectors.track == track and track_sectors.head == head:
+            selected = track_sectors
+            break
+    if selected is None:
+        raise ValueError(f"Track {track} head {head} is not available")
+    lines = [
+        f"Track {selected.track} head {selected.head}: "
+        f"{len(selected.sectors)} sectors (weak={selected.weak} missing={selected.missing})"
+    ]
+    for sector in sorted(selected.sectors, key=lambda item: item.sector_id):
+        crc_status = "ok" if sector.crc_ok else "bad"
+        lines.append(
+            f"ID {sector.sector_id:02d} size={sector.size} crc={crc_status} "
+            f"deleted={'yes' if sector.deleted else 'no'} conf={sector.confidence:.2f}"
+        )
+    return TextView(title=f"Sectors T{track} H{head}", text="\n".join(lines))
 
 
 def file_hex_dump(
