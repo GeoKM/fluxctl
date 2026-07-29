@@ -82,6 +82,15 @@ git clone https://github.com/jfdelnero/HxCFloppyEmulator.git ../HxCFloppyEmulato
 make -C ../HxCFloppyEmulator/build HxCFloppyEmulator_cmdline
 ```
 
+On macOS, HxCFE and Greaseweazle native builds need Apple's Command Line Tools
+for `clang`, `make`, and system headers:
+
+```bash
+xcode-select --install
+```
+
+Full Xcode is usually not required.
+
 ## Python Package Artifacts
 
 Install packaging tools:
