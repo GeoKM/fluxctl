@@ -152,7 +152,9 @@ def _native_build_suggestion() -> str:
         return (
             "Install Rust from https://rustup.rs and Microsoft C++ Build Tools 14.0+ "
             "with the Desktop development with C++ workload so link.exe is available. "
-            f"Open Developer PowerShell for Visual Studio or a fresh PowerShell, then run `{build_command}`."
+            "Use the Native Tools prompt matching your Rust target, such as ARM64 Native Tools "
+            "for aarch64-pc-windows-msvc, then run "
+            f"`{build_command}`."
         )
     return (
         "Install Rust with `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` "

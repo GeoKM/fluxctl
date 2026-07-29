@@ -54,9 +54,11 @@ need extra native build tools:
   `--hxcfe C:\path\to\hxcfe.exe`.
 - Rust native acceleration is optional but needs Rust plus the MSVC linker.
   Install Rust from `https://rustup.rs` and Microsoft C++ Build Tools 14.0 or
-  newer with the "Desktop development with C++" workload. Open Developer
-  PowerShell for Visual Studio, or a fresh PowerShell if the tools are already
-  on `PATH`, then run
+  newer with the "Desktop development with C++" workload. Use the Native Tools
+  prompt matching your Rust target. On Windows ARM64, use "ARM64 Native Tools
+  Command Prompt for VS" or run
+  `"C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" arm64`,
+  then run
   `cargo build --manifest-path native\fluxctl_native\Cargo.toml --release`.
 
 For testers already inside a checkout, run:
@@ -196,6 +198,13 @@ On Windows, install Rust from `https://rustup.rs` and Microsoft C++ Build Tools
 14.0 or newer with the "Desktop development with C++" workload. If `cargo`
 reports `link.exe` is missing, run the build from Developer PowerShell for
 Visual Studio or a Native Tools command prompt so the MSVC linker is on `PATH`.
+If the linker reports `LNK4272: library machine type 'x86' conflicts with target
+machine type 'ARM64'`, you are in the wrong Visual Studio shell. Use the ARM64
+Native Tools prompt, or run:
+
+```cmd
+"C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" arm64
+```
 
 ## Optional Integration Policy
 

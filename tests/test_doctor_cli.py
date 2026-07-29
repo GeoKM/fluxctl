@@ -56,7 +56,8 @@ def test_doctor_native_hint_is_windows_friendly(monkeypatch) -> None:
 
     suggestion = cli._native_build_suggestion()
 
-    assert "PowerShell" in suggestion
+    assert "Native Tools" in suggestion
+    assert "ARM64" in suggestion
     assert "rustup.rs" in suggestion
     assert "link.exe" in suggestion
     assert "Microsoft C++ Build Tools" in suggestion
