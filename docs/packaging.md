@@ -14,7 +14,16 @@ Fluxctl ships two command entry points from the same Python package:
 
 ## Source Checkout Installer
 
-For testers using a checkout, run:
+After this branch is merged to `main`, the easiest checkout install is:
+
+```bash
+git clone https://github.com/GeoKM/fluxctl.git
+cd fluxctl
+python3 scripts/install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clone-hxcfe --build-hxcfe
+.venv/bin/fluxctl doctor
+```
+
+For testers already inside a checkout, run:
 
 ```bash
 python3 scripts/install_fluxctl.py
@@ -117,6 +126,27 @@ Notes:
 - The optional Rust native decoder library is not yet bundled into wheels or
   standalone apps. Fluxctl falls back to the Python decoder when the native
   library is absent.
+
+## Rust Native Acceleration
+
+If `fluxctl doctor` reports that native acceleration is not built or not
+loadable, build the Rust library from the checkout root:
+
+```bash
+cargo build --manifest-path native/fluxctl_native/Cargo.toml --release
+```
+
+If `cargo` is missing, install Rust first. The standard cross-platform installer
+is:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Then open a new shell, or run `source "$HOME/.cargo/env"`, and retry the
+`cargo build` command. On Debian/Ubuntu, `sudo apt install cargo rustc` also
+works, though the distro toolchain may be older than the current `rustup`
+toolchain.
 
 ## Optional Integration Policy
 

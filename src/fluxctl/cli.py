@@ -199,7 +199,7 @@ def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
     else:
         native_status = "warn"
         native_detail = "not built or not loadable"
-        native_suggestion = "Run `cargo build --manifest-path native/fluxctl_native/Cargo.toml --release` to enable it."
+        native_suggestion = "Install Rust with `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` if cargo is missing, then run `cargo build --manifest-path native/fluxctl_native/Cargo.toml --release`."
     checks.append(
         _status_check(
             "native acceleration",
