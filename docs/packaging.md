@@ -52,8 +52,11 @@ need extra native build tools:
   `pacman -S --needed base-devel mingw-w64-x86_64-toolchain git make`
 - If you already have a prebuilt `hxcfe.exe`, skip `--build-hxcfe` and pass
   `--hxcfe C:\path\to\hxcfe.exe`.
-- Rust native acceleration is optional but needs Rust. Install Rust from
-  `https://rustup.rs`, open a new PowerShell so `cargo` is on `PATH`, then run
+- Rust native acceleration is optional but needs Rust plus the MSVC linker.
+  Install Rust from `https://rustup.rs` and Microsoft C++ Build Tools 14.0 or
+  newer with the "Desktop development with C++" workload. Open Developer
+  PowerShell for Visual Studio, or a fresh PowerShell if the tools are already
+  on `PATH`, then run
   `cargo build --manifest-path native\fluxctl_native\Cargo.toml --release`.
 
 For testers already inside a checkout, run:
@@ -189,8 +192,10 @@ Then open a new shell, or run `source "$HOME/.cargo/env"`, and retry the
 `cargo build` command. On Debian/Ubuntu, `sudo apt install cargo rustc` also
 works, though the distro toolchain may be older than the current `rustup`
 toolchain.
-On Windows, install Rust from `https://rustup.rs`, open a new PowerShell, and
-retry the same `cargo build` command.
+On Windows, install Rust from `https://rustup.rs` and Microsoft C++ Build Tools
+14.0 or newer with the "Desktop development with C++" workload. If `cargo`
+reports `link.exe` is missing, run the build from Developer PowerShell for
+Visual Studio or a Native Tools command prompt so the MSVC linker is on `PATH`.
 
 ## Optional Integration Policy
 

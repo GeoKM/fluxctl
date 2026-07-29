@@ -150,8 +150,9 @@ def _native_build_suggestion() -> str:
     build_command = "cargo build --manifest-path native/fluxctl_native/Cargo.toml --release"
     if os.name == "nt":
         return (
-            "Install Rust from https://rustup.rs, open a new PowerShell so cargo is on PATH, "
-            f"then run `{build_command}`."
+            "Install Rust from https://rustup.rs and Microsoft C++ Build Tools 14.0+ "
+            "with the Desktop development with C++ workload so link.exe is available. "
+            f"Open Developer PowerShell for Visual Studio or a fresh PowerShell, then run `{build_command}`."
         )
     return (
         "Install Rust with `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` "

@@ -38,8 +38,11 @@ extra native build tools:
   "Desktop development with C++" workload.
 - HxCFE: install a GNU Make/GCC environment such as MSYS2/MinGW64, or use a
   prebuilt `hxcfe.exe` and pass `--hxcfe C:\path\to\hxcfe.exe`.
-- Rust native acceleration: install Rust from `https://rustup.rs`, open a new
-  PowerShell so `cargo` is on `PATH`, then run
+- Rust native acceleration: install Rust from `https://rustup.rs` and Microsoft
+  C++ Build Tools 14.0 or newer with the "Desktop development with C++"
+  workload so the MSVC linker `link.exe` is available. Open Developer
+  PowerShell for Visual Studio, or a fresh PowerShell if the tools are already
+  on `PATH`, then run
   `cargo build --manifest-path native\fluxctl_native\Cargo.toml --release`.
 
 This creates `.venv`, installs `fluxctl` and Fluxctl Studio, offers optional
@@ -248,8 +251,10 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 Then open a new shell, or run `source "$HOME/.cargo/env"`, and retry the
 `cargo build` command. On Debian/Ubuntu packaged Rust can also be installed with
 `sudo apt install cargo rustc`, but `rustup` usually provides a newer toolchain.
-On Windows, install Rust from `https://rustup.rs`, open a new PowerShell, and
-retry the same `cargo build` command.
+On Windows, install Rust from `https://rustup.rs` and Microsoft C++ Build Tools
+14.0 or newer with the "Desktop development with C++" workload. If `cargo`
+reports `link.exe` is missing, run the build from Developer PowerShell for
+Visual Studio or a Native Tools command prompt so the MSVC linker is on `PATH`.
 
 Fluxctl auto-detects the resulting library under `native/fluxctl_native/target`.
 Set `FLUXCTL_NATIVE_PATH=/path/to/libfluxctl_native.dylib` (or `.so`/`.dll`) to

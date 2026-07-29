@@ -58,6 +58,8 @@ def test_doctor_native_hint_is_windows_friendly(monkeypatch) -> None:
 
     assert "PowerShell" in suggestion
     assert "rustup.rs" in suggestion
+    assert "link.exe" in suggestion
+    assert "Microsoft C++ Build Tools" in suggestion
     assert "cargo build" in suggestion
 
 
