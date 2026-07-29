@@ -122,3 +122,38 @@ def test_is_importable_uses_target_python(monkeypatch, tmp_path):
 
     assert installer._is_importable(python, "greaseweazle")
     assert seen == [[str(python), "-c", "import greaseweazle"]]
+
+
+def test_greaseweazle_build_hint_mentions_python_headers(capsys, tmp_path):
+    installer = _load_installer()
+    checkout = tmp_path / "greaseweazle"
+    python = tmp_path / "venv" / "bin" / "python"
+
+    installer._print_greaseweazle_build_hint(checkout, python)
+
+    output = capsys.readouterr().out
+    assert "python3-dev" in output
+    assert "build-essential" in output
+    assert str(checkout) in output
+
+
+def test_build_hxcfe_failure_prints_build_tool_hint(monkeypatch, capsys, tmp_path):
+    installer = _load_installer()
+    checkout = tmp_path / "HxCFloppyEmulator"
+    build_dir = checkout / "HxCFloppyEmulator_cmdline" / "build"
+    build_dir.mkdir(parents=True)
+    (build_dir / "Makefile").write_text("all:\n\tfalse\n", encoding="utf-8")
+    seen: list[Path] = []
+
+    def fake_run_optional(args, *, cwd=installer.ROOT):
+        seen.append(cwd)
+        return False
+
+    monkeypatch.setattr(installer, "_run_optional", fake_run_optional)
+
+    installer._build_hxcfe_checkout(checkout)
+
+    output = capsys.readouterr().out
+    assert seen == [build_dir]
+    assert "build-essential" in output
+    assert f"make -C {build_dir}" in output
