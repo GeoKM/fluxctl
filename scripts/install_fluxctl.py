@@ -37,6 +37,43 @@ def _run(args: list[str], *, cwd: Path = ROOT) -> None:
     subprocess.run([str(arg) for arg in args], cwd=cwd, check=True)
 
 
+def _run_probe(args: list[str], *, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(arg) for arg in args],
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _has_pip(python: Path) -> bool:
+    return _run_probe([python, "-m", "pip", "--version"]).returncode == 0
+
+
+def _ensure_pip(python: Path) -> None:
+    if _has_pip(python):
+        return
+    print("pip is missing from this virtual environment; trying ensurepip...")
+    result = _run_probe([python, "-m", "ensurepip", "--upgrade"])
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout).strip()
+        if details:
+            print(details)
+        raise SystemExit(
+            "Unable to bootstrap pip in the virtual environment.\n"
+            "On Debian/Ubuntu, install the venv support packages first:\n"
+            "  sudo apt install python3-venv python3-pip\n"
+            "Then rerun this installer. If .venv was created before those packages "
+            "were installed, rerun with --recreate-venv."
+        )
+    if not _has_pip(python):
+        raise SystemExit(
+            "ensurepip completed but pip is still unavailable. "
+            "Rerun with --recreate-venv, or remove .venv and try again."
+        )
+
+
 def _ask(prompt: str, default: bool) -> bool:
     default_text = "Y/n" if default else "y/N"
     answer = input(f"{prompt} [{default_text}] ").strip().lower()
@@ -85,6 +122,7 @@ def _check_hxcfe(explicit_path: Path | None) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Install fluxctl from this checkout.")
     parser.add_argument("--venv", type=Path, default=DEFAULT_VENV, help="Virtual environment path.")
+    parser.add_argument("--recreate-venv", action="store_true", help="Delete and recreate the selected virtual environment.")
     parser.add_argument("--yes", action="store_true", help="Use recommended defaults without prompting.")
     parser.add_argument("--no-gui", action="store_true", help="Skip PySide6 GUI dependencies.")
     parser.add_argument("--gui", action="store_true", help="Install GUI dependencies.")
@@ -112,11 +150,21 @@ def main() -> int:
         extras.append("greaseweazle")
     package = f".[{','.join(extras)}]" if extras else "."
 
+    if args.recreate_venv and args.venv.exists():
+        print(f"Removing virtual environment: {args.venv}")
+        shutil.rmtree(args.venv)
+
     if not args.venv.exists():
         print(f"Creating virtual environment: {args.venv}")
         venv.EnvBuilder(with_pip=True).create(args.venv)
 
     python = _python_in_venv(args.venv)
+    if not python.exists():
+        raise SystemExit(
+            f"Virtual environment Python was not found at {python}. "
+            "Rerun with --recreate-venv, or remove the venv and try again."
+        )
+    _ensure_pip(python)
     _run([python, "-m", "pip", "install", "--upgrade", "pip"])
     _run([python, "-m", "pip", "install", "-e", package])
 
