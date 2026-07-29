@@ -82,10 +82,10 @@ class CBMDOS1581(Filesystem):
                 return True
         return False
 
-    def _iter_directory_sectors(self) -> List[bytes]:
+    def _iter_directory_sectors(self, start_track: int, start_sector: int) -> List[bytes]:
         sectors: List[bytes] = []
         seen: set[tuple[int, int]] = set()
-        track, sector = DIRECTORY_TRACK, DIRECTORY_START_SECTOR
+        track, sector = start_track, start_sector
         while track != 0 and (track, sector) not in seen:
             seen.add((track, sector))
             data = self._read_logical_sector(track, sector)
@@ -95,9 +95,9 @@ class CBMDOS1581(Filesystem):
             track, sector = data[0], data[1]
         return sectors
 
-    def _parse_directory(self) -> None:
-        self.directory = []
-        for sector in self._iter_directory_sectors():
+    def _parse_directory_from(self, start_track: int, start_sector: int) -> List[DirectoryRecord1581]:
+        records: List[DirectoryRecord1581] = []
+        for sector in self._iter_directory_sectors(start_track, start_sector):
             for idx in range(8):
                 entry = sector[2 + idx * 32 : 2 + (idx + 1) * 32]
                 if len(entry) < 32:
@@ -111,7 +111,11 @@ class CBMDOS1581(Filesystem):
                     continue
                 name = entry[3:19].replace(b"\xA0", b" ").rstrip(b" \x00").decode("latin-1")
                 blocks = int.from_bytes(entry[28:30], "little")
-                self.directory.append(DirectoryRecord1581(name, start_track, start_sector, file_type, blocks))
+                records.append(DirectoryRecord1581(name, start_track, start_sector, file_type, blocks))
+        return records
+
+    def _parse_directory(self) -> None:
+        self.directory = self._parse_directory_from(DIRECTORY_TRACK, DIRECTORY_START_SECTOR)
 
     def probe(self, image: SectorImage) -> bool:
         self._reset()
@@ -128,8 +132,7 @@ class CBMDOS1581(Filesystem):
         return True
 
     def list_directory(self, path: str = "/") -> List[FileEntry]:
-        if path not in {"/", ""}:
-            raise FilesystemError("1581 reader only supports root directory")
+        records = self._records_for_path(path)
         return [
             FileEntry(
                 name=record.name,
@@ -138,11 +141,57 @@ class CBMDOS1581(Filesystem):
                 cluster_start=(record.start_track << 8) | record.start_sector,
                 attributes=record.file_type,
             )
-            for record in self.directory
+            for record in records
         ]
 
+    def _records_for_path(self, path: str) -> List[DirectoryRecord1581]:
+        parts = [part for part in path.strip("/").split("/") if part]
+        records = self.directory
+        if not parts:
+            return records
+        for part in parts:
+            match = next((record for record in records if record.name.lower() == part.lower()), None)
+            if match is None:
+                raise FilesystemError(f"Directory '{path}' not found")
+            if not match.is_dir:
+                raise FilesystemError(f"'{part}' is not a directory")
+            records = self._parse_directory_from(match.start_track, match.start_sector)
+        return records
+
+    def _record_for_file_path(self, path: str) -> DirectoryRecord1581:
+        parts = [part for part in path.strip("/").split("/") if part]
+        if not parts:
+            raise FilesystemError("Path must reference a file")
+        records = self._records_for_path("/" + "/".join(parts[:-1]) if len(parts) > 1 else "/")
+        target = parts[-1].lower()
+        for record in records:
+            if record.name.lower() == target:
+                if record.is_dir:
+                    raise FilesystemError("Cannot extract a directory entry")
+                return record
+        raise FilesystemError(f"File not found: {path}")
+
+    def _read_chain(self, start_track: int, start_sector: int) -> bytes:
+        chunks: List[bytes] = []
+        seen: set[tuple[int, int]] = set()
+        track, sector = start_track, start_sector
+        while track != 0 and (track, sector) not in seen:
+            seen.add((track, sector))
+            data = self._read_logical_sector(track, sector)
+            if len(data) < 2:
+                break
+            next_track, next_sector = data[0], data[1]
+            if next_track == 0:
+                used = min(next_sector, len(data) - 2)
+                chunks.append(data[2 : 2 + used])
+                break
+            chunks.append(data[2:])
+            track, sector = next_track, next_sector
+        return b"".join(chunks)
+
     def extract_file(self, path: str) -> bytes:
-        raise FilesystemError("1581 file extraction not implemented")
+        record = self._record_for_file_path(path)
+        return self._read_chain(record.start_track, record.start_sector)
 
     def metadata(self) -> Dict[str, str]:
         return {"filesystem": "cbm_dos_1581", "dos_type": self.dos_type}

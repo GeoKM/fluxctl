@@ -90,7 +90,9 @@ Fluxctl Studio is an optional desktop interface for the same core operations as
 the CLI. It is designed around two workflows:
 
 - **Simple Mode**: open an image, run doctor/probe/QC, render a disk map, list
-  filesystem files, and convert common output formats with fewer choices.
+  filesystem files, inspect file/sector hex, export files, replace supported
+  files into a new image copy, and convert common output formats with fewer
+  choices.
 - **Advanced Mode**: expose layout, encoding, track/head/sector, compare,
   sector listing, hex dump, conversion, and provenance inspection controls.
 
@@ -103,6 +105,19 @@ Install the GUI dependency and launch it:
 The GUI uses the same fluxctl package and CLI command paths as terminal
 workflows. Outputs such as converted images, QC reports, and provenance sidecars
 therefore follow the same behavior documented above.
+
+File replacement is intentionally conservative. Studio currently supports
+replacement for FAT12 files in flat `.img` images only, and always writes a new
+image copy instead of modifying the original image. FAT12 replacements may grow
+the selected file by allocating free clusters in the copied image. Replacement
+for other filesystems or image containers that would require format-specific
+sector rewrites is rejected until dedicated writers exist.
+
+Studio also supports FAT12 `.img` file manipulation into new image copies:
+delete a file or empty directory, import a file, recursively import a directory
+tree, and create an empty directory. FAT12 import and directory creation
+currently require 8.3-compatible ASCII names and reject overwriting existing
+entries.
 
 ### Commodore exports
 
