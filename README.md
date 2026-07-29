@@ -40,9 +40,11 @@ extra native build tools:
   prebuilt `hxcfe.exe` and pass `--hxcfe C:\path\to\hxcfe.exe`.
 - Rust native acceleration: install Rust from `https://rustup.rs` and Microsoft
   C++ Build Tools 14.0 or newer with the "Desktop development with C++"
-  workload so the MSVC linker `link.exe` is available. Use the Native Tools
-  prompt matching your Rust target. On Windows ARM64, use "ARM64 Native Tools
-  Command Prompt for VS" or run
+  workload so the MSVC linker `link.exe` is available. The Rust DLL must match
+  the Python process architecture shown by
+  `python -c "import platform; print(platform.machine())"`. Use the Native
+  Tools prompt matching your Rust target. On Windows ARM64, use "ARM64 Native
+  Tools Command Prompt for VS" or run
   `"C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" arm64`,
   then run
   `cargo build --manifest-path native\fluxctl_native\Cargo.toml --release`.
@@ -268,6 +270,10 @@ Fluxctl auto-detects the resulting library under `native/fluxctl_native/target`.
 Set `FLUXCTL_NATIVE_PATH=/path/to/libfluxctl_native.dylib` (or `.so`/`.dll`) to
 override the lookup path. Set `FLUXCTL_DISABLE_NATIVE=1` to force the pure
 Python fallback.
+If a built library still shows as unavailable, `fluxctl doctor` reports the
+native load error. On Windows, errors such as "not a valid Win32 application" or
+`LNK4272` usually mean the Python architecture, Rust target, and Visual Studio
+Native Tools prompt do not all match.
 
 ## Contributor guide
 See [AGENTS.md](AGENTS.md) for coding standards, workflows, and review expectations.

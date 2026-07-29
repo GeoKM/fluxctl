@@ -40,6 +40,7 @@ def test_doctor_greaseweazle_hint_mentions_actual_package_install() -> None:
 
 def test_doctor_native_hint_mentions_rust_install(monkeypatch) -> None:
     monkeypatch.setattr(cli, "is_native_available", lambda: False)
+    monkeypatch.setattr(cli, "native_load_errors", lambda: [])
     monkeypatch.delenv("FLUXCTL_DISABLE_NATIVE", raising=False)
 
     report = cli._doctor_report()
@@ -49,6 +50,22 @@ def test_doctor_native_hint_mentions_rust_install(monkeypatch) -> None:
     assert checks["native acceleration"]["status"] == "warn"
     assert "rustup.rs" in suggestion
     assert "cargo build" in suggestion
+
+
+def test_doctor_native_warning_includes_load_error(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "is_native_available", lambda: False)
+    monkeypatch.setattr(
+        cli,
+        "native_load_errors",
+        lambda: [r"C:\repo\native\fluxctl_native.dll: not a valid Win32 application"],
+    )
+    monkeypatch.delenv("FLUXCTL_DISABLE_NATIVE", raising=False)
+
+    report = cli._doctor_report()
+    checks = {check["name"]: check for check in report["checks"]}
+
+    assert checks["native acceleration"]["status"] == "warn"
+    assert "not a valid Win32 application" in checks["native acceleration"]["detail"]
 
 
 def test_doctor_native_hint_is_windows_friendly(monkeypatch) -> None:
@@ -61,6 +78,7 @@ def test_doctor_native_hint_is_windows_friendly(monkeypatch) -> None:
     assert "rustup.rs" in suggestion
     assert "link.exe" in suggestion
     assert "Microsoft C++ Build Tools" in suggestion
+    assert "platform.machine" in suggestion
     assert "cargo build" in suggestion
 
 
