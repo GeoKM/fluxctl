@@ -1,7 +1,9 @@
 import json
+from pathlib import Path
 
 from typer.testing import CliRunner
 
+import fluxctl.cli as cli
 from fluxctl.cli import app
 
 
@@ -58,6 +60,25 @@ def test_doctor_hxcfe_hint_mentions_clone_and_build_when_missing() -> None:
         assert "make -C" in suggestion
         assert "HxCFloppyEmulator_cmdline" in suggestion
         assert "HxCFloppyEmulator" in suggestion
+
+
+def test_doctor_finds_hxcfe_in_sibling_checkout(monkeypatch, tmp_path) -> None:
+    checkout = tmp_path / "fluxctl"
+    checkout.mkdir()
+    hxcfe = tmp_path / "HxCFloppyEmulator" / "build" / "hxcfe"
+    hxcfe.parent.mkdir(parents=True)
+    hxcfe.write_text("#!/bin/sh\n", encoding="utf-8")
+    hxcfe.chmod(0o755)
+
+    monkeypatch.setattr(cli, "__file__", str(checkout / "src" / "fluxctl" / "cli.py"))
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+    monkeypatch.chdir(checkout)
+
+    report = cli._doctor_report()
+    checks = {check["name"]: check for check in report["checks"]}
+
+    assert checks["hxcfe"]["status"] == "ok"
+    assert checks["hxcfe"]["detail"] == str(hxcfe)
 
 
 def test_top_level_help_guides_real_workflows() -> None:

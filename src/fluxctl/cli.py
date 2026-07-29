@@ -101,6 +101,51 @@ def _format_doctor_status(status: str) -> tuple[str, str]:
     return "FAIL", typer.colors.RED
 
 
+def _hxcfe_candidate_paths(explicit_path: Optional[Path] = None) -> list[Path]:
+    candidates: list[Path] = []
+    if explicit_path is not None:
+        candidates.append(explicit_path)
+    if found := shutil.which("hxcfe"):
+        candidates.append(Path(found))
+
+    roots = [
+        Path(__file__).resolve().parents[2],
+        Path.cwd(),
+    ]
+    seen_roots: set[Path] = set()
+    for root in roots:
+        root = root.resolve()
+        if root in seen_roots:
+            continue
+        seen_roots.add(root)
+        sibling = root.parent / "HxCFloppyEmulator"
+        candidates.extend(
+            [
+                sibling / "build" / "hxcfe",
+                sibling / "build" / "hxcfe.exe",
+                sibling / "HxCFloppyEmulator_cmdline" / "build" / "hxcfe",
+                sibling / "HxCFloppyEmulator_cmdline" / "build" / "hxcfe.exe",
+            ]
+        )
+
+    unique_candidates: list[Path] = []
+    seen_candidates: set[Path] = set()
+    for candidate in candidates:
+        candidate = candidate.expanduser()
+        if candidate in seen_candidates:
+            continue
+        seen_candidates.add(candidate)
+        unique_candidates.append(candidate)
+    return unique_candidates
+
+
+def _first_executable_hxcfe(explicit_path: Optional[Path] = None) -> Path | None:
+    for candidate in _hxcfe_candidate_paths(explicit_path):
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
 def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
     load_builtin_decoders()
     load_builtin_exporters()
@@ -176,13 +221,13 @@ def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
     else:
         checks.append(_status_check("greaseweazle", "ok", "optional package importable"))
 
-    hxcfe_path = hxcfe or (Path(found) if (found := shutil.which("hxcfe")) else None)
+    hxcfe_path = hxcfe if hxcfe is not None else _first_executable_hxcfe()
     if hxcfe_path is None:
         checks.append(
             _status_check(
                 "hxcfe",
                 "warn",
-                "optional binary not found on PATH",
+                "optional binary not found on PATH or sibling checkout",
                 "Clone/build with `git clone https://github.com/jfdelnero/HxCFloppyEmulator.git ../HxCFloppyEmulator` and `make -C ../HxCFloppyEmulator/build HxCFloppyEmulator_cmdline`, then pass --hxcfe or add hxcfe to PATH.",
             )
         )
