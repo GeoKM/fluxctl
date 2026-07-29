@@ -54,6 +54,10 @@ shape later implementation work.
   behavior. FAT12 could dump raw 32-byte directory entries from directory
   clusters; CBM DOS, Amiga, CP/M, and other filesystems need their own directory
   record/block interpretation instead of overloading File Dump.
+- Convert the Advanced HEX display panel into a HEX in-place editor. It should
+  allow byte edits in both Sector Dump and File Dump modes, validate changed
+  bytes, and write changes back through the same copy-only safety model used by
+  current manipulation actions rather than modifying the original image.
 - Extend copy-only file and directory manipulation beyond the current FAT12
   flat `.img` support. Add delete, replace, import file, import directory, and
   create-directory writers for CBM DOS 1541/1571, CBM DOS 1581, Amiga OFS/FFS,

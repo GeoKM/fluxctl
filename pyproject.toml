@@ -6,7 +6,7 @@ authors = [{name = "Fluxctl Maintainers"}]
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "typer[all]>=0.9.0",
+    "typer>=0.9.0",
     "pyyaml>=6.0.0",
 ]
 
@@ -21,6 +21,15 @@ hxcfe = []
 gui = [
     "PySide6>=6.7",
 ]
+packaging = [
+    "build>=1.2",
+    "pyinstaller>=6.0",
+    "twine>=5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/GeoKM/fluxctl"
+Repository = "https://github.com/GeoKM/fluxctl"
 
 [project.scripts]
 fluxctl = "fluxctl.cli:app"
