@@ -160,6 +160,13 @@ entries.
 
 ## Optional integrations
 
+On macOS, optional helper builds need Apple's Command Line Tools for `clang`,
+`make`, and system headers:
+```
+xcode-select --install
+```
+Full Xcode is usually not required.
+
 ### Greaseweazle-assisted PLL decoding
 Fluxctl can fall back to Greaseweazle’s Amiga and IBM FM/MFM codecs for higher-fidelity PLL decoding. This is **optional**; when missing, fluxctl uses its own PLL/parser.
 
