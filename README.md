@@ -27,8 +27,10 @@ On Windows PowerShell, use the Python launcher and Windows script paths:
 ```powershell
 git clone -b codex/packaging-distribution https://github.com/GeoKM/fluxctl.git
 cd fluxctl
-py -3 scripts\install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clone-hxcfe --build-hxcfe
+py -3 scripts\install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clone-hxcfe --build-hxcfe --build-native
 .venv\Scripts\fluxctl.exe doctor
+.venv\Scripts\fluxctl.exe --help
+.venv\Scripts\fluxctl-studio.exe
 ```
 
 On Windows, Fluxctl itself needs Git and Python. Optional helper builds need
@@ -40,14 +42,10 @@ extra native build tools:
   prebuilt `hxcfe.exe` and pass `--hxcfe C:\path\to\hxcfe.exe`.
 - Rust native acceleration: install Rust from `https://rustup.rs` and Microsoft
   C++ Build Tools 14.0 or newer with the "Desktop development with C++"
-  workload so the MSVC linker `link.exe` is available. The Rust DLL must match
-  the Python process architecture shown by
-  `python -c "import platform; print(platform.machine())"`. Use the Native
-  Tools prompt matching your Rust target. On Windows ARM64, use "ARM64 Native
-  Tools Command Prompt for VS" or run
-  `"C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" arm64`,
-  then run
-  `cargo build --manifest-path native\fluxctl_native\Cargo.toml --release`.
+  workload so the MSVC linker `link.exe` is available. `--build-native`
+  detects the virtual environment's Python architecture and selects the matching
+  Rust target. This matters on Windows ARM64, where an x64 Python may run under
+  emulation and cannot load an ARM64 DLL.
 
 This creates `.venv`, installs `fluxctl` and Fluxctl Studio, offers optional
 Greaseweazle support, clones/builds optional HxCFE support, and prints the
@@ -248,6 +246,16 @@ Build the native library from the repository root:
 ```
 cargo build --manifest-path native/fluxctl_native/Cargo.toml --release
 ```
+On Windows, the safer source-install route is
+`py -3 scripts\install_fluxctl.py --build-native`; it builds for the Python
+process architecture. For a manual build, use the target printed by
+`fluxctl doctor`, for example:
+
+```powershell
+rustup target add x86_64-pc-windows-msvc
+cargo build --manifest-path native\fluxctl_native\Cargo.toml --release --target x86_64-pc-windows-msvc
+```
+
 If `cargo` is missing, install Rust first. The standard cross-platform path is:
 ```
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -259,9 +267,9 @@ On Windows, install Rust from `https://rustup.rs` and Microsoft C++ Build Tools
 14.0 or newer with the "Desktop development with C++" workload. If `cargo`
 reports `link.exe` is missing, run the build from Developer PowerShell for
 Visual Studio or a Native Tools command prompt so the MSVC linker is on `PATH`.
-If the linker reports `LNK4272: library machine type 'x86' conflicts with target
-machine type 'ARM64'`, you are in the wrong Visual Studio shell. Use the ARM64
-Native Tools prompt, or run:
+Use the x64 Native Tools prompt for `x86_64-pc-windows-msvc`, or the ARM64
+Native Tools prompt for `aarch64-pc-windows-msvc`. If the linker reports
+`LNK4272`, the prompt and Rust target do not match. For a native ARM64 build:
 ```
 "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" arm64
 ```
@@ -273,7 +281,10 @@ Python fallback.
 If a built library still shows as unavailable, `fluxctl doctor` reports the
 native load error. On Windows, errors such as "not a valid Win32 application" or
 `LNK4272` usually mean the Python architecture, Rust target, and Visual Studio
-Native Tools prompt do not all match.
+Native Tools prompt do not all match. Do not use `platform.machine()` to choose
+the DLL architecture on Windows ARM64: it may report the host (`ARM64`) for an
+emulated x64 Python. Fluxctl uses Python's `win-amd64`/`win-arm64` platform tag
+and reads the DLL's PE header directly.
 
 ## Contributor guide
 See [AGENTS.md](AGENTS.md) for coding standards, workflows, and review expectations.

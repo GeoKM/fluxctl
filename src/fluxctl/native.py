@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import platform
 import struct
+import sysconfig
 from typing import Optional, Sequence
 
 
@@ -40,15 +41,71 @@ def _library_filename() -> str:
     return "libfluxctl_native.so"
 
 
+def windows_process_architecture() -> str | None:
+    """Return the Windows Python process architecture, not the host architecture."""
+
+    if platform.system() != "Windows":
+        return None
+    platform_tag = sysconfig.get_platform().lower().replace("_", "-")
+    if platform_tag in {"win-amd64", "win-x86-64"}:
+        return "x86_64"
+    if platform_tag in {"win-arm64", "win-aarch64"}:
+        return "arm64"
+    if platform_tag in {"win32", "win-x86"}:
+        return "x86"
+    return platform_tag.removeprefix("win-")
+
+
+def windows_rust_target() -> str | None:
+    """Return the MSVC Rust target matching the current Windows Python process."""
+
+    return {
+        "x86_64": "x86_64-pc-windows-msvc",
+        "arm64": "aarch64-pc-windows-msvc",
+        "x86": "i686-pc-windows-msvc",
+    }.get(windows_process_architecture() or "")
+
+
+def windows_pe_architecture(path: Path) -> str | None:
+    """Read a PE file's machine type without loading it."""
+
+    if platform.system() != "Windows":
+        return None
+    try:
+        with path.open("rb") as handle:
+            if handle.read(2) != b"MZ":
+                return None
+            handle.seek(0x3C)
+            pe_offset = struct.unpack("<I", handle.read(4))[0]
+            handle.seek(pe_offset)
+            if handle.read(4) != b"PE\0\0":
+                return None
+            machine = struct.unpack("<H", handle.read(2))[0]
+    except (OSError, struct.error):
+        return None
+    return {0x014C: "x86", 0x8664: "x86_64", 0xAA64: "arm64"}.get(
+        machine, f"PE machine 0x{machine:04x}"
+    )
+
+
 def _candidate_paths() -> list[Path]:
     env_path = os.environ.get("FLUXCTL_NATIVE_PATH")
     paths = [Path(env_path)] if env_path else []
     root = Path(__file__).resolve().parents[2]
     filename = _library_filename()
+    target_root = root / "native" / "fluxctl_native" / "target"
+    rust_target = windows_rust_target()
+    if rust_target:
+        paths.extend(
+            [
+                target_root / rust_target / "release" / filename,
+                target_root / rust_target / "debug" / filename,
+            ]
+        )
     paths.extend(
         [
-            root / "native" / "fluxctl_native" / "target" / "release" / filename,
-            root / "native" / "fluxctl_native" / "target" / "debug" / filename,
+            target_root / "release" / filename,
+            target_root / "debug" / filename,
         ]
     )
     return paths
@@ -73,6 +130,14 @@ def _load_library():
     for path in _candidate_paths():
         if not path.exists():
             _LOAD_ERRORS.append(f"{path}: not found")
+            continue
+        library_arch = windows_pe_architecture(path)
+        process_arch = windows_process_architecture()
+        if library_arch and process_arch and library_arch != process_arch:
+            _LOAD_ERRORS.append(
+                f"{path}: architecture mismatch (DLL is {library_arch}, "
+                f"Python process is {process_arch}; expected Rust target {windows_rust_target()})"
+            )
             continue
         try:
             lib = ctypes.CDLL(str(path))
@@ -399,4 +464,7 @@ __all__ = [
     "mfm_reconstruct_track",
     "native_load_errors",
     "parse_scp_flux_bytes",
+    "windows_pe_architecture",
+    "windows_process_architecture",
+    "windows_rust_target",
 ]

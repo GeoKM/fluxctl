@@ -37,8 +37,10 @@ On Windows PowerShell, use the Python launcher and Windows script paths:
 ```powershell
 git clone -b codex/packaging-distribution https://github.com/GeoKM/fluxctl.git
 cd fluxctl
-py -3 scripts\install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clone-hxcfe --build-hxcfe
+py -3 scripts\install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clone-hxcfe --build-hxcfe --build-native
 .venv\Scripts\fluxctl.exe doctor
+.venv\Scripts\fluxctl.exe --help
+.venv\Scripts\fluxctl-studio.exe
 ```
 
 On Windows, Git and Python are enough for Fluxctl itself. Optional helper builds
@@ -54,14 +56,9 @@ need extra native build tools:
   `--hxcfe C:\path\to\hxcfe.exe`.
 - Rust native acceleration is optional but needs Rust plus the MSVC linker.
   Install Rust from `https://rustup.rs` and Microsoft C++ Build Tools 14.0 or
-  newer with the "Desktop development with C++" workload. The Rust DLL must
-  match the Python process architecture shown by
-  `python -c "import platform; print(platform.machine())"`. Use the Native
-  Tools prompt matching your Rust target. On Windows ARM64, use "ARM64 Native
-  Tools Command Prompt for VS" or run
-  `"C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" arm64`,
-  then run
-  `cargo build --manifest-path native\fluxctl_native\Cargo.toml --release`.
+  newer with the "Desktop development with C++" workload. Pass `--build-native`
+  so the installer selects the Rust target matching the virtual environment's
+  Python process. An x64 Python on Windows ARM64 requires an x64 DLL.
 
 For testers already inside a checkout, run:
 
@@ -166,6 +163,16 @@ python scripts/build_packages.py --no-python --standalone-cli --standalone-gui
 
 Outputs are written under `dist/` by PyInstaller.
 
+For a shareable Windows build, run those commands in a clean x64 or ARM64
+virtual environment on the matching Windows architecture, test both generated
+executables on a machine without the source checkout, and distribute the
+resulting CLI executable and Studio bundle together in a versioned ZIP. Include
+the matching VC runtime or document the Microsoft Visual C++ Redistributable
+prerequisite. Code-sign the executables (and any bundled
+`fluxctl_native.dll`) before wider distribution. A conventional installer can
+wrap the same `dist/` payload with WiX, Inno Setup, or MSIX and add Start Menu
+shortcuts for Studio plus an optional PATH entry for the CLI.
+
 Notes:
 
 - macOS `.app` bundles should eventually be signed and notarized before public
@@ -185,6 +192,20 @@ loadable, build the Rust library from the checkout root:
 cargo build --manifest-path native/fluxctl_native/Cargo.toml --release
 ```
 
+On Windows, prefer the architecture-aware installer:
+
+```powershell
+py -3 scripts\install_fluxctl.py --build-native
+```
+
+For a manual cross-target build, use the exact target reported by
+`fluxctl doctor`, for example:
+
+```powershell
+rustup target add x86_64-pc-windows-msvc
+cargo build --manifest-path native\fluxctl_native\Cargo.toml --release --target x86_64-pc-windows-msvc
+```
+
 If `cargo` is missing, install Rust first. The standard cross-platform installer
 is:
 
@@ -200,9 +221,9 @@ On Windows, install Rust from `https://rustup.rs` and Microsoft C++ Build Tools
 14.0 or newer with the "Desktop development with C++" workload. If `cargo`
 reports `link.exe` is missing, run the build from Developer PowerShell for
 Visual Studio or a Native Tools command prompt so the MSVC linker is on `PATH`.
-If the linker reports `LNK4272: library machine type 'x86' conflicts with target
-machine type 'ARM64'`, you are in the wrong Visual Studio shell. Use the ARM64
-Native Tools prompt, or run:
+Use the x64 Native Tools prompt for `x86_64-pc-windows-msvc`, and the ARM64
+Native Tools prompt for `aarch64-pc-windows-msvc`. `LNK4272` means the selected
+prompt and target do not match. To initialize a native ARM64 toolchain:
 
 ```cmd
 "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" arm64
@@ -211,7 +232,11 @@ Native Tools prompt, or run:
 If a built library still shows as unavailable, run `fluxctl doctor` again. It
 reports the native load error for the candidate DLL, shared object, or dylib.
 On Windows, errors such as "not a valid Win32 application" usually mean Python
-and the Rust DLL were built for different architectures.
+and the Rust DLL were built for different architectures. On Windows ARM64,
+`platform.machine()` can report the ARM64 host even when Python itself is x64.
+Fluxctl therefore uses the Python packaging platform tag and reads the DLL PE
+machine type; the doctor output names both architectures and the required Rust
+target.
 
 ## Optional Integration Policy
 

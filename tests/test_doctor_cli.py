@@ -68,6 +68,22 @@ def test_doctor_native_warning_includes_load_error(monkeypatch) -> None:
     assert "not a valid Win32 application" in checks["native acceleration"]["detail"]
 
 
+def test_doctor_prefers_actionable_native_error_over_missing_debug_dll(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "is_native_available", lambda: False)
+    monkeypatch.setattr(
+        cli,
+        "native_load_errors",
+        lambda: ["release.dll: architecture mismatch", "debug.dll: not found"],
+    )
+    monkeypatch.delenv("FLUXCTL_DISABLE_NATIVE", raising=False)
+
+    report = cli._doctor_report()
+    check = {item["name"]: item for item in report["checks"]}["native acceleration"]
+
+    assert "architecture mismatch" in check["detail"]
+    assert "debug.dll" not in check["detail"]
+
+
 def test_doctor_native_hint_is_windows_friendly(monkeypatch) -> None:
     monkeypatch.setattr(cli.os, "name", "nt")
 
@@ -79,6 +95,7 @@ def test_doctor_native_hint_is_windows_friendly(monkeypatch) -> None:
     assert "link.exe" in suggestion
     assert "Microsoft C++ Build Tools" in suggestion
     assert "platform.machine" in suggestion
+    assert "--target" in suggestion
     assert "cargo build" in suggestion
 
 

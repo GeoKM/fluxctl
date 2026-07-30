@@ -119,6 +119,46 @@ def _is_importable(python: Path, package: str) -> bool:
     return _run_probe([python, "-c", f"import {package}"]).returncode == 0
 
 
+def _windows_rust_target(python: Path) -> str | None:
+    if os.name != "nt":
+        return None
+    probe = _run_probe([python, "-c", "import sysconfig; print(sysconfig.get_platform())"])
+    platform_tag = probe.stdout.strip().lower().replace("_", "-")
+    return {
+        "win-amd64": "x86_64-pc-windows-msvc",
+        "win-arm64": "aarch64-pc-windows-msvc",
+        "win32": "i686-pc-windows-msvc",
+    }.get(platform_tag)
+
+
+def _build_native(python: Path) -> None:
+    cargo = shutil.which("cargo")
+    rustup = shutil.which("rustup")
+    if cargo is None:
+        print("Cannot build native acceleration because cargo is not available on PATH.")
+        print("Install Rust from https://rustup.rs, then rerun with --build-native.")
+        return
+    command = [
+        cargo,
+        "build",
+        "--manifest-path",
+        str(ROOT / "native" / "fluxctl_native" / "Cargo.toml"),
+        "--release",
+    ]
+    target = _windows_rust_target(python)
+    if target:
+        if rustup is not None and not _run_optional([rustup, "target", "add", target]):
+            print(f"Could not install Rust target {target}.")
+            return
+        command.extend(["--target", target])
+        print(f"Building native acceleration for the Python process target: {target}")
+    if not _run_optional(command):
+        print(
+            "Native build failed. On Windows, run the installer from the Visual Studio "
+            "Native Tools prompt matching the target printed above."
+        )
+
+
 def _hxcfe_candidate_paths(explicit_path: Path | None = None) -> list[Path]:
     candidates: list[Path] = []
     if explicit_path is not None:
@@ -233,13 +273,22 @@ def main() -> int:
     parser.add_argument("--hxcfe", type=Path, help="Path to an existing hxcfe binary to check.")
     parser.add_argument("--clone-hxcfe", action="store_true", help="Clone HxCFloppyEmulator into ../HxCFloppyEmulator if no local checkout exists.")
     parser.add_argument("--build-hxcfe", action="store_true", help="Run make in a discovered HxCFE build directory.")
+    parser.add_argument(
+        "--build-native",
+        action="store_true",
+        help="Build the optional Rust DLL for the virtual environment's Python architecture.",
+    )
     args = parser.parse_args()
 
     gui_choice: bool | None = True if args.gui else False if args.no_gui else None
     greaseweazle_choice: bool | None = (
         True if args.greaseweazle else False if args.no_greaseweazle else None
     )
-    install_gui = True if args.yes else _interactive_default(gui_choice, "Install Fluxctl Studio GUI dependencies?", True)
+    install_gui = (
+        True
+        if args.yes and gui_choice is None
+        else _interactive_default(gui_choice, "Install Fluxctl Studio GUI dependencies?", True)
+    )
     install_gw = (
         False
         if args.yes and greaseweazle_choice is None
@@ -274,6 +323,8 @@ def main() -> int:
     _ensure_pip(python)
     _run([python, "-m", "pip", "install", "--upgrade", "pip"])
     _run([python, "-m", "pip", "install", "-e", package])
+    if args.build_native:
+        _build_native(python)
 
     if install_gw:
         gw_checkout = args.editable_greaseweazle or _find_sibling("greaseweazle") or _find_sibling("Greaseweazle")
