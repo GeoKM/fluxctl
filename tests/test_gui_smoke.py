@@ -124,6 +124,29 @@ def test_opening_new_image_clears_file_panel() -> None:
     window.close()
 
 
+def test_simple_mode_can_hide_and_restore_disk_map() -> None:
+    window = FluxctlStudio()
+
+    assert window.map_panel_visible
+    assert not window.map_canvas_panel.isHidden()
+    assert window.map_toggle_button.text() == "Hide Disk Map"
+
+    window.toggle_disk_map_panel()
+
+    assert not window.map_panel_visible
+    assert window.map_canvas_panel.isHidden()
+    assert window.map_toggle_button.text() == "Show Disk Map"
+    assert "Show the disk map" in window.map_toggle_button.toolTip()
+
+    window.toggle_disk_map_panel()
+
+    assert window.map_panel_visible
+    assert not window.map_canvas_panel.isHidden()
+    assert window.map_toggle_button.text() == "Hide Disk Map"
+    assert "expand the Files" in window.map_toggle_button.toolTip()
+    window.close()
+
+
 def test_fat12_write_actions_enable_only_for_supported_flat_img() -> None:
     window = FluxctlStudio()
 
