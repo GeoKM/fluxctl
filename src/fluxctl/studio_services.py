@@ -22,6 +22,8 @@ from .decoding import load_builtin_decoders
 from .detection import detect_encoding, detect_layout
 from .filesystem_detection import detect_filesystem
 from .filesystems import RawSectorImage, TrackSectorImage, load_builtin_filesystems
+from .filesystems.cbm_dos import CBMDOS
+from .filesystems.cbm_dos_1581 import CBMDOS1581
 from .filesystems.fat12 import FAT12
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from .plugins import registry
@@ -116,6 +118,326 @@ class MutationResult:
     entries: int
     bytes: int
     filesystem: str
+
+
+@dataclass(frozen=True)
+class BlankImagePreset:
+    """A supported blank disk image option exposed by Studio."""
+
+    preset_id: str
+    label: str
+    suffix: str
+    layout_id: str
+    filesystem: str
+    size: int
+    description: str
+
+
+@dataclass(frozen=True)
+class BlankImageResult:
+    """Summary for a newly created blank disk image."""
+
+    path: str
+    preset_id: str
+    label: str
+    layout_id: str
+    filesystem: str
+    size: int
+
+
+FAT12_PRESETS = {
+    "fat12_180k": {
+        "label": "IBM DOS FAT12 180K (.img)",
+        "layout_id": "ibm_mfm_180k",
+        "total_sectors": 360,
+        "media": 0xFC,
+        "sectors_per_cluster": 1,
+        "root_entries": 64,
+        "sectors_per_fat": 2,
+        "sectors_per_track": 9,
+        "heads": 1,
+    },
+    "fat12_360k": {
+        "label": "IBM DOS FAT12 360K (.img)",
+        "layout_id": "ibm_mfm_360k",
+        "total_sectors": 720,
+        "media": 0xFD,
+        "sectors_per_cluster": 2,
+        "root_entries": 112,
+        "sectors_per_fat": 2,
+        "sectors_per_track": 9,
+        "heads": 2,
+    },
+    "fat12_720k": {
+        "label": "IBM DOS FAT12 720K (.img)",
+        "layout_id": "ibm_mfm_720k",
+        "total_sectors": 1440,
+        "media": 0xF9,
+        "sectors_per_cluster": 2,
+        "root_entries": 112,
+        "sectors_per_fat": 3,
+        "sectors_per_track": 9,
+        "heads": 2,
+    },
+    "fat12_1200k": {
+        "label": "IBM DOS FAT12 1.2M (.img)",
+        "layout_id": "ibm_mfm_1200k",
+        "total_sectors": 2400,
+        "media": 0xF9,
+        "sectors_per_cluster": 1,
+        "root_entries": 224,
+        "sectors_per_fat": 7,
+        "sectors_per_track": 15,
+        "heads": 2,
+    },
+    "fat12_1440k": {
+        "label": "IBM DOS FAT12 1.44M (.img)",
+        "layout_id": "ibm_mfm_1440k",
+        "total_sectors": 2880,
+        "media": 0xF0,
+        "sectors_per_cluster": 1,
+        "root_entries": 224,
+        "sectors_per_fat": 9,
+        "sectors_per_track": 18,
+        "heads": 2,
+    },
+}
+
+
+BLANK_IMAGE_PRESETS: tuple[BlankImagePreset, ...] = tuple(
+    BlankImagePreset(
+        preset_id=preset_id,
+        label=str(spec["label"]),
+        suffix=".img",
+        layout_id=str(spec["layout_id"]),
+        filesystem="fat12",
+        size=int(spec["total_sectors"]) * 512,
+        description="Formatted MS-DOS FAT12 image compatible with Studio file import and directory creation.",
+    )
+    for preset_id, spec in FAT12_PRESETS.items()
+) + (
+    BlankImagePreset(
+        "cbm_dos_1541_d64",
+        "Commodore 1541 CBM DOS 170K (.d64)",
+        ".d64",
+        "commodore_gcr_1541_170k",
+        "cbm_dos",
+        174848,
+        "Formatted empty CBM DOS 2A image with BAM and root directory.",
+    ),
+    BlankImagePreset(
+        "cbm_dos_1571_d71",
+        "Commodore 1571 CBM DOS 341K (.d71)",
+        ".d71",
+        "commodore_gcr_1571_341k",
+        "cbm_dos_1571",
+        349696,
+        "Formatted empty two-sided CBM DOS 2A image with BAM and root directory.",
+    ),
+    BlankImagePreset(
+        "cbm_dos_1581_d81",
+        "Commodore 1581 CBM DOS 800K (.d81)",
+        ".d81",
+        "commodore_mfm_1581_800k",
+        "cbm_dos_1581",
+        819200,
+        "Minimal empty CBM DOS 3D directory image.",
+    ),
+    BlankImagePreset(
+        "amiga_ofs_adf",
+        "AmigaDOS OFS 880K (.adf)",
+        ".adf",
+        "amiga_mfm_880k",
+        "amiga_ofs",
+        901120,
+        "Minimal empty AmigaDOS image with DOS boot marker.",
+    ),
+)
+
+
+def blank_image_presets() -> list[BlankImagePreset]:
+    """Return blank image presets supported by Studio."""
+
+    return list(BLANK_IMAGE_PRESETS)
+
+
+def create_blank_image(preset_id: str, output_path: Path) -> BlankImageResult:
+    """Create a new blank disk image for a supported Studio preset."""
+
+    preset = _blank_preset_by_id(preset_id)
+    output_path = output_path.with_suffix(preset.suffix) if output_path.suffix == "" else output_path
+    if output_path.exists():
+        raise ValueError(f"Output image already exists: {output_path}")
+    if preset_id in FAT12_PRESETS:
+        payload = _build_blank_fat12_image(FAT12_PRESETS[preset_id])
+    elif preset_id == "cbm_dos_1541_d64":
+        payload = _build_blank_cbm_dos_image(sides=1)
+    elif preset_id == "cbm_dos_1571_d71":
+        payload = _build_blank_cbm_dos_image(sides=2)
+    elif preset_id == "cbm_dos_1581_d81":
+        payload = _build_blank_1581_image()
+    elif preset_id == "amiga_ofs_adf":
+        payload = _build_blank_amiga_image()
+    else:  # pragma: no cover - guarded by _blank_preset_by_id
+        raise ValueError(f"Unsupported blank image preset: {preset_id}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(payload)
+    return BlankImageResult(
+        path=str(output_path),
+        preset_id=preset.preset_id,
+        label=preset.label,
+        layout_id=preset.layout_id,
+        filesystem=preset.filesystem,
+        size=len(payload),
+    )
+
+
+def _blank_preset_by_id(preset_id: str) -> BlankImagePreset:
+    for preset in BLANK_IMAGE_PRESETS:
+        if preset.preset_id == preset_id:
+            return preset
+    raise ValueError(f"Unsupported blank image preset: {preset_id}")
+
+
+def _build_blank_fat12_image(spec: dict) -> bytes:
+    total_sectors = int(spec["total_sectors"])
+    media = int(spec["media"])
+    image = bytearray(total_sectors * 512)
+    boot = bytearray(512)
+    boot[0:3] = b"\xEB\x3C\x90"
+    boot[3:11] = b"FLUXCTL "
+    boot[11:13] = (512).to_bytes(2, "little")
+    boot[13] = int(spec["sectors_per_cluster"])
+    boot[14:16] = (1).to_bytes(2, "little")
+    boot[16] = 2
+    boot[17:19] = int(spec["root_entries"]).to_bytes(2, "little")
+    boot[19:21] = total_sectors.to_bytes(2, "little") if total_sectors <= 0xFFFF else b"\x00\x00"
+    boot[21] = media
+    boot[22:24] = int(spec["sectors_per_fat"]).to_bytes(2, "little")
+    boot[24:26] = int(spec["sectors_per_track"]).to_bytes(2, "little")
+    boot[26:28] = int(spec["heads"]).to_bytes(2, "little")
+    if total_sectors > 0xFFFF:
+        boot[32:36] = total_sectors.to_bytes(4, "little")
+    boot[36] = 0
+    boot[38] = 0x29
+    boot[39:43] = b"FCTL"
+    boot[43:54] = b"NO NAME    "
+    boot[54:62] = b"FAT12   "
+    boot[510:512] = b"\x55\xAA"
+    image[:512] = boot
+    sectors_per_fat = int(spec["sectors_per_fat"])
+    for fat_index in range(2):
+        fat_offset = (1 + fat_index * sectors_per_fat) * 512
+        image[fat_offset : fat_offset + 3] = bytes([media, 0xFF, 0xFF])
+    return bytes(image)
+
+
+def _build_blank_cbm_dos_image(*, sides: int) -> bytes:
+    from .exporters.d64 import DEFAULT_SECTORS_PER_TRACK, SECTOR_SIZE
+
+    sectors_per_track = list(DEFAULT_SECTORS_PER_TRACK) * sides
+    image = bytearray(sum(sectors_per_track) * SECTOR_SIZE)
+
+    def offset(track: int, sector: int) -> int:
+        return (sum(sectors_per_track[: track - 1]) + sector) * SECTOR_SIZE
+
+    def mark_used(bam: bytearray, track: int, sector: int) -> None:
+        bam_offset = 4 + (track - 1) * 4
+        byte_offset = bam_offset + 1 + sector // 8
+        if bam[byte_offset] & (1 << (sector % 8)):
+            bam[byte_offset] &= ~(1 << (sector % 8))
+            bam[bam_offset] = max(0, bam[bam_offset] - 1)
+
+    bam = bytearray(SECTOR_SIZE)
+    bam[0:2] = bytes([18, 1])
+    bam[2] = 0x41
+    bam[0x90:0xA0] = b"FLUXCTL BLANK".ljust(16, b"\xA0")
+    bam[0xA2:0xA4] = b"2A"
+    bam[0xA5:0xA7] = b"\xA0\xA0"
+    for track in range(1, 36):
+        count = DEFAULT_SECTORS_PER_TRACK[track - 1]
+        entry_offset = 4 + (track - 1) * 4
+        bam[entry_offset] = count
+        for sector in range(count):
+            bam[entry_offset + 1 + sector // 8] |= 1 << (sector % 8)
+    mark_used(bam, 18, 0)
+    mark_used(bam, 18, 1)
+    image[offset(18, 0) : offset(18, 0) + SECTOR_SIZE] = bam
+
+    directory = bytearray(SECTOR_SIZE)
+    directory[0:2] = b"\x00\xFF"
+    image[offset(18, 1) : offset(18, 1) + SECTOR_SIZE] = directory
+
+    if sides == 2:
+        side_bam = bytearray(SECTOR_SIZE)
+        for track in range(36, 71):
+            logical_track_index = track - 36
+            count = DEFAULT_SECTORS_PER_TRACK[logical_track_index]
+            side_bam[logical_track_index * 3 : logical_track_index * 3 + 3] = _cbm_free_bitmap(count)
+        image[offset(53, 0) : offset(53, 0) + SECTOR_SIZE] = side_bam
+    return bytes(image)
+
+
+def _cbm_free_bitmap(sector_count: int) -> bytes:
+    bitmap = bytearray(3)
+    for sector in range(sector_count):
+        bitmap[sector // 8] |= 1 << (sector % 8)
+    return bytes(bitmap)
+
+
+def _build_blank_1581_image() -> bytes:
+    image = bytearray(819200)
+
+    def offset(track: int, sector: int) -> int:
+        return ((track - 1) * 40 + sector) * 256
+
+    def mark_used(bam: bytearray, track: int, sector: int) -> None:
+        track_index = (track - 1) if track <= 40 else (track - 41)
+        entry_offset = 16 + track_index * 6
+        byte_offset = entry_offset + 1 + sector // 8
+        if bam[byte_offset] & (1 << (sector % 8)):
+            bam[byte_offset] &= ~(1 << (sector % 8))
+            bam[entry_offset] = max(0, bam[entry_offset] - 1)
+
+    header = bytearray(256)
+    header[0:3] = bytes([40, 3, ord("D")])
+    header[4:20] = b"FLUXCTL BLANK".ljust(16, b"\xA0")
+    header[22:24] = b"FC"
+    header[24] = 0xA0
+    header[25:27] = b"3D"
+    header[27:29] = b"\xA0\xA0"
+    image[offset(40, 0) : offset(40, 0) + 256] = header
+
+    bam1 = bytearray(256)
+    bam1[0:8] = bytes([40, 2, ord("D"), 0xBB, ord("F"), ord("C"), 0xC0, 0x00])
+    bam2 = bytearray(256)
+    bam2[0:8] = bytes([0, 0xFF, ord("D"), 0xBB, ord("F"), ord("C"), 0xC0, 0x00])
+    for track in range(1, 81):
+        bam = bam1 if track <= 40 else bam2
+        track_index = (track - 1) if track <= 40 else (track - 41)
+        entry_offset = 16 + track_index * 6
+        bam[entry_offset] = 40
+        for sector in range(40):
+            bam[entry_offset + 1 + sector // 8] |= 1 << (sector % 8)
+    for sector in (0, 1, 2, 3):
+        mark_used(bam1, 40, sector)
+    image[offset(40, 1) : offset(40, 1) + 256] = bam1
+    image[offset(40, 2) : offset(40, 2) + 256] = bam2
+
+    directory = bytearray(256)
+    directory[0:2] = b"\x00\xFF"
+    image[offset(40, 3) : offset(40, 3) + 256] = directory
+    return bytes(image)
+
+
+def _build_blank_amiga_image() -> bytes:
+    image = bytearray(901120)
+    image[0:4] = b"DOS\0"
+    root = bytearray(512)
+    root[0:4] = (2).to_bytes(4, "big")
+    root[508:512] = (-2).to_bytes(4, "big", signed=True)
+    image[880 * 512 : 881 * 512] = root
+    return bytes(image)
 
 
 def run_fluxctl_command(args: list[str], cwd: Optional[Path] = None) -> CommandResult:
@@ -602,14 +924,29 @@ def import_file_with_copy(
     host_file: Path,
     output_path: Path,
 ) -> MutationResult:
-    """Import one host file into a FAT12 directory in a new image copy."""
+    """Import one host file into a supported filesystem in a new image copy."""
 
     data = host_file.read_bytes()
-    image_bytes = _read_fat12_source_for_mutation(path, output_path)
-    filesystem = _probe_fat12_bytes(image_bytes)
-    patched = filesystem.import_file(image_bytes, directory, host_file.name, data)
+    suffix = path.suffix.lower()
+    if suffix == ".img":
+        image_bytes = _read_fat12_source_for_mutation(path, output_path)
+        filesystem = _probe_fat12_bytes(image_bytes)
+        patched = filesystem.import_file(image_bytes, directory, host_file.name, data)
+        filesystem_name = "fat12"
+    elif suffix in {".d64", ".d71"}:
+        image_bytes = _read_source_for_mutation(path, output_path)
+        filesystem = _probe_cbm_dos_bytes(image_bytes)
+        patched = filesystem.import_file(image_bytes, directory, host_file.name, data)
+        filesystem_name = "cbm_dos_1571" if suffix == ".d71" else "cbm_dos"
+    elif suffix == ".d81":
+        image_bytes = _read_source_for_mutation(path, output_path)
+        filesystem = _probe_cbm_dos_1581_bytes(image_bytes)
+        patched = filesystem.import_file(image_bytes, directory, host_file.name, data)
+        filesystem_name = "cbm_dos_1581"
+    else:
+        raise ValueError("File import is currently supported only for FAT12 .img and CBM DOS .d64/.d71/.d81 images")
     _write_new_image_copy(output_path, patched)
-    return MutationResult(str(output_path), "import-file", 1, len(data), "fat12")
+    return MutationResult(str(output_path), "import-file", 1, len(data), filesystem_name)
 
 
 def import_directory_with_copy(
@@ -631,14 +968,18 @@ def import_directory_with_copy(
 
 
 def _read_fat12_source_for_mutation(path: Path, output_path: Path) -> bytes:
+    if path.suffix.lower() != ".img":
+        raise ValueError("FAT12 mutation is currently supported only for flat .img images")
+    return _read_source_for_mutation(path, output_path)
+
+
+def _read_source_for_mutation(path: Path, output_path: Path) -> bytes:
     source = path.resolve()
     output = output_path.resolve()
     if source == output:
         raise ValueError("Output image must be a new copy, not the original image")
     if output_path.exists():
         raise ValueError(f"Output image already exists: {output_path}")
-    if path.suffix.lower() != ".img":
-        raise ValueError("FAT12 mutation is currently supported only for flat .img images")
     return path.read_bytes()
 
 
@@ -646,6 +987,20 @@ def _probe_fat12_bytes(image_bytes: bytes) -> FAT12:
     filesystem = FAT12()
     if not filesystem.probe(RawSectorImage(image_bytes)):
         raise ValueError("FAT12 mutation is currently supported only for FAT12 images")
+    return filesystem
+
+
+def _probe_cbm_dos_bytes(image_bytes: bytes) -> CBMDOS:
+    filesystem = CBMDOS()
+    if not filesystem.probe(RawSectorImage(image_bytes, bytes_per_sector=256)):
+        raise ValueError("CBM DOS import is currently supported only for formatted .d64/.d71 images")
+    return filesystem
+
+
+def _probe_cbm_dos_1581_bytes(image_bytes: bytes) -> CBMDOS1581:
+    filesystem = CBMDOS1581()
+    if not filesystem.probe(RawSectorImage(image_bytes, bytes_per_sector=256)):
+        raise ValueError("1581 import is currently supported only for formatted .d81 images")
     return filesystem
 
 

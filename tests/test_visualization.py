@@ -98,4 +98,4 @@ def test_cbm_bam_block_map_uses_grid_style() -> None:
 
     assert disk_map.render_style == "grid"
     assert disk_map.tracks == [["bam_file", "bam_free"], ["bam_system"]]
-    assert disk_map.track_ids == [(0, 0), (0, 1)]
+    assert disk_map.track_ids == [(1, 0), (36, 1)]

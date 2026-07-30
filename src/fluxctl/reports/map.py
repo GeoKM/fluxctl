@@ -77,6 +77,10 @@ class DiskMap:
     track_confidence:
         Optional list of average confidence values per track to surface in
         future renderings or legends.
+    address_style:
+        Address convention used by ``track_ids``. ``physical`` uses internal
+        zero-based track rows; ``cbm_logical`` uses Commodore one-based logical
+        track numbers with zero-based sectors.
     """
 
     tracks: List[List[str]]
@@ -86,6 +90,7 @@ class DiskMap:
     track_ids: List[Tuple[int, int]] = field(default_factory=list)
     track_confidence: List[float] = field(default_factory=list)
     sector_details: List[List[SectorMapEntry]] = field(default_factory=list)
+    address_style: str = "physical"
 
 
 def _sector_entry(sector: Sector) -> SectorMapEntry:
@@ -341,8 +346,7 @@ def build_cbm_bam_block_map(blocks: list[tuple[int, int, int, str]]) -> DiskMap:
             for sector, state in entries
         ]
         track_states.append(states)
-        display_track = (track - 36) if head == 1 else (track - 1)
-        track_ids.append((display_track, head))
+        track_ids.append((track, head))
         sector_details.append(details)
 
     return DiskMap(
@@ -353,6 +357,7 @@ def build_cbm_bam_block_map(blocks: list[tuple[int, int, int, str]]) -> DiskMap:
         track_ids=track_ids,
         track_confidence=[1.0] * len(track_states),
         sector_details=sector_details,
+        address_style="cbm_logical",
     )
 
 

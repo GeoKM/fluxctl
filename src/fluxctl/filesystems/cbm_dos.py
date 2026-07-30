@@ -32,6 +32,7 @@ class CBMDOS(Filesystem):
     def __init__(self) -> None:
         self.image: Optional[SectorImage] = None
         self.sectors_per_track: List[int] = list(DEFAULT_SECTORS_PER_TRACK)
+        self.sides = 1
         self.directory: List[DirectoryRecord] = []
         self.dos_type: bytes = b""
 
@@ -46,7 +47,7 @@ class CBMDOS(Filesystem):
         return self.sectors_per_track[-1]
 
     def _logical_to_physical(self, track: int, sector: int) -> Tuple[int, int, int]:
-        if track > 35 and isinstance(self.image, TrackSectorImage):
+        if self.sides > 1 and track > 35 and isinstance(self.image, TrackSectorImage):
             return track - 36, 1, sector
         return track - 1, 0, sector
 
@@ -112,7 +113,13 @@ class CBMDOS(Filesystem):
         self.image = image
         layout = getattr(image, "layout", None)
         if layout and getattr(layout, "track_sectors", None):
-            self.sectors_per_track = list(layout.track_sectors) * max(getattr(layout, "sides", 1), 1)
+            self.sides = max(getattr(layout, "sides", 1), 1)
+            self.sectors_per_track = list(layout.track_sectors) * self.sides
+        elif not isinstance(image, TrackSectorImage):
+            default_sector_count = sum(DEFAULT_SECTORS_PER_TRACK)
+            if getattr(image, "total_sectors", 0) >= default_sector_count * 2:
+                self.sides = 2
+                self.sectors_per_track = list(DEFAULT_SECTORS_PER_TRACK) * 2
         if isinstance(image, TrackSectorImage) and image.tracks:
             actual_tracks = (max(track.track for track in image.tracks) + 1) * (
                 max(track.head for track in image.tracks) + 1
@@ -180,7 +187,7 @@ class CBMDOS(Filesystem):
             pass
 
         side1_bam = None
-        if len(self.sectors_per_track) > 35:
+        if self.sides > 1:
             try:
                 side1_bam = self._read_ts(53, 0)
                 directory_blocks.add((53, 0))
@@ -194,11 +201,14 @@ class CBMDOS(Filesystem):
                 offset = 4 + (track - 1) * 4
                 bitmap = bam[offset + 1 : offset + 4]
                 head = 0
-            else:
+            elif self.sides > 1:
                 side1_index = track - 36
                 bitmap_offset = side1_index * 3
                 bitmap = side1_bam[bitmap_offset : bitmap_offset + 3] if side1_bam is not None else b""
                 head = 1
+            else:
+                bitmap = b""
+                head = 0
             for sector in range(self._sectors_for_track(track - 1)):
                 byte_index = sector // 8
                 bit_index = sector % 8
@@ -261,6 +271,135 @@ class CBMDOS(Filesystem):
             if record.name.upper() == target:
                 return self._read_chain(record.start_track, record.start_sector)
         raise FilesystemError(f"File not found: {path}")
+
+    def import_file(self, image_bytes: bytes, directory: str, filename: str, data: bytes) -> bytes:
+        """Return a copy with one root-level CBM DOS PRG file imported."""
+
+        if directory.strip("/") != "":
+            raise FilesystemError("CBM DOS import currently supports the root directory only")
+        raw_name = self._encode_directory_name(filename)
+        target_name = raw_name.replace(b"\xA0", b" ").rstrip().decode("latin-1")
+        if any(record.name.upper() == target_name.upper() for record in self.directory):
+            raise FilesystemError(f"CBM DOS entry already exists: {target_name}")
+
+        slot = self._find_free_directory_slot()
+        blocks_needed = max(1, (len(data) + (SECTOR_SIZE - 3)) // (SECTOR_SIZE - 2))
+        blocks = self._find_free_blocks(blocks_needed)
+        patched = bytearray(image_bytes)
+        for index, (track, sector) in enumerate(blocks):
+            block = bytearray(SECTOR_SIZE)
+            chunk = data[index * (SECTOR_SIZE - 2) : (index + 1) * (SECTOR_SIZE - 2)]
+            if index == len(blocks) - 1:
+                block[0] = 0
+                block[1] = len(chunk)
+            else:
+                next_track, next_sector = blocks[index + 1]
+                block[0] = next_track
+                block[1] = next_sector
+            block[2 : 2 + len(chunk)] = chunk
+            self._write_ts(patched, track, sector, block)
+            self._mark_block_used(patched, track, sector)
+
+        entry = bytearray(32)
+        entry[0] = 0x82  # closed PRG
+        entry[1] = blocks[0][0]
+        entry[2] = blocks[0][1]
+        entry[3:19] = raw_name
+        entry[28:30] = len(blocks).to_bytes(2, "little")
+        patched[slot : slot + 32] = entry
+        return bytes(patched)
+
+    def _write_ts(self, image_bytes: bytearray, track: int, sector: int, data: bytes) -> None:
+        offset = self._ts_to_lba(track, sector) * SECTOR_SIZE
+        if offset + SECTOR_SIZE > len(image_bytes):
+            raise FilesystemError("CBM DOS block exceeds image size")
+        image_bytes[offset : offset + SECTOR_SIZE] = data[:SECTOR_SIZE].ljust(SECTOR_SIZE, b"\x00")
+
+    def _bam_bitmap_location(self, track: int, sector: int) -> tuple[int, int, int] | None:
+        if track <= 35:
+            bam_offset = self._ts_to_lba(18, 0) * SECTOR_SIZE
+            entry_offset = bam_offset + 4 + (track - 1) * 4
+            return entry_offset, entry_offset + 1 + sector // 8, sector % 8
+        if self.sides <= 1:
+            return None
+        side_index = track - 36
+        bam_offset = self._ts_to_lba(53, 0) * SECTOR_SIZE
+        return bam_offset, bam_offset + side_index * 3 + sector // 8, sector % 8
+
+    def _block_is_free(self, track: int, sector: int) -> bool:
+        try:
+            if track <= 35:
+                bam = self._bam_sector()
+                offset = 4 + (track - 1) * 4
+                bitmap = bam[offset + 1 : offset + 4]
+            else:
+                if self.sides <= 1:
+                    return False
+                bam = self._read_ts(53, 0)
+                side_index = track - 36
+                bitmap = bam[side_index * 3 : side_index * 3 + 3]
+            return sector // 8 < len(bitmap) and bool(bitmap[sector // 8] & (1 << (sector % 8)))
+        except FilesystemError:
+            return False
+
+    def _mark_block_used(self, image_bytes: bytearray, track: int, sector: int) -> None:
+        location = self._bam_bitmap_location(track, sector)
+        if location is None:
+            raise FilesystemError("No BAM entry available for CBM DOS block")
+        count_offset, byte_offset, bit = location
+        if byte_offset >= len(image_bytes):
+            raise FilesystemError("BAM bitmap exceeds image size")
+        mask = 1 << bit
+        if image_bytes[byte_offset] & mask:
+            image_bytes[byte_offset] &= ~mask
+            if track <= 35 and image_bytes[count_offset] > 0:
+                image_bytes[count_offset] -= 1
+
+    def _find_free_blocks(self, count: int) -> list[tuple[int, int]]:
+        blocks: list[tuple[int, int]] = []
+        reserved_tracks = {18, 53} if self.sides > 1 else {18}
+        for track in range(1, len(self.sectors_per_track) + 1):
+            if track in reserved_tracks:
+                continue
+            for sector in range(self._sectors_for_track(track - 1)):
+                if self._block_is_free(track, sector):
+                    blocks.append((track, sector))
+                    if len(blocks) == count:
+                        return blocks
+        raise FilesystemError(f"Need {count:,} free CBM DOS block(s), found {len(blocks):,}")
+
+    def _find_free_directory_slot(self) -> int:
+        track, sector = DIRECTORY_TRACK, DIRECTORY_START_SECTOR
+        seen: set[Tuple[int, int]] = set()
+        while track != 0 and (track, sector) not in seen:
+            seen.add((track, sector))
+            data = self._read_ts(track, sector)
+            sector_offset = self._ts_to_lba(track, sector) * SECTOR_SIZE
+            for idx in range(8):
+                entry_offset = sector_offset + 2 + idx * 32
+                if data[2 + idx * 32] in {0x00, 0xE5}:
+                    return entry_offset
+            track = data[0]
+            sector = data[1]
+        raise FilesystemError("CBM DOS root directory has no free entry slots")
+
+    def _encode_directory_name(self, filename: str) -> bytes:
+        name = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        if "." in name:
+            name = name.rsplit(".", 1)[0]
+        name = name.strip().upper()
+        if not name:
+            raise FilesystemError("Choose a non-empty CBM DOS file name")
+        if len(name) > 16:
+            raise FilesystemError("CBM DOS import currently supports names up to 16 characters")
+        try:
+            encoded = name.encode("ascii")
+        except UnicodeError as exc:
+            raise FilesystemError("CBM DOS import currently supports ASCII file names only") from exc
+        invalid = set('/\\":*?,')
+        if any(ord(char) < 32 or char in invalid for char in name):
+            raise FilesystemError("CBM DOS name contains unsupported characters")
+        return encoded.ljust(16, b"\xA0")
 
     def metadata(self) -> Dict[str, str]:
         return {"dos_type": self.dos_type.decode("latin-1", errors="ignore")}

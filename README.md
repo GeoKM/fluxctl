@@ -154,8 +154,8 @@ the CLI. It is designed around two workflows:
 
 - **Simple Mode**: open an image, run doctor/probe/QC, render a disk map, list
   filesystem files, inspect file/sector hex, export files, replace supported
-  files into a new image copy, and convert common output formats with fewer
-  choices.
+  files into a new image copy, create common blank disk images, and convert
+  common output formats with fewer choices.
 - **Advanced Mode**: expose layout, encoding, track/head/sector, compare,
   sector listing, hex dump, conversion, and provenance inspection controls.
 
@@ -181,6 +181,11 @@ delete a file or empty directory, import a file, recursively import a directory
 tree, and create an empty directory. FAT12 import and directory creation
 currently require 8.3-compatible ASCII names and reject overwriting existing
 entries.
+CBM DOS `.d64` and `.d71` images also support root-level PRG file import into a
+new image copy. CBM DOS import currently uses ASCII names up to 16 characters
+and does not overwrite existing entries.
+For CBM DOS sector hex and dump controls, Studio accepts Commodore logical track
+numbers: the 1541/1571 BAM is entered as track 18, head 0, sector 0.
 
 ### Commodore exports
 

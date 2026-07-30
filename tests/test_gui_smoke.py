@@ -8,7 +8,7 @@ pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QItemSelectionModel, QTimer
-from PySide6.QtWidgets import QApplication, QAbstractItemView
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QFileDialog
 
 from fluxctl import studio_services as services
 from fluxctl.gui import FluxctlStudio
@@ -88,6 +88,30 @@ def test_disk_map_widget_groups_double_sided_media_by_head() -> None:
     assert [track_id for _row_index, track_id, _sectors in groups[1][1]] == [(0, 1), (1, 1)]
 
 
+def test_disk_map_widget_labels_cbm_logical_tracks_without_physical_offset() -> None:
+    physical = DiskMap([["good"]], 1, 1, track_ids=[(0, 0)])
+    cbm_logical = DiskMap([["bam_system"]], 1, 1, track_ids=[(18, 0)], address_style="cbm_logical")
+
+    assert DiskMapWidget.track_label(0, physical) == "T01"
+    assert DiskMapWidget.track_label(18, cbm_logical) == "T18"
+
+
+def test_disk_map_widget_wraps_large_cbm_bam_grids_into_readable_panes() -> None:
+    disk_map = DiskMap(
+        [["bam_free"] * 40 for _track in range(80)],
+        80,
+        40,
+        render_style="grid",
+        track_ids=[(track, 0) for track in range(1, 81)],
+        address_style="cbm_logical",
+    )
+    groups = DiskMapWidget.head_groups(disk_map)
+    panes = DiskMapWidget.grid_panes(groups, disk_map)
+
+    assert [title for _head, title, _rows in panes] == ["Head 0 T01-T40", "Head 0 T41-T80"]
+    assert [len(rows) for _head, _title, rows in panes] == [40, 40]
+
+
 def test_disk_map_widget_exposes_colour_legend_items() -> None:
     widget = DiskMapWidget()
     assert widget.legend_items() == [
@@ -121,6 +145,36 @@ def test_opening_new_image_clears_file_panel() -> None:
     assert window.map_widget.disk_map is None
     assert not window.file_import_button.isEnabled()
     assert "Open and probe" in window.file_import_button.toolTip()
+    window.close()
+
+
+def test_left_panel_can_create_blank_image(monkeypatch, tmp_path) -> None:
+    window = FluxctlStudio()
+    output = tmp_path / "new-disk.img"
+    captured: dict[str, object] = {}
+
+    def run_immediate(label, fn, done):
+        captured["label"] = label
+        done(fn())
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *_args, **_kwargs: (str(output), ""),
+    )
+    monkeypatch.setattr(window, "_run_job", run_immediate)
+    monkeypatch.setattr(window, "run_probe", lambda: captured.setdefault("probed", True))
+    window.blank_image_combo.setCurrentIndex(
+        window.blank_image_combo.findData("fat12_720k")
+    )
+
+    window.create_blank_image_dialog()
+
+    assert output.exists()
+    assert output.stat().st_size == 737280
+    assert window.current_path == output
+    assert captured["probed"] is True
+    assert "create blank" in str(captured["label"])
     window.close()
 
 
@@ -164,7 +218,32 @@ def test_fat12_write_actions_enable_only_for_supported_flat_img() -> None:
     window._update_filesystem_write_actions()
 
     assert not window.file_replace_button.isEnabled()
-    assert "FAT12 flat .img" in window.file_replace_button.toolTip()
+    assert not window.file_delete_button.isEnabled()
+    assert window.file_import_button.isEnabled()
+    assert not window.directory_import_button.isEnabled()
+    assert not window.directory_create_button.isEnabled()
+    assert "root-level PRG import" in window.file_import_button.toolTip()
+    assert "not implemented yet" in window.file_replace_button.toolTip()
+
+    window.current_path = Path("/tmp/example.d81")
+    window.current_summary = services.ImageSummary(
+        path="/tmp/example.d81",
+        size=819200,
+        kind="d81",
+        layout_id="commodore_mfm_1581_800k",
+        encoding="mfm",
+        filesystem="cbm_dos_1581",
+        confidence=1.0,
+        evidence=[],
+    )
+    window._update_filesystem_write_actions()
+
+    assert not window.file_replace_button.isEnabled()
+    assert not window.file_delete_button.isEnabled()
+    assert window.file_import_button.isEnabled()
+    assert not window.directory_import_button.isEnabled()
+    assert not window.directory_create_button.isEnabled()
+    assert "1581 .d81 root-level PRG import" in window.file_import_button.toolTip()
 
     window.current_path = FIXTURE_IMG
     window.current_summary = services.ImageSummary(
@@ -587,4 +666,115 @@ def test_map_sector_click_updates_sector_hex_inputs(monkeypatch) -> None:
     window.load_sector_hex_from_map(7, 1, 12)
 
     assert loaded == [("7", "1", "12")]
+    window.close()
+
+
+def test_cbm_sector_hex_input_uses_logical_track_numbers(monkeypatch) -> None:
+    window = FluxctlStudio()
+    window.current_path = Path("/tmp/example.d64")
+    window.current_summary = services.ImageSummary(
+        path="/tmp/example.d64",
+        size=174848,
+        kind="d64",
+        layout_id="commodore_gcr_1541_170k",
+        encoding="gcr",
+        filesystem="cbm_dos",
+        confidence=1.0,
+        evidence=[],
+    )
+    calls: list[tuple[int, int, int]] = []
+
+    def fake_sector_hex(_path, _layout, _encoding, track, head, sector):
+        calls.append((track, head, sector))
+        return services.HexDumpView(f"Sector T{track} H{head} S{sector}", 256, "00")
+
+    def run_immediate(_label, fn, done):
+        done(fn())
+
+    monkeypatch.setattr(services, "sector_hex_dump", fake_sector_hex)
+    monkeypatch.setattr(window, "_run_job", run_immediate)
+    window.hex_track_input.setText("18")
+    window.hex_head_input.setText("0")
+    window.hex_sector_input.setText("0")
+
+    window.view_sector_hex()
+
+    assert calls == [(17, 0, 0)]
+    assert "Sector CBM T18 H0 S0" in window.hex_title_label.text()
+    window.close()
+
+
+def test_cbm_map_click_shows_logical_track_numbers(monkeypatch) -> None:
+    window = FluxctlStudio()
+    window.current_path = Path("/tmp/example.d64")
+    window.current_summary = services.ImageSummary(
+        path="/tmp/example.d64",
+        size=174848,
+        kind="d64",
+        layout_id="commodore_gcr_1541_170k",
+        encoding="gcr",
+        filesystem="cbm_dos",
+        confidence=1.0,
+        evidence=[],
+    )
+    loaded: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        window,
+        "view_sector_hex",
+        lambda: loaded.append(
+            (window.hex_track_input.text(), window.hex_head_input.text(), window.hex_sector_input.text())
+        ),
+    )
+
+    window.load_sector_hex_from_map(17, 0, 0)
+
+    assert loaded == [("18", "0", "0")]
+    window.close()
+
+
+def test_cbm_bam_map_click_keeps_logical_track_numbers(monkeypatch) -> None:
+    window = FluxctlStudio()
+    window.current_path = Path("/tmp/example.d64")
+    window.current_summary = services.ImageSummary(
+        path="/tmp/example.d64",
+        size=174848,
+        kind="d64",
+        layout_id="commodore_gcr_1541_170k",
+        encoding="gcr",
+        filesystem="cbm_dos",
+        confidence=1.0,
+        evidence=[],
+    )
+    window.map_widget.set_disk_map(
+        DiskMap(
+            [["bam_system"]],
+            1,
+            1,
+            render_style="grid",
+            track_ids=[(18, 0)],
+            sector_details=[[
+                SectorMapEntry(
+                    sector_id=0,
+                    state="bam_system",
+                    size=256,
+                    crc_ok=True,
+                    confidence=1.0,
+                )
+            ]],
+            address_style="cbm_logical",
+        )
+    )
+    loaded: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        window,
+        "view_sector_hex",
+        lambda: loaded.append(
+            (window.hex_track_input.text(), window.hex_head_input.text(), window.hex_sector_input.text())
+        ),
+    )
+
+    window.load_sector_hex_from_map(18, 0, 0)
+
+    assert loaded == [("18", "0", "0")]
+    assert "Track 18" in window.map_widget.sector_detail_text(0, 0)
     window.close()
