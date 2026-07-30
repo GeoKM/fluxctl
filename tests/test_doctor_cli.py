@@ -86,6 +86,8 @@ def test_doctor_prefers_actionable_native_error_over_missing_debug_dll(monkeypat
 
 def test_doctor_native_hint_is_windows_friendly(monkeypatch) -> None:
     monkeypatch.setattr(cli.os, "name", "nt")
+    monkeypatch.setattr(cli, "windows_process_architecture", lambda: "arm64")
+    monkeypatch.setattr(cli, "windows_rust_target", lambda: "aarch64-pc-windows-msvc")
 
     suggestion = cli._native_build_suggestion()
 
