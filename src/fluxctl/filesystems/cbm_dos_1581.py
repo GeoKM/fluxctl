@@ -58,13 +58,41 @@ class CBMDOS1581(Filesystem):
     def _read_logical_sector(self, track: int, sector: int) -> bytes:
         if track < 1 or track > 80 or sector < 0 or sector >= LOGICAL_SECTORS_PER_TRACK:
             raise FilesystemError("Invalid 1581 track/sector reference")
+        if self.image is not None and getattr(self.image, "bytes_per_sector", 0) == LOGICAL_SECTOR_SIZE:
+            lba = (track - 1) * LOGICAL_SECTORS_PER_TRACK + sector
+            return self.image.read_sector(lba, 1)
         half_index = sector % 2
         physical_sector = (sector % 20) // 2 + 1
         physical_head = self._logical_head_order[sector // 20]
         halves = self._physical_sector_halves(track, physical_head, physical_sector)
         return halves[half_index]
 
+    def _logical_offset(self, track: int, sector: int) -> int:
+        if track < 1 or track > 80 or sector < 0 or sector >= LOGICAL_SECTORS_PER_TRACK:
+            raise FilesystemError("Invalid 1581 track/sector reference")
+        return ((track - 1) * LOGICAL_SECTORS_PER_TRACK + sector) * LOGICAL_SECTOR_SIZE
+
+    def _write_logical_sector(self, image_bytes: bytearray, track: int, sector: int, data: bytes) -> None:
+        offset = self._logical_offset(track, sector)
+        if offset + LOGICAL_SECTOR_SIZE > len(image_bytes):
+            raise FilesystemError("1581 logical sector exceeds image size")
+        image_bytes[offset : offset + LOGICAL_SECTOR_SIZE] = data[:LOGICAL_SECTOR_SIZE].ljust(
+            LOGICAL_SECTOR_SIZE, b"\x00"
+        )
+
     def _detect_head_order(self) -> bool:
+        if self.image is not None and getattr(self.image, "bytes_per_sector", 0) == LOGICAL_SECTOR_SIZE:
+            header = self._read_logical_sector(DIRECTORY_TRACK, DIRECTORY_HEADER_SECTOR)
+            if (
+                len(header) >= 27
+                and header[0] == DIRECTORY_TRACK
+                and header[1] == DIRECTORY_START_SECTOR
+                and header[2] == ord("D")
+                and header[25:27] == b"3D"
+            ):
+                self.dos_type = "3D"
+                return True
+            return False
         candidates = [
             ((0, 1), self._physical_sector_halves(DIRECTORY_TRACK, 0, 1)[0]),
             ((1, 0), self._physical_sector_halves(DIRECTORY_TRACK, 1, 1)[0]),
@@ -133,16 +161,27 @@ class CBMDOS1581(Filesystem):
 
     def list_directory(self, path: str = "/") -> List[FileEntry]:
         records = self._records_for_path(path)
-        return [
-            FileEntry(
-                name=record.name,
-                is_dir=record.is_dir,
-                size=record.blocks * LOGICAL_SECTOR_SIZE,
-                cluster_start=(record.start_track << 8) | record.start_sector,
-                attributes=record.file_type,
+        entries: List[FileEntry] = []
+        for record in records:
+            if record.is_dir:
+                size = record.blocks * LOGICAL_SECTOR_SIZE
+            elif record.blocks:
+                try:
+                    size = len(self._read_chain(record.start_track, record.start_sector))
+                except FilesystemError:
+                    size = record.blocks * LOGICAL_SECTOR_SIZE
+            else:
+                size = 0
+            entries.append(
+                FileEntry(
+                    name=record.name,
+                    is_dir=record.is_dir,
+                    size=size,
+                    cluster_start=(record.start_track << 8) | record.start_sector,
+                    attributes=record.file_type,
+                )
             )
-            for record in records
-        ]
+        return entries
 
     def _records_for_path(self, path: str) -> List[DirectoryRecord1581]:
         parts = [part for part in path.strip("/").split("/") if part]
@@ -192,6 +231,177 @@ class CBMDOS1581(Filesystem):
     def extract_file(self, path: str) -> bytes:
         record = self._record_for_file_path(path)
         return self._read_chain(record.start_track, record.start_sector)
+
+    def import_file(self, image_bytes: bytes, directory: str, filename: str, data: bytes) -> bytes:
+        """Return a copy with one root-level CBM DOS 1581 PRG file imported."""
+
+        if directory.strip("/") != "":
+            raise FilesystemError("1581 import currently supports the root directory only")
+        raw_name = self._encode_directory_name(filename)
+        target_name = raw_name.replace(b"\xA0", b" ").rstrip().decode("latin-1")
+        if any(record.name.upper() == target_name.upper() for record in self.directory):
+            raise FilesystemError(f"1581 entry already exists: {target_name}")
+
+        slot = self._find_free_directory_slot()
+        blocks_needed = max(1, (len(data) + (LOGICAL_SECTOR_SIZE - 3)) // (LOGICAL_SECTOR_SIZE - 2))
+        blocks = self._find_free_blocks(blocks_needed)
+        patched = bytearray(image_bytes)
+        for index, (track, sector) in enumerate(blocks):
+            block = bytearray(LOGICAL_SECTOR_SIZE)
+            chunk = data[index * (LOGICAL_SECTOR_SIZE - 2) : (index + 1) * (LOGICAL_SECTOR_SIZE - 2)]
+            if index == len(blocks) - 1:
+                block[0] = 0
+                block[1] = len(chunk)
+            else:
+                next_track, next_sector = blocks[index + 1]
+                block[0] = next_track
+                block[1] = next_sector
+            block[2 : 2 + len(chunk)] = chunk
+            self._write_logical_sector(patched, track, sector, block)
+            self._mark_block_used(patched, track, sector)
+
+        entry = bytearray(32)
+        entry[0] = 0x82  # closed PRG
+        entry[1] = blocks[0][0]
+        entry[2] = blocks[0][1]
+        entry[3:19] = raw_name
+        entry[28:30] = len(blocks).to_bytes(2, "little")
+        patched[slot : slot + 32] = entry
+        return bytes(patched)
+
+    def bam_blocks(self, max_tracks: Optional[int] = None) -> List[tuple[int, int, int, str]]:
+        file_blocks: set[tuple[int, int]] = set()
+        for record in self.directory:
+            track, sector = record.start_track, record.start_sector
+            seen: set[tuple[int, int]] = set()
+            while track != 0 and (track, sector) not in seen:
+                seen.add((track, sector))
+                file_blocks.add((track, sector))
+                try:
+                    block = self._read_logical_sector(track, sector)
+                except FilesystemError:
+                    break
+                if len(block) < 2:
+                    break
+                track, sector = block[0], block[1]
+
+        system_blocks = {
+            (DIRECTORY_TRACK, DIRECTORY_HEADER_SECTOR),
+            (DIRECTORY_TRACK, 1),
+            (DIRECTORY_TRACK, 2),
+        }
+        try:
+            track, sector = DIRECTORY_TRACK, DIRECTORY_START_SECTOR
+            seen: set[tuple[int, int]] = set()
+            while track != 0 and (track, sector) not in seen:
+                seen.add((track, sector))
+                system_blocks.add((track, sector))
+                block = self._read_logical_sector(track, sector)
+                if len(block) < 2:
+                    break
+                track, sector = block[0], block[1]
+        except FilesystemError:
+            pass
+
+        blocks: List[tuple[int, int, int, str]] = []
+        track_limit = min(max_tracks or 80, 80)
+        for track in range(1, track_limit + 1):
+            for sector in range(LOGICAL_SECTORS_PER_TRACK):
+                key = (track, sector)
+                if key in file_blocks:
+                    state = "bam_file"
+                elif key in system_blocks:
+                    state = "bam_system"
+                elif self._block_is_free(track, sector):
+                    state = "bam_free"
+                else:
+                    state = "bam_used"
+                blocks.append((track, 0, sector, state))
+        return blocks
+
+    def _bam_bitmap_location(self, track: int, sector: int) -> tuple[int, int, int] | None:
+        if track < 1 or track > 80 or sector < 0 or sector >= LOGICAL_SECTORS_PER_TRACK:
+            return None
+        bam_sector = 1 if track <= 40 else 2
+        track_index = (track - 1) if track <= 40 else (track - 41)
+        bam_offset = self._logical_offset(DIRECTORY_TRACK, bam_sector)
+        entry_offset = bam_offset + 16 + track_index * 6
+        return entry_offset, entry_offset + 1 + sector // 8, sector % 8
+
+    def _block_is_free(self, track: int, sector: int) -> bool:
+        location = self._bam_bitmap_location(track, sector)
+        if location is None:
+            return False
+        count_offset, byte_offset, bit = location
+        try:
+            bam_sector = 1 if track <= 40 else 2
+            bam = self._read_logical_sector(DIRECTORY_TRACK, bam_sector)
+            local_byte = byte_offset - self._logical_offset(DIRECTORY_TRACK, bam_sector)
+            return local_byte < len(bam) and bool(bam[local_byte] & (1 << bit))
+        except FilesystemError:
+            return False
+
+    def _mark_block_used(self, image_bytes: bytearray, track: int, sector: int) -> None:
+        location = self._bam_bitmap_location(track, sector)
+        if location is None:
+            raise FilesystemError("No 1581 BAM entry available for block")
+        count_offset, byte_offset, bit = location
+        if byte_offset >= len(image_bytes):
+            raise FilesystemError("1581 BAM bitmap exceeds image size")
+        mask = 1 << bit
+        if image_bytes[byte_offset] & mask:
+            image_bytes[byte_offset] &= ~mask
+            if image_bytes[count_offset] > 0:
+                image_bytes[count_offset] -= 1
+
+    def _find_free_blocks(self, count: int) -> list[tuple[int, int]]:
+        blocks: list[tuple[int, int]] = []
+        reserved = {
+            (DIRECTORY_TRACK, DIRECTORY_HEADER_SECTOR),
+            (DIRECTORY_TRACK, 1),
+            (DIRECTORY_TRACK, 2),
+        }
+        for track in range(1, 81):
+            for sector in range(LOGICAL_SECTORS_PER_TRACK):
+                if (track, sector) in reserved:
+                    continue
+                if self._block_is_free(track, sector):
+                    blocks.append((track, sector))
+                    if len(blocks) == count:
+                        return blocks
+        raise FilesystemError(f"Need {count:,} free 1581 block(s), found {len(blocks):,}")
+
+    def _find_free_directory_slot(self) -> int:
+        track, sector = DIRECTORY_TRACK, DIRECTORY_START_SECTOR
+        seen: set[tuple[int, int]] = set()
+        while track != 0 and (track, sector) not in seen:
+            seen.add((track, sector))
+            data = self._read_logical_sector(track, sector)
+            sector_offset = self._logical_offset(track, sector)
+            for idx in range(8):
+                entry_offset = sector_offset + 2 + idx * 32
+                if data[2 + idx * 32] in {0x00, 0xE5}:
+                    return entry_offset
+            track, sector = data[0], data[1]
+        raise FilesystemError("1581 root directory has no free entry slots")
+
+    def _encode_directory_name(self, filename: str) -> bytes:
+        name = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        if "." in name:
+            name = name.rsplit(".", 1)[0]
+        name = name.strip().upper()
+        if not name:
+            raise FilesystemError("Choose a non-empty 1581 file name")
+        if len(name) > 16:
+            raise FilesystemError("1581 import currently supports names up to 16 characters")
+        try:
+            encoded = name.encode("ascii")
+        except UnicodeError as exc:
+            raise FilesystemError("1581 import currently supports ASCII file names only") from exc
+        invalid = set('/\\":*?,')
+        if any(ord(char) < 32 or char in invalid for char in name):
+            raise FilesystemError("1581 name contains unsupported characters")
+        return encoded.ljust(16, b"\xA0")
 
     def metadata(self) -> Dict[str, str]:
         return {"filesystem": "cbm_dos_1581", "dos_type": self.dos_type}

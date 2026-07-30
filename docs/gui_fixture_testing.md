@@ -40,10 +40,6 @@ shape later implementation work.
 - Document any per-filesystem export limitations found during manual testing,
   especially when a filesystem can list entries but cannot yet extract file
   data.
-- Add left-panel Studio actions for creating blank supported disk images from
-  common presets, so users can start with an empty FAT12/CBM/Amiga/etc. image
-  and then use file import/manipulation tools without needing an external
-  formatter first.
 - Improve disabled-action clarity in Studio by styling unavailable buttons with
   an obvious greyed-out visual state, in addition to disabling clicks and
   showing explanatory tooltips.
@@ -51,15 +47,25 @@ shape later implementation work.
   behavior. FAT12 could dump raw 32-byte directory entries from directory
   clusters; CBM DOS, Amiga, CP/M, and other filesystems need their own directory
   record/block interpretation instead of overloading File Dump.
+- Add an optional disk-map overlay that highlights the exact sectors or blocks
+  occupied by the currently selected file. Start with FAT12 by exposing a
+  filesystem allocation API that maps a file's cluster chain to track/head/sector
+  addresses, then extend the same API to CBM DOS block chains, 1581 logical
+  sectors, Amiga file blocks, and CP/M extents.
 - Convert the Advanced HEX display panel into a HEX in-place editor. It should
   allow byte edits in both Sector Dump and File Dump modes, validate changed
   bytes, and write changes back through the same copy-only safety model used by
   current manipulation actions rather than modifying the original image.
 - Extend copy-only file and directory manipulation beyond the current FAT12
-  flat `.img` support. Add delete, replace, import file, import directory, and
-  create-directory writers for CBM DOS 1541/1571, CBM DOS 1581, Amiga OFS/FFS,
-  CP/M variants, and any other filesystem plugin once each format's allocation
-  structures can be updated correctly.
+  flat `.img`, CBM DOS `.d64/.d71` root-file import support, and CBM DOS 1581
+  `.d81` root-file import support. Add delete, replace, import directory, and
+  create-directory writers for CBM DOS 1541/1571. For CBM DOS 1581, the real BAM
+  allocation structures and root-level file import now exist; next add 1581
+  delete, replace, import directory, and create-directory support. Amiga
+  OFS/FFS `.adf` mutation has not been implemented yet, so add file/directory
+  writers there after the block allocation and checksum/update rules are
+  modeled. CP/M variants and any other filesystem plugin should follow once
+  each format's allocation structures can be updated correctly.
 - Extend copy-only manipulation beyond flat `.img` containers. Define safe
   write-back/export paths for `.d64`, `.d71`, `.d81`, `.adf`, `.imd`, and
   decoded `.scp` workflows, including clear GUI gating when a filesystem is

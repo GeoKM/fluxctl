@@ -244,14 +244,15 @@ class DiskMapWidget(QWidget):
         column_gap = 28
         top = 44
         legend_height = 36
-        row_label_width = 26
-        columns = max(len(head_groups), 1)
+        row_label_width = 40
+        panes = self.grid_panes(head_groups, self.disk_map)
+        columns = max(len(panes), 1)
         column_width = max((width - outer_gap * 2 - column_gap * (columns - 1)) / columns, 1)
         grid_height = max(height - top - legend_height - 12, 1)
 
         painter.setFont(QFont("Arial", 10))
         painter.setPen(QPen(QColor("#dce7f7"), 1))
-        for column, (head, rows) in enumerate(head_groups):
+        for column, (head, title, rows) in enumerate(panes):
             if not rows:
                 continue
             left = outer_gap + column * (column_width + column_gap)
@@ -261,7 +262,7 @@ class DiskMapWidget(QWidget):
             cell = min(cell, 18.0)
             painter.setPen(QPen(QColor("#dce7f7"), 1))
             painter.setFont(QFont("Arial", 12, QFont.Bold))
-            painter.drawText(int(left), 8, int(column_width), 24, Qt.AlignCenter, f"Head {head}")
+            painter.drawText(int(left), 8, int(column_width), 24, Qt.AlignCenter, title)
             painter.setFont(QFont("Arial", 10))
             for display_row, (row_index, (track, _head), sectors) in enumerate(rows):
                 y = top + display_row * cell
@@ -272,7 +273,7 @@ class DiskMapWidget(QWidget):
                     row_label_width - 4,
                     int(cell),
                     Qt.AlignRight | Qt.AlignVCenter,
-                    f"T{track + 1:02d}",
+                    self.track_label(track, self.disk_map),
                 )
                 for sector_index, state in enumerate(sectors):
                     x = left + row_label_width + sector_index * cell
@@ -291,6 +292,33 @@ class DiskMapWidget(QWidget):
                 }
             )
         self._draw_legend(painter, width, height)
+
+    @classmethod
+    def grid_panes(
+        cls,
+        head_groups: list[tuple[int, list[tuple[int, tuple[int, int], list[str]]]]],
+        disk_map: DiskMap | None,
+    ) -> list[tuple[int, str, list[tuple[int, tuple[int, int], list[str]]]]]:
+        panes: list[tuple[int, str, list[tuple[int, tuple[int, int], list[str]]]]] = []
+        for head, rows in head_groups:
+            if not rows:
+                continue
+            chunk_size = 40 if len(rows) > 45 else len(rows)
+            chunks = [rows[index : index + chunk_size] for index in range(0, len(rows), chunk_size)]
+            for chunk in chunks:
+                title = f"Head {head}"
+                if len(chunks) > 1:
+                    start_track = chunk[0][1][0]
+                    end_track = chunk[-1][1][0]
+                    title = f"{title} {cls.track_label(start_track, disk_map)}-{cls.track_label(end_track, disk_map)}"
+                panes.append((head, title, chunk))
+        return panes
+
+    @staticmethod
+    def track_label(track: int, disk_map: DiskMap | None) -> str:
+        if disk_map is not None and getattr(disk_map, "address_style", "physical") == "cbm_logical":
+            return f"T{track:02d}"
+        return f"T{track + 1:02d}"
 
     def _draw_legend(self, painter: QPainter, width: int, height: int) -> None:  # pragma: no cover - visual rendering.
         painter.setFont(QFont("Arial", 11))
@@ -390,6 +418,7 @@ class FluxctlStudio(QMainWindow):
         self.advanced_file_browser_path = "/"
         self._loading_advanced_file_paths = False
         self.layout_options = services.load_layout_options()
+        self.blank_image_presets = services.blank_image_presets()
         self._build_ui()
         self._apply_style()
         self._update_filesystem_write_actions()
@@ -426,13 +455,23 @@ class FluxctlStudio(QMainWindow):
         self.doctor_button.clicked.connect(self.run_doctor)
         self.open_button = QPushButton("Open Image")
         self.open_button.clicked.connect(self.open_image)
+        self.blank_image_combo = QComboBox()
+        for preset in self.blank_image_presets:
+            self.blank_image_combo.addItem(preset.label, preset.preset_id)
+            self.blank_image_combo.setItemData(self.blank_image_combo.count() - 1, preset.description, Qt.ToolTipRole)
+        self.blank_image_combo.currentIndexChanged.connect(self._update_blank_image_tooltip)
+        self.create_blank_button = QPushButton("Create Blank...")
+        self.create_blank_button.clicked.connect(self.create_blank_image_dialog)
         sidebar_layout.addWidget(self.title)
         sidebar_layout.addWidget(self.file_label)
         sidebar_layout.addWidget(self.mode)
         sidebar_layout.addWidget(self.map_view)
         sidebar_layout.addWidget(self.open_button)
+        sidebar_layout.addWidget(self.blank_image_combo)
+        sidebar_layout.addWidget(self.create_blank_button)
         sidebar_layout.addWidget(self.doctor_button)
         sidebar_layout.addStretch(1)
+        self._update_blank_image_tooltip()
 
         self.stack = QStackedWidget()
         self.simple = self._build_simple_mode()
@@ -726,6 +765,53 @@ class FluxctlStudio(QMainWindow):
     def _selected_map_view(self) -> str:
         return str(self.map_view.currentData() or "logical")
 
+    def _uses_cbm_logical_addressing(self) -> bool:
+        if self.current_summary is None:
+            return False
+        filesystem = self.current_summary.filesystem or ""
+        if filesystem in {"cbm_dos", "cbm_dos_1571"}:
+            return True
+        return (self.current_summary.layout_id or "") in {
+            "commodore_gcr_1541_170k",
+            "commodore_gcr_1571_341k",
+        }
+
+    def _display_to_internal_chs(self, track: int, head: int, sector: int) -> tuple[int, int, int]:
+        if not self._uses_cbm_logical_addressing():
+            return track, head, sector
+        if track < 1:
+            raise ValueError("CBM DOS track numbers start at 1")
+        if track >= 36:
+            return track - 36, 1, sector
+        return track - 1, head, sector
+
+    def _internal_to_display_chs(self, track: int, head: int, sector: int) -> tuple[int, int, int]:
+        if not self._uses_cbm_logical_addressing():
+            return track, head, sector
+        if head == 1:
+            return track + 36, head, sector
+        return track + 1, head, sector
+
+    def _current_map_uses_cbm_logical_addressing(self) -> bool:
+        disk_map = self.map_widget.disk_map
+        return bool(disk_map and getattr(disk_map, "address_style", "") == "cbm_logical")
+
+    def _sector_hex_dump_for_display(self, layout: Optional[str], encoding: str, track: int, head: int, sector: int):
+        internal_track, internal_head, internal_sector = self._display_to_internal_chs(track, head, sector)
+        assert self.current_path is not None
+        dump = services.sector_hex_dump(
+            self.current_path,
+            layout,
+            encoding,
+            internal_track,
+            internal_head,
+            internal_sector,
+        )
+        if not self._uses_cbm_logical_addressing():
+            return dump
+        title = f"Sector CBM T{track} H{head} S{sector}"
+        return services.HexDumpView(title=title, size=dump.size, text=dump.text)
+
     def _append_log(self, text: str) -> None:
         self.log.append(text)
         self.advanced_output.append(text)
@@ -765,6 +851,53 @@ class FluxctlStudio(QMainWindow):
             self.file_label.setText(str(self.current_path))
             self._clear_image_results()
             self.run_probe()
+
+    def _selected_blank_preset(self):
+        preset_id = str(self.blank_image_combo.currentData() or "")
+        return next((preset for preset in self.blank_image_presets if preset.preset_id == preset_id), None)
+
+    def _update_blank_image_tooltip(self) -> None:
+        preset = self._selected_blank_preset()
+        tooltip = preset.description if preset else "Choose a supported blank disk image preset."
+        self.blank_image_combo.setToolTip(tooltip)
+        self.create_blank_button.setToolTip(tooltip)
+
+    def create_blank_image_dialog(self) -> None:
+        preset = self._selected_blank_preset()
+        if preset is None:
+            self._warn("Choose a blank disk image preset first.")
+            return
+        default_name = f"blank-{preset.preset_id}{preset.suffix}"
+        filter_text = f"{preset.label} (*{preset.suffix});;All files (*)"
+        output_name, _ = QFileDialog.getSaveFileName(
+            self,
+            "Create blank disk image",
+            default_name,
+            filter_text,
+        )
+        if not output_name:
+            return
+        output = Path(output_name)
+        if output.suffix == "":
+            output = output.with_suffix(preset.suffix)
+        self._run_job(
+            f"create blank {preset.label}",
+            lambda: services.create_blank_image(preset.preset_id, output),
+            self._show_blank_image_result,
+        )
+
+    def _show_blank_image_result(self, result: object) -> None:
+        self.current_path = Path(result.path)
+        self.file_label.setText(str(self.current_path))
+        self._clear_image_results()
+        self.activity_label.setText(
+            f"Created {result.label} ({result.size:,} bytes) at {result.path}."
+        )
+        self._append_log(
+            f"Created blank image {result.path} using {result.preset_id} "
+            f"({result.layout_id}, {result.filesystem}, {result.size:,} bytes)"
+        )
+        self.run_probe()
 
     def _clear_image_results(self) -> None:
         self.current_summary = None
@@ -988,19 +1121,56 @@ class FluxctlStudio(QMainWindow):
             self.directory_create_button,
         ]
 
-    def _fat12_img_write_support_reason(self) -> tuple[bool, str]:
+    def _filesystem_write_action_support(self) -> dict[QPushButton, tuple[bool, str]]:
+        closed_reason = "Open and probe a disk image before using write actions."
+        default = {button: (False, closed_reason) for button in self._filesystem_write_buttons()}
         if self.current_path is None or self.current_summary is None:
-            return False, "Open and probe a disk image before using write actions."
-        if self.current_path.suffix.lower() != ".img":
-            return False, "Write actions currently support FAT12 flat .img images only."
-        if self.current_summary.filesystem != "fat12":
+            return default
+        suffix = self.current_path.suffix.lower()
+        filesystem = self.current_summary.filesystem or "unknown"
+        if suffix == ".img" and filesystem == "fat12":
+            reason = "Available for FAT12 flat .img images. Operations write a new image copy."
+            return {button: (True, reason) for button in self._filesystem_write_buttons()}
+        if suffix in {".d64", ".d71"} and filesystem in {"cbm_dos", "cbm_dos_1571"}:
+            unsupported = (
+                "This CBM DOS image currently supports root-level file import only. "
+                "Delete, replace, directory import, and directory creation are not implemented yet."
+            )
+            return {
+                self.file_replace_button: (False, unsupported),
+                self.file_delete_button: (False, unsupported),
+                self.file_import_button: (
+                    True,
+                    "Available for CBM DOS .d64/.d71 root-level PRG import. The operation writes a new image copy.",
+                ),
+                self.directory_import_button: (False, unsupported),
+                self.directory_create_button: (False, unsupported),
+            }
+        if suffix == ".d81" and filesystem == "cbm_dos_1581":
+            unsupported = (
+                "This CBM DOS 1581 image currently supports root-level file import only. "
+                "Delete, replace, directory import, and directory creation are not implemented yet."
+            )
+            return {
+                self.file_replace_button: (False, unsupported),
+                self.file_delete_button: (False, unsupported),
+                self.file_import_button: (
+                    True,
+                    "Available for CBM DOS 1581 .d81 root-level PRG import. The operation writes a new image copy.",
+                ),
+                self.directory_import_button: (False, unsupported),
+                self.directory_create_button: (False, unsupported),
+            }
+        if suffix not in {".img", ".d64", ".d71"}:
+            reason = "Write actions currently support FAT12 .img and CBM DOS .d64/.d71 images only."
+        else:
             filesystem = self.current_summary.filesystem or "unknown"
-            return False, f"Write actions currently support FAT12 only; this image detected as {filesystem}."
-        return True, "Available for FAT12 flat .img images. Operations write a new image copy."
+            reason = f"Write actions are not available for filesystem {filesystem} in this container yet."
+        return {button: (False, reason) for button in self._filesystem_write_buttons()}
 
     def _update_filesystem_write_actions(self) -> None:
-        supported, reason = self._fat12_img_write_support_reason()
-        for button in self._filesystem_write_buttons():
+        support = self._filesystem_write_action_support()
+        for button, (supported, reason) in support.items():
             button.setEnabled(supported)
             button.setToolTip(reason)
 
@@ -1326,8 +1496,9 @@ class FluxctlStudio(QMainWindow):
             f"Current filesystem directory:\n{self.file_browser_path}\n\n"
             f"Host file to import:\n{host_file}\n\n"
             f"New image copy:\n{output}\n\n"
-            "FAT12 import currently requires an 8.3-compatible file name and does not overwrite existing entries. "
-            "The original image will not be modified. Continue?"
+            "FAT12 import requires an 8.3-compatible file name. CBM DOS import writes root-level PRG files "
+            "using names up to 16 ASCII characters. Existing entries are not overwritten. The original image "
+            "will not be modified. Continue?"
         )
         if not self._confirm_mutation("Import file into image copy", question):
             return
@@ -1423,11 +1594,16 @@ class FluxctlStudio(QMainWindow):
     def _choose_mutation_output(self, title: str) -> Optional[Path]:
         assert self.current_path is not None
         default_output = self._default_replacement_output_path(self.current_path)
+        suffix = self.current_path.suffix.lower()
+        if suffix in {".d64", ".d71", ".d81"}:
+            filter_text = f"Disk images (*{suffix});;All files (*)"
+        else:
+            filter_text = "Disk images (*.img);;All files (*)"
         output_name, _ = QFileDialog.getSaveFileName(
             self,
             title,
             str(default_output),
-            "Disk images (*.img);;All files (*)",
+            filter_text,
         )
         return Path(output_name) if output_name else None
 
@@ -1458,14 +1634,18 @@ class FluxctlStudio(QMainWindow):
             return
         self._run_job(
             f"hex sector {track}:{head}:{sector}",
-            lambda: services.sector_hex_dump(self.current_path, layout, encoding, track, head, sector),
+            lambda: self._sector_hex_dump_for_display(layout, encoding, track, head, sector),
             self._show_hex_dump,
         )
 
     def load_sector_hex_from_map(self, track: int, head: int, sector: int) -> None:
-        self.hex_track_input.setText(str(track))
-        self.hex_head_input.setText(str(head))
-        self.hex_sector_input.setText(str(sector))
+        if self._current_map_uses_cbm_logical_addressing():
+            display_track, display_head, display_sector = track, head, sector
+        else:
+            display_track, display_head, display_sector = self._internal_to_display_chs(track, head, sector)
+        self.hex_track_input.setText(str(display_track))
+        self.hex_head_input.setText(str(display_head))
+        self.hex_sector_input.setText(str(display_sector))
         self.view_sector_hex()
 
     def _show_hex_dump(self, dump: object) -> None:
@@ -1490,9 +1670,14 @@ class FluxctlStudio(QMainWindow):
             return
         layout = self._selected_layout() or None
         encoding = self._selected_encoding()
+        try:
+            internal_track, internal_head, _sector = self._display_to_internal_chs(track, head, 0)
+        except ValueError as exc:
+            self._warn(str(exc))
+            return
         self._run_job(
             f"sectors T{track} H{head}",
-            lambda: services.sector_list(self.current_path, layout, encoding, track, head),
+            lambda: services.sector_list(self.current_path, layout, encoding, internal_track, internal_head),
             self._show_text_view,
         )
 
@@ -1518,7 +1703,7 @@ class FluxctlStudio(QMainWindow):
         encoding = self._selected_encoding()
         self._run_job(
             f"dump T{track} H{head} S{sector}",
-            lambda: services.sector_hex_dump(self.current_path, layout, encoding, track, head, sector),
+            lambda: self._sector_hex_dump_for_display(layout, encoding, track, head, sector),
             self._show_advanced_hex_dump,
         )
 

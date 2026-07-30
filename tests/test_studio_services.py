@@ -46,6 +46,115 @@ def test_studio_builds_map_and_qc_for_flat_image() -> None:
     assert qc.total_sectors > 0
 
 
+def test_studio_creates_blank_image_presets(tmp_path) -> None:
+    expected_filesystems = {
+        "fat12_180k": "fat12",
+        "fat12_360k": "fat12",
+        "fat12_720k": "fat12",
+        "fat12_1200k": "fat12",
+        "fat12_1440k": "fat12",
+        "cbm_dos_1541_d64": "cbm_dos",
+        "cbm_dos_1571_d71": "cbm_dos_1571",
+        "cbm_dos_1581_d81": "cbm_dos_1581",
+        "amiga_ofs_adf": "amiga_ofs",
+    }
+
+    for preset in services.blank_image_presets():
+        output = tmp_path / f"{preset.preset_id}{preset.suffix}"
+        result = services.create_blank_image(preset.preset_id, output)
+        summary = services.summarize_image(output)
+        entries = services.list_files(output, summary.layout_id, summary.encoding)
+
+        assert output.stat().st_size == preset.size
+        assert result.size == preset.size
+        assert summary.layout_id == preset.layout_id
+        assert summary.filesystem == expected_filesystems[preset.preset_id]
+        assert entries == []
+
+
+def test_studio_blank_fat12_image_accepts_file_import(tmp_path) -> None:
+    output = tmp_path / "blank.img"
+    host_file = tmp_path / "README.TXT"
+    host_file.write_text("HELLO", encoding="ascii")
+    services.create_blank_image("fat12_720k", output)
+
+    imported = services.import_file_with_copy(
+        output,
+        "ibm_mfm_720k",
+        "mfm",
+        "/",
+        host_file,
+        tmp_path / "with-file.img",
+    )
+    entries = services.list_files(Path(imported.path), "ibm_mfm_720k", "mfm")
+
+    assert imported.filesystem == "fat12"
+    assert [entry.name for entry in entries] == ["README.TXT"]
+    assert entries[0].size == 5
+
+
+def test_studio_blank_cbm_dos_images_accept_file_import(tmp_path) -> None:
+    for preset_id, suffix, layout_id, filesystem_name, entry_name in [
+        ("cbm_dos_1541_d64", ".d64", "commodore_gcr_1541_170k", "cbm_dos", "HELLO64"),
+        ("cbm_dos_1571_d71", ".d71", "commodore_gcr_1571_341k", "cbm_dos_1571", "HELLO71"),
+    ]:
+        output = tmp_path / f"blank{suffix}"
+        host_file = tmp_path / f"{entry_name}.PRG"
+        host_file.write_bytes(bytes(range(256)) * 2)
+        services.create_blank_image(preset_id, output)
+
+        imported = services.import_file_with_copy(
+            output,
+            layout_id,
+            "gcr",
+            "/",
+            host_file,
+            tmp_path / f"with-file{suffix}",
+        )
+        entries = services.list_files(Path(imported.path), layout_id, "gcr")
+        dump = services.file_hex_dump(Path(imported.path), layout_id, "gcr", "/" + entry_name)
+
+        assert imported.filesystem == filesystem_name
+        assert [entry.name for entry in entries] == [entry_name]
+        assert entries[0].size == 512
+        assert dump.size == 512
+
+
+def test_studio_blank_1581_image_has_bam_and_accepts_file_import(tmp_path) -> None:
+    output = tmp_path / "blank.d81"
+    host_file = tmp_path / "HELLO81.PRG"
+    host_file.write_bytes(b"1581 DATA" * 80)
+    services.create_blank_image("cbm_dos_1581_d81", output)
+
+    before_map = services.build_disk_map_for_image(output, "commodore_mfm_1581_800k", "mfm", map_view="bam")
+    before_states = {state for row in before_map.tracks for state in row}
+    imported = services.import_file_with_copy(
+        output,
+        "commodore_mfm_1581_800k",
+        "mfm",
+        "/",
+        host_file,
+        tmp_path / "with-file.d81",
+    )
+    entries = services.list_files(Path(imported.path), "commodore_mfm_1581_800k", "mfm")
+    dump = services.file_hex_dump(Path(imported.path), "commodore_mfm_1581_800k", "mfm", "/HELLO81")
+    after_map = services.build_disk_map_for_image(
+        Path(imported.path), "commodore_mfm_1581_800k", "mfm", map_view="bam"
+    )
+    after_file_blocks = sum(row.count("bam_file") for row in after_map.tracks)
+
+    assert imported.filesystem == "cbm_dos_1581"
+    assert before_map.render_style == "grid"
+    assert before_map.address_style == "cbm_logical"
+    assert before_map.total_tracks == 80
+    assert before_map.max_sectors_per_track == 40
+    assert before_states >= {"bam_free", "bam_system"}
+    assert [entry.name for entry in entries] == ["HELLO81"]
+    assert entries[0].size == len(host_file.read_bytes())
+    assert dump.size == len(host_file.read_bytes())
+    assert after_file_blocks >= 3
+
+
 def test_studio_map_preserves_commodore_gcr_zones() -> None:
     disk_map = services.build_disk_map_for_image(FIXTURE_D64, "commodore_gcr_1541_170k", "gcr")
 
@@ -59,9 +168,15 @@ def test_studio_map_preserves_commodore_gcr_zones() -> None:
 def test_studio_builds_cbm_bam_block_map() -> None:
     disk_map = services.build_disk_map_for_image(FIXTURE_D64, "commodore_gcr_1541_170k", "gcr", map_view="bam")
     states = {state for row in disk_map.tracks for state in row}
+    heads = {head for _track, head in disk_map.track_ids}
 
     assert disk_map.render_style == "grid"
+    assert disk_map.address_style == "cbm_logical"
     assert disk_map.total_tracks == 40
+    assert heads == {0}
+    assert disk_map.track_ids[0] == (1, 0)
+    assert disk_map.track_ids[-1] == (40, 0)
+    assert (18, 0) in disk_map.track_ids
     assert "bam_file" in states
     assert "bam_system" in states
     assert "bam_free" in states
@@ -74,6 +189,10 @@ def test_studio_builds_two_head_1571_bam_block_map() -> None:
     assert disk_map.render_style == "grid"
     assert heads == {0, 1}
     assert disk_map.total_tracks == 70
+    assert (1, 0) in disk_map.track_ids
+    assert (35, 0) in disk_map.track_ids
+    assert (36, 1) in disk_map.track_ids
+    assert (70, 1) in disk_map.track_ids
 
 
 def test_studio_can_switch_c64_cpm_between_logical_and_physical_maps() -> None:
