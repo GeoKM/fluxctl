@@ -471,7 +471,6 @@ class FluxctlStudio(QMainWindow):
             button = QPushButton(text)
             button.clicked.connect(handler)
             actions.addWidget(button)
-
         self.map_widget = DiskMapWidget()
         self.map_widget.sectorClicked.connect(self.load_sector_hex_from_map)
         self.file_path_label = QLabel("/")
@@ -548,24 +547,38 @@ class FluxctlStudio(QMainWindow):
         hex_panel_layout.addLayout(hex_controls)
         hex_panel_layout.addWidget(self.hex_text)
 
+        map_toggle_row = QHBoxLayout()
+        map_toggle_row.addStretch(1)
+        self.map_toggle_button = QPushButton("Hide Disk Map")
+        self.map_toggle_button.setToolTip("Hide the disk map and expand the Files, Hex, and Jobs panel.")
+        self.map_toggle_button.clicked.connect(self.toggle_disk_map_panel)
+        map_toggle_row.addWidget(self.map_toggle_button)
+
         self.simple_splitter = QSplitter(Qt.Vertical)
         self.simple_splitter.setChildrenCollapsible(False)
-        upper = QWidget()
-        upper_layout = QVBoxLayout(upper)
+        self.map_panel = QWidget()
+        self.map_panel_visible = True
+        self._map_panel_sizes = [500, 340]
+        upper_layout = QVBoxLayout(self.map_panel)
         upper_layout.addLayout(self.summary_grid)
         upper_layout.addWidget(self.activity_label)
         upper_layout.addLayout(actions)
-        upper_layout.addWidget(self.map_widget, 1)
+        self.map_canvas_panel = QWidget()
+        map_canvas_layout = QVBoxLayout(self.map_canvas_panel)
+        map_canvas_layout.setContentsMargins(0, 0, 0, 0)
+        map_canvas_layout.addWidget(self.map_widget, 1)
+        upper_layout.addWidget(self.map_canvas_panel, 1)
         self.lower_tabs = QTabWidget()
         self.lower_tabs.setMinimumHeight(300)
         self.lower_tabs.addTab(self.file_panel, "Files")
         self.lower_tabs.addTab(self.hex_panel, "Hex")
         self.lower_tabs.addTab(self.log, "Jobs")
-        self.simple_splitter.addWidget(upper)
+        self.simple_splitter.addWidget(self.map_panel)
         self.simple_splitter.addWidget(self.lower_tabs)
         self.simple_splitter.setStretchFactor(0, 3)
         self.simple_splitter.setStretchFactor(1, 2)
-        self.simple_splitter.setSizes([500, 340])
+        self.simple_splitter.setSizes(self._map_panel_sizes)
+        layout.addLayout(map_toggle_row)
         layout.addWidget(self.simple_splitter)
         return page
 
@@ -682,6 +695,25 @@ class FluxctlStudio(QMainWindow):
 
     def _switch_mode(self, index: int) -> None:
         self.stack.setCurrentIndex(index)
+
+    def toggle_disk_map_panel(self) -> None:
+        if self.map_panel_visible:
+            sizes = self.simple_splitter.sizes()
+            if sizes and sizes[0] > 0:
+                self._map_panel_sizes = sizes
+            self.map_canvas_panel.setVisible(False)
+            self.map_panel_visible = False
+            self.map_toggle_button.setText("Show Disk Map")
+            self.map_toggle_button.setToolTip("Show the disk map above the Files, Hex, and Jobs panel.")
+            total_size = sum(sizes) if sizes else sum(self._map_panel_sizes)
+            self.simple_splitter.setSizes([1, max(1, total_size - 1)])
+            return
+
+        self.map_canvas_panel.setVisible(True)
+        self.map_panel_visible = True
+        self.map_toggle_button.setText("Hide Disk Map")
+        self.map_toggle_button.setToolTip("Hide the disk map and expand the Files, Hex, and Jobs panel.")
+        self.simple_splitter.setSizes(self._map_panel_sizes)
 
     def _selected_layout(self) -> str:
         return str(self.layout_combo.currentData() or (self.current_summary.layout_id if self.current_summary else ""))
