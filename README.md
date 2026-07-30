@@ -24,6 +24,11 @@ python3 scripts/install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --c
 
 On Windows PowerShell, use the Python launcher and Windows script paths:
 
+> New Windows setup? Start with the
+> [Windows prerequisites and installation guide](docs/windows-prerequisites.md)
+> for required downloads, optional build tools, architecture selection, and
+> verification steps.
+
 ```powershell
 git clone -b codex/packaging-distribution https://github.com/GeoKM/fluxctl.git
 cd fluxctl
@@ -290,6 +295,8 @@ and reads the DLL's PE header directly.
 See [AGENTS.md](AGENTS.md) for coding standards, workflows, and review expectations.
 See [docs/packaging.md](docs/packaging.md) for wheel, source distribution, and
 standalone GUI/CLI packaging notes.
+See [docs/windows-prerequisites.md](docs/windows-prerequisites.md) for the
+Windows software checklist and installation walkthrough.
 
 ## Provenance
 Commands that create output files write provenance sidecars by default:
