@@ -34,6 +34,10 @@ python3 scripts/install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --c
 
 On Windows PowerShell, use the Python launcher and Windows script paths:
 
+See [Windows prerequisites](windows-prerequisites.md) for a complete required
+and optional software checklist, official download links, architecture
+selection, and verification commands.
+
 ```powershell
 git clone -b codex/packaging-distribution https://github.com/GeoKM/fluxctl.git
 cd fluxctl
