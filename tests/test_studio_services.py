@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from fluxctl import studio_services as services
+from fluxctl.exporters.d64 import DEFAULT_SECTORS_PER_TRACK, SECTOR_SIZE
 from fluxctl.filesystems import RawSectorImage
 from fluxctl.filesystems.fat12 import FAT12
 
@@ -118,6 +119,55 @@ def test_studio_blank_cbm_dos_images_accept_file_import(tmp_path) -> None:
         assert [entry.name for entry in entries] == [entry_name]
         assert entries[0].size == 512
         assert dump.size == 512
+
+
+def test_studio_blank_1571_image_has_validated_side_bam(tmp_path) -> None:
+    output = tmp_path / "blank.d71"
+    services.create_blank_image("cbm_dos_1571_d71", output)
+    data = output.read_bytes()
+    sectors_per_track = list(DEFAULT_SECTORS_PER_TRACK) * 2
+
+    def offset(track: int, sector: int) -> int:
+        return (sum(sectors_per_track[: track - 1]) + sector) * SECTOR_SIZE
+
+    primary_bam = data[offset(18, 0) : offset(18, 0) + SECTOR_SIZE]
+    side_bam = data[offset(53, 0) : offset(53, 0) + SECTOR_SIZE]
+
+    assert primary_bam[3] == 0x80
+    assert list(primary_bam[221:238]) == [21] * 17
+    assert primary_bam[238] == 0
+    assert list(primary_bam[239:245]) == [19] * 6
+    assert list(primary_bam[245:251]) == [18] * 6
+    assert list(primary_bam[251:256]) == [17] * 5
+    assert side_bam[(53 - 36) * 3 : (53 - 36) * 3 + 3] == b"\x00\x00\x00"
+
+
+def test_studio_1571_import_updates_side_two_bam_counts(tmp_path) -> None:
+    output = tmp_path / "blank.d71"
+    imported_path = tmp_path / "imported.d71"
+    host_file = tmp_path / "BIG.PRG"
+    host_file.write_bytes(b"X" * 170_000)
+    services.create_blank_image("cbm_dos_1571_d71", output)
+
+    services.import_file_with_copy(
+        output,
+        "commodore_gcr_1571_341k",
+        "gcr",
+        "/",
+        host_file,
+        imported_path,
+    )
+    data = imported_path.read_bytes()
+    sectors_per_track = list(DEFAULT_SECTORS_PER_TRACK) * 2
+
+    def offset(track: int, sector: int) -> int:
+        return (sum(sectors_per_track[: track - 1]) + sector) * SECTOR_SIZE
+
+    primary_bam = data[offset(18, 0) : offset(18, 0) + SECTOR_SIZE]
+    side_bam = data[offset(53, 0) : offset(53, 0) + SECTOR_SIZE]
+
+    assert primary_bam[221] < 21
+    assert side_bam[0] != 0xFF
 
 
 def test_studio_blank_1581_image_has_bam_and_accepts_file_import(tmp_path) -> None:
