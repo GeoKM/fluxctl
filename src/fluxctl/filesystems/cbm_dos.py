@@ -323,8 +323,10 @@ class CBMDOS(Filesystem):
         if self.sides <= 1:
             return None
         side_index = track - 36
-        bam_offset = self._ts_to_lba(53, 0) * SECTOR_SIZE
-        return bam_offset, bam_offset + side_index * 3 + sector // 8, sector % 8
+        primary_bam_offset = self._ts_to_lba(18, 0) * SECTOR_SIZE
+        side_bam_offset = self._ts_to_lba(53, 0) * SECTOR_SIZE
+        count_offset = primary_bam_offset + 221 + side_index
+        return count_offset, side_bam_offset + side_index * 3 + sector // 8, sector % 8
 
     def _block_is_free(self, track: int, sector: int) -> bool:
         try:
@@ -352,7 +354,7 @@ class CBMDOS(Filesystem):
         mask = 1 << bit
         if image_bytes[byte_offset] & mask:
             image_bytes[byte_offset] &= ~mask
-            if track <= 35 and image_bytes[count_offset] > 0:
+            if image_bytes[count_offset] > 0:
                 image_bytes[count_offset] -= 1
 
     def _find_free_blocks(self, count: int) -> list[tuple[int, int]]:

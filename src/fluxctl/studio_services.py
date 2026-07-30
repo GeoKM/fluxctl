@@ -351,6 +351,8 @@ def _build_blank_cbm_dos_image(*, sides: int) -> bytes:
     bam = bytearray(SECTOR_SIZE)
     bam[0:2] = bytes([18, 1])
     bam[2] = 0x41
+    if sides == 2:
+        bam[3] = 0x80
     bam[0x90:0xA0] = b"FLUXCTL BLANK".ljust(16, b"\xA0")
     bam[0xA2:0xA4] = b"2A"
     bam[0xA5:0xA7] = b"\xA0\xA0"
@@ -362,7 +364,6 @@ def _build_blank_cbm_dos_image(*, sides: int) -> bytes:
             bam[entry_offset + 1 + sector // 8] |= 1 << (sector % 8)
     mark_used(bam, 18, 0)
     mark_used(bam, 18, 1)
-    image[offset(18, 0) : offset(18, 0) + SECTOR_SIZE] = bam
 
     directory = bytearray(SECTOR_SIZE)
     directory[0:2] = b"\x00\xFF"
@@ -373,8 +374,13 @@ def _build_blank_cbm_dos_image(*, sides: int) -> bytes:
         for track in range(36, 71):
             logical_track_index = track - 36
             count = DEFAULT_SECTORS_PER_TRACK[logical_track_index]
-            side_bam[logical_track_index * 3 : logical_track_index * 3 + 3] = _cbm_free_bitmap(count)
+            if track == 53:
+                count = 0
+            else:
+                side_bam[logical_track_index * 3 : logical_track_index * 3 + 3] = _cbm_free_bitmap(count)
+            bam[221 + logical_track_index] = count
         image[offset(53, 0) : offset(53, 0) + SECTOR_SIZE] = side_bam
+    image[offset(18, 0) : offset(18, 0) + SECTOR_SIZE] = bam
     return bytes(image)
 
 
