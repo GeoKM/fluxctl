@@ -39,7 +39,13 @@ from .sector.reconstruct_gcr import (
 )
 from .external.hxc import probe_hxcfe
 from .geohints import LayoutHint
-from .native import is_native_available, native_candidate_paths
+from .native import (
+    is_native_available,
+    native_candidate_paths,
+    native_load_errors,
+    windows_process_architecture,
+    windows_rust_target,
+)
 
 APP_HELP = """Inspect, verify, recover, and convert floppy flux captures.
 
@@ -101,6 +107,76 @@ def _format_doctor_status(status: str) -> tuple[str, str]:
     return "FAIL", typer.colors.RED
 
 
+def _hxcfe_candidate_paths(explicit_path: Optional[Path] = None) -> list[Path]:
+    candidates: list[Path] = []
+    if explicit_path is not None:
+        candidates.append(explicit_path)
+    if found := shutil.which("hxcfe"):
+        candidates.append(Path(found))
+
+    roots = [
+        Path(__file__).resolve().parents[2],
+        Path.cwd(),
+    ]
+    seen_roots: set[Path] = set()
+    for root in roots:
+        root = root.resolve()
+        if root in seen_roots:
+            continue
+        seen_roots.add(root)
+        sibling = root.parent / "HxCFloppyEmulator"
+        candidates.extend(
+            [
+                sibling / "build" / "hxcfe",
+                sibling / "build" / "hxcfe.exe",
+                sibling / "HxCFloppyEmulator_cmdline" / "build" / "hxcfe",
+                sibling / "HxCFloppyEmulator_cmdline" / "build" / "hxcfe.exe",
+            ]
+        )
+
+    unique_candidates: list[Path] = []
+    seen_candidates: set[Path] = set()
+    for candidate in candidates:
+        candidate = candidate.expanduser()
+        if candidate in seen_candidates:
+            continue
+        seen_candidates.add(candidate)
+        unique_candidates.append(candidate)
+    return unique_candidates
+
+
+def _first_executable_hxcfe(explicit_path: Optional[Path] = None) -> Path | None:
+    for candidate in _hxcfe_candidate_paths(explicit_path):
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _native_build_suggestion() -> str:
+    build_command = "cargo build --manifest-path native/fluxctl_native/Cargo.toml --release"
+    if os.name == "nt":
+        process_arch = windows_process_architecture() or "unknown"
+        rust_target = windows_rust_target()
+        target_command = (
+            f"rustup target add {rust_target} && {build_command} --target {rust_target}"
+            if rust_target
+            else build_command
+        )
+        return (
+            "Install Rust from https://rustup.rs and Microsoft C++ Build Tools 14.0+ "
+            "with the Desktop development with C++ workload so link.exe is available. "
+            f"This Python process is {process_arch}; build the matching DLL with "
+            f"`{target_command}`. Use an x64 Native Tools prompt for x86_64-pc-windows-msvc "
+            "or an ARM64 Native Tools prompt for aarch64-pc-windows-msvc. "
+            "`platform.machine()` reports the host on emulated Windows Python and must not "
+            "be used to select the DLL architecture."
+        )
+    return (
+        "Install Rust with `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` "
+        f"if cargo is missing, then run `{build_command}`."
+    )
+
+
 def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
     load_builtin_decoders()
     load_builtin_exporters()
@@ -153,8 +229,12 @@ def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
         native_suggestion = ""
     else:
         native_status = "warn"
+        load_errors = native_load_errors()
         native_detail = "not built or not loadable"
-        native_suggestion = "Run `cargo build --manifest-path native/fluxctl_native/Cargo.toml --release` to enable it."
+        if load_errors:
+            actionable_errors = [error for error in load_errors if not error.endswith(": not found")]
+            native_detail = f"{native_detail}: {'; '.join(actionable_errors or load_errors)}"
+        native_suggestion = _native_build_suggestion()
     checks.append(
         _status_check(
             "native acceleration",
@@ -170,20 +250,20 @@ def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
                 "greaseweazle",
                 "warn",
                 "optional package not importable",
-                "Install with `.venv/bin/pip install -e .[greaseweazle]` for Amiga and IBM FM/MFM PLL fallback support.",
+                "Install support deps with `.venv/bin/pip install -e \".[greaseweazle]\"`, then run `git clone https://github.com/keirf/Greaseweazle.git ../greaseweazle` and `.venv/bin/pip install -e ../greaseweazle`.",
             )
         )
     else:
         checks.append(_status_check("greaseweazle", "ok", "optional package importable"))
 
-    hxcfe_path = hxcfe or (Path(found) if (found := shutil.which("hxcfe")) else None)
+    hxcfe_path = hxcfe if hxcfe is not None else _first_executable_hxcfe()
     if hxcfe_path is None:
         checks.append(
             _status_check(
                 "hxcfe",
                 "warn",
-                "optional binary not found on PATH",
-                "Pass --hxcfe /path/to/hxcfe when using HxC-assisted hints.",
+                "optional binary not found on PATH or sibling checkout",
+                "Clone/build with `git clone https://github.com/jfdelnero/HxCFloppyEmulator.git ../HxCFloppyEmulator` and `make -C ../HxCFloppyEmulator/build HxCFloppyEmulator_cmdline`, then pass --hxcfe or add hxcfe to PATH.",
             )
         )
     elif not hxcfe_path.exists():

@@ -1,0 +1,48 @@
+name: Package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  python-distributions:
+    name: Build Python distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install packaging tools
+        run: python -m pip install -e ".[packaging]"
+      - name: Build wheel and sdist
+        run: python scripts/build_packages.py
+      - name: Upload Python artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/*
+
+  standalone:
+    name: Build standalone ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install GUI packaging tools
+        run: python -m pip install -e ".[gui,packaging]"
+      - name: Build standalone launchers
+        run: python scripts/build_packages.py --no-python --standalone-cli --standalone-gui
+      - name: Upload standalone artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: standalone-${{ matrix.os }}
+          path: dist/*

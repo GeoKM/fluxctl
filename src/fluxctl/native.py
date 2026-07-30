@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import platform
 import struct
+import sysconfig
 from typing import Optional, Sequence
 
 
@@ -28,6 +29,7 @@ class _NativeU32Buffer(ctypes.Structure):
 
 _LIB = None
 _LOAD_ATTEMPTED = False
+_LOAD_ERRORS: list[str] = []
 
 
 def _library_filename() -> str:
@@ -39,15 +41,71 @@ def _library_filename() -> str:
     return "libfluxctl_native.so"
 
 
+def windows_process_architecture() -> str | None:
+    """Return the Windows Python process architecture, not the host architecture."""
+
+    if platform.system() != "Windows":
+        return None
+    platform_tag = sysconfig.get_platform().lower().replace("_", "-")
+    if platform_tag in {"win-amd64", "win-x86-64"}:
+        return "x86_64"
+    if platform_tag in {"win-arm64", "win-aarch64"}:
+        return "arm64"
+    if platform_tag in {"win32", "win-x86"}:
+        return "x86"
+    return platform_tag.removeprefix("win-")
+
+
+def windows_rust_target() -> str | None:
+    """Return the MSVC Rust target matching the current Windows Python process."""
+
+    return {
+        "x86_64": "x86_64-pc-windows-msvc",
+        "arm64": "aarch64-pc-windows-msvc",
+        "x86": "i686-pc-windows-msvc",
+    }.get(windows_process_architecture() or "")
+
+
+def windows_pe_architecture(path: Path) -> str | None:
+    """Read a PE file's machine type without loading it."""
+
+    if platform.system() != "Windows":
+        return None
+    try:
+        with path.open("rb") as handle:
+            if handle.read(2) != b"MZ":
+                return None
+            handle.seek(0x3C)
+            pe_offset = struct.unpack("<I", handle.read(4))[0]
+            handle.seek(pe_offset)
+            if handle.read(4) != b"PE\0\0":
+                return None
+            machine = struct.unpack("<H", handle.read(2))[0]
+    except (OSError, struct.error):
+        return None
+    return {0x014C: "x86", 0x8664: "x86_64", 0xAA64: "arm64"}.get(
+        machine, f"PE machine 0x{machine:04x}"
+    )
+
+
 def _candidate_paths() -> list[Path]:
     env_path = os.environ.get("FLUXCTL_NATIVE_PATH")
     paths = [Path(env_path)] if env_path else []
     root = Path(__file__).resolve().parents[2]
     filename = _library_filename()
+    target_root = root / "native" / "fluxctl_native" / "target"
+    rust_target = windows_rust_target()
+    if rust_target:
+        paths.extend(
+            [
+                target_root / rust_target / "release" / filename,
+                target_root / rust_target / "debug" / filename,
+            ]
+        )
     paths.extend(
         [
-            root / "native" / "fluxctl_native" / "target" / "release" / filename,
-            root / "native" / "fluxctl_native" / "target" / "debug" / filename,
+            target_root / "release" / filename,
+            target_root / "debug" / filename,
         ]
     )
     return paths
@@ -60,100 +118,128 @@ def native_candidate_paths() -> list[Path]:
 
 
 def _load_library():
-    global _LIB, _LOAD_ATTEMPTED
+    global _LIB, _LOAD_ATTEMPTED, _LOAD_ERRORS
     if os.environ.get("FLUXCTL_DISABLE_NATIVE") == "1":
+        _LOAD_ERRORS = ["disabled by FLUXCTL_DISABLE_NATIVE=1"]
         return None
     if _LOAD_ATTEMPTED:
         return _LIB
     _LOAD_ATTEMPTED = True
+    _LOAD_ERRORS = []
 
     for path in _candidate_paths():
         if not path.exists():
+            _LOAD_ERRORS.append(f"{path}: not found")
+            continue
+        library_arch = windows_pe_architecture(path)
+        process_arch = windows_process_architecture()
+        if library_arch and process_arch and library_arch != process_arch:
+            _LOAD_ERRORS.append(
+                f"{path}: architecture mismatch (DLL is {library_arch}, "
+                f"Python process is {process_arch}; expected Rust target {windows_rust_target()})"
+            )
             continue
         try:
             lib = ctypes.CDLL(str(path))
-        except OSError:
+        except OSError as exc:
+            _LOAD_ERRORS.append(f"{path}: {exc}")
             continue
-        lib.fluxctl_free_buffer.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_size_t,
-            ctypes.c_size_t,
-        ]
-        lib.fluxctl_free_buffer.restype = None
-        lib.fluxctl_free_u32_buffer.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_size_t,
-            ctypes.c_size_t,
-        ]
-        lib.fluxctl_free_u32_buffer.restype = None
-        lib.fluxctl_parse_scp_flux_bytes.argtypes = [
-            ctypes.POINTER(ctypes.c_uint8),
-            ctypes.c_size_t,
-            ctypes.c_double,
-            ctypes.POINTER(_NativeU32Buffer),
-        ]
-        lib.fluxctl_parse_scp_flux_bytes.restype = ctypes.c_int
-        lib.fluxctl_mfm_intervals_to_bits.argtypes = [
-            ctypes.POINTER(ctypes.c_uint32),
-            ctypes.c_size_t,
-            ctypes.c_double,
-            ctypes.c_size_t,
-            ctypes.POINTER(_NativeBuffer),
-        ]
-        lib.fluxctl_mfm_intervals_to_bits.restype = ctypes.c_int
-        lib.fluxctl_mfm_decode_best.argtypes = [
-            ctypes.POINTER(ctypes.c_uint32),
-            ctypes.c_size_t,
-            ctypes.POINTER(ctypes.c_double),
-            ctypes.c_size_t,
-            ctypes.c_size_t,
-            ctypes.POINTER(_NativeBuffer),
-            ctypes.POINTER(ctypes.c_double),
-            ctypes.POINTER(ctypes.c_size_t),
-        ]
-        lib.fluxctl_mfm_decode_best.restype = ctypes.c_int
-        lib.fluxctl_mfm_decode_auto.argtypes = [
-            ctypes.POINTER(ctypes.c_uint32),
-            ctypes.c_size_t,
-            ctypes.c_double,
-            ctypes.c_bool,
-            ctypes.c_size_t,
-            ctypes.POINTER(_NativeBuffer),
-            ctypes.POINTER(ctypes.c_double),
-            ctypes.POINTER(ctypes.c_size_t),
-        ]
-        lib.fluxctl_mfm_decode_auto.restype = ctypes.c_int
-        lib.fluxctl_mfm_reconstruct_track.argtypes = [
-            ctypes.POINTER(ctypes.c_uint8),
-            ctypes.c_size_t,
-            ctypes.c_size_t,
-            ctypes.POINTER(_NativeBuffer),
-            ctypes.POINTER(ctypes.c_size_t),
-        ]
-        lib.fluxctl_mfm_reconstruct_track.restype = ctypes.c_int
-        lib.fluxctl_gcr_intervals_to_bits.argtypes = [
-            ctypes.POINTER(ctypes.c_uint32),
-            ctypes.c_size_t,
-            ctypes.c_double,
-            ctypes.c_double,
-            ctypes.POINTER(_NativeBuffer),
-        ]
-        lib.fluxctl_gcr_intervals_to_bits.restype = ctypes.c_int
-        lib.fluxctl_gcr_estimate_confidence.argtypes = [
-            ctypes.POINTER(ctypes.c_uint8),
-            ctypes.c_size_t,
-            ctypes.POINTER(ctypes.c_double),
-        ]
-        lib.fluxctl_gcr_estimate_confidence.restype = ctypes.c_int
+        try:
+            _configure_library(lib)
+        except AttributeError as exc:
+            _LOAD_ERRORS.append(f"{path}: missing native symbol {exc}")
+            continue
         _LIB = lib
+        _LOAD_ERRORS = []
         return _LIB
     return None
+
+
+def _configure_library(lib) -> None:
+    lib.fluxctl_free_buffer.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+    ]
+    lib.fluxctl_free_buffer.restype = None
+    lib.fluxctl_free_u32_buffer.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+    ]
+    lib.fluxctl_free_u32_buffer.restype = None
+    lib.fluxctl_parse_scp_flux_bytes.argtypes = [
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.POINTER(_NativeU32Buffer),
+    ]
+    lib.fluxctl_parse_scp_flux_bytes.restype = ctypes.c_int
+    lib.fluxctl_mfm_intervals_to_bits.argtypes = [
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_size_t,
+        ctypes.POINTER(_NativeBuffer),
+    ]
+    lib.fluxctl_mfm_intervals_to_bits.restype = ctypes.c_int
+    lib.fluxctl_mfm_decode_best.argtypes = [
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.POINTER(_NativeBuffer),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    lib.fluxctl_mfm_decode_best.restype = ctypes.c_int
+    lib.fluxctl_mfm_decode_auto.argtypes = [
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_bool,
+        ctypes.c_size_t,
+        ctypes.POINTER(_NativeBuffer),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    lib.fluxctl_mfm_decode_auto.restype = ctypes.c_int
+    lib.fluxctl_mfm_reconstruct_track.argtypes = [
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.POINTER(_NativeBuffer),
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    lib.fluxctl_mfm_reconstruct_track.restype = ctypes.c_int
+    lib.fluxctl_gcr_intervals_to_bits.argtypes = [
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.POINTER(_NativeBuffer),
+    ]
+    lib.fluxctl_gcr_intervals_to_bits.restype = ctypes.c_int
+    lib.fluxctl_gcr_estimate_confidence.argtypes = [
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_double),
+    ]
+    lib.fluxctl_gcr_estimate_confidence.restype = ctypes.c_int
 
 
 def is_native_available() -> bool:
     """Return whether the optional native library can be loaded."""
 
     return _load_library() is not None
+
+
+def native_load_errors() -> list[str]:
+    """Return diagnostics from the most recent native library load attempt."""
+
+    _load_library()
+    return list(_LOAD_ERRORS)
 
 
 def _interval_array(intervals_ns: Sequence[int]) -> array:
@@ -376,5 +462,9 @@ __all__ = [
     "mfm_decode_best",
     "mfm_intervals_to_bits",
     "mfm_reconstruct_track",
+    "native_load_errors",
     "parse_scp_flux_bytes",
+    "windows_pe_architecture",
+    "windows_process_architecture",
+    "windows_rust_target",
 ]

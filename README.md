@@ -3,12 +3,74 @@
 fluxctl is a modular toolkit for inspecting and converting floppy disk flux captures. It supports decoding flux streams, reconstructing sectors, quality control, visualization, extraction, and exporting to standard image formats.
 
 ## Getting started
-- `python3 -m venv .venv` and `.venv/bin/python -m pip install --upgrade pip` to prepare a local environment.
-- Install the project and CLI helpers with `.venv/bin/python -m pip install -e .`.
-- Run `.venv/bin/fluxctl --help` to confirm the CLI loads and to explore available targets.
-- Run `.venv/bin/fluxctl doctor` to check built-in plugins, layouts, optional
-  native acceleration, Greaseweazle support, and HxCFE discovery before working
-  on real media.
+Until the packaging branch is merged to `main`, clone or switch to the branch
+before running the source installer:
+
+```bash
+git clone -b codex/packaging-distribution https://github.com/GeoKM/fluxctl.git
+cd fluxctl
+python3 scripts/install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clone-hxcfe --build-hxcfe
+```
+
+After the packaging branch is merged to `main`, the easiest source-checkout
+install becomes:
+
+```bash
+git clone https://github.com/GeoKM/fluxctl.git
+cd fluxctl
+python3 scripts/install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clone-hxcfe --build-hxcfe
+.venv/bin/fluxctl doctor
+```
+
+On Windows PowerShell, use the Python launcher and Windows script paths:
+
+> New Windows setup? Start with the
+> [Windows prerequisites and installation guide](docs/windows-prerequisites.md)
+> for required downloads, optional build tools, architecture selection, and
+> verification steps.
+
+```powershell
+git clone -b codex/packaging-distribution https://github.com/GeoKM/fluxctl.git
+cd fluxctl
+py -3 scripts\install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clone-hxcfe --build-hxcfe --build-native
+.venv\Scripts\fluxctl.exe doctor
+.venv\Scripts\fluxctl.exe --help
+.venv\Scripts\fluxctl-studio.exe
+```
+
+On Windows, Fluxctl itself needs Git and Python. Optional helper builds need
+extra native build tools:
+
+- Greaseweazle: install Microsoft C++ Build Tools 14.0 or newer with the
+  "Desktop development with C++" workload.
+- HxCFE: install a GNU Make/GCC environment such as MSYS2/MinGW64, or use a
+  prebuilt `hxcfe.exe` and pass `--hxcfe C:\path\to\hxcfe.exe`.
+- Rust native acceleration: install Rust from `https://rustup.rs` and Microsoft
+  C++ Build Tools 14.0 or newer with the "Desktop development with C++"
+  workload so the MSVC linker `link.exe` is available. `--build-native`
+  detects the virtual environment's Python architecture and selects the matching
+  Rust target. This matters on Windows ARM64, where an x64 Python may run under
+  emulation and cannot load an ARM64 DLL.
+
+This creates `.venv`, installs `fluxctl` and Fluxctl Studio, offers optional
+Greaseweazle support, clones/builds optional HxCFE support, and prints the
+installed command paths. Run `.venv/bin/fluxctl --help` to explore available
+targets.
+
+For a minimal manual install instead:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -e .
+```
+
+For an interactive source-checkout install that can also offer GUI and optional
+Greaseweazle/HxCFE setup checks, run:
+
+```bash
+python3 scripts/install_fluxctl.py
+```
 
 ## Supported operations
 - **info**: inspect SCP headers and inferred geometry.
@@ -71,7 +133,8 @@ unexpectedly. It reports:
 - Whether optional Rust native decoder acceleration is enabled, disabled, or not
   built yet.
 - Whether the optional Greaseweazle Python package can be imported.
-- Whether `hxcfe` is available on `PATH` or at a supplied `--hxcfe` path.
+- Whether `hxcfe` is available on `PATH`, at a supplied `--hxcfe` path, or in a
+  sibling `../HxCFloppyEmulator` checkout built by the installer.
 
 Examples:
 ```bash
@@ -98,7 +161,7 @@ the CLI. It is designed around two workflows:
 
 Install the GUI dependency and launch it:
 ```bash
-.venv/bin/python -m pip install -e .[gui]
+.venv/bin/python -m pip install -e ".[gui]"
 .venv/bin/fluxctl-studio
 ```
 
@@ -136,15 +199,25 @@ entries.
 
 ## Optional integrations
 
+On macOS, optional helper builds need Apple's Command Line Tools for `clang`,
+`make`, and system headers:
+```
+xcode-select --install
+```
+Full Xcode is usually not required.
+
 ### Greaseweazle-assisted PLL decoding
 Fluxctl can fall back to Greaseweazle’s Amiga and IBM FM/MFM codecs for higher-fidelity PLL decoding. This is **optional**; when missing, fluxctl uses its own PLL/parser.
 
 Steps:
-1. Get dependencies:
+1. Get Fluxctl's Greaseweazle support dependencies:
    ```
-   .venv/bin/pip install -e .[greaseweazle]
+   .venv/bin/pip install -e ".[greaseweazle]"
    ```
-2. Clone Greaseweazle alongside fluxctl (sibling directory) and install it editable:
+2. Install the actual Greaseweazle Python package into the same venv. The
+   source-checkout installer can do this automatically if a sibling checkout
+   exists, or can clone it with `--clone-greaseweazle`; otherwise clone
+   Greaseweazle alongside fluxctl and install it editable:
    ```
    git clone https://github.com/keirf/Greaseweazle.git ../greaseweazle
    .venv/bin/pip install -e ../greaseweazle
@@ -155,11 +228,12 @@ No configuration is required; fluxctl will auto-detect the import at runtime whe
 HxCFE can provide layout hints and ADF conversions for Amiga and other formats.
 
 Steps:
-1. Clone and build `hxcfe` (the CLI from HxCFloppyEmulator). Example:
+1. Clone and build `hxcfe` (the CLI from HxCFloppyEmulator). The
+   source-checkout installer can clone it with `--clone-hxcfe` and attempt the
+   Makefile build with `--build-hxcfe`; manually:
    ```
    git clone https://github.com/jfdelnero/HxCFloppyEmulator.git ../HxCFloppyEmulator
-   cd ../HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build
-   make       # or use the provided build script for your platform
+   make -C ../HxCFloppyEmulator/build HxCFloppyEmulator_cmdline
    ```
 2. Point fluxctl at the binary when running commands that accept `--hxcfe`, e.g.:
    ```
@@ -177,13 +251,52 @@ Build the native library from the repository root:
 ```
 cargo build --manifest-path native/fluxctl_native/Cargo.toml --release
 ```
+On Windows, the safer source-install route is
+`py -3 scripts\install_fluxctl.py --build-native`; it builds for the Python
+process architecture. For a manual build, use the target printed by
+`fluxctl doctor`, for example:
+
+```powershell
+rustup target add x86_64-pc-windows-msvc
+cargo build --manifest-path native\fluxctl_native\Cargo.toml --release --target x86_64-pc-windows-msvc
+```
+
+If `cargo` is missing, install Rust first. The standard cross-platform path is:
+```
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+Then open a new shell, or run `source "$HOME/.cargo/env"`, and retry the
+`cargo build` command. On Debian/Ubuntu packaged Rust can also be installed with
+`sudo apt install cargo rustc`, but `rustup` usually provides a newer toolchain.
+On Windows, install Rust from `https://rustup.rs` and Microsoft C++ Build Tools
+14.0 or newer with the "Desktop development with C++" workload. If `cargo`
+reports `link.exe` is missing, run the build from Developer PowerShell for
+Visual Studio or a Native Tools command prompt so the MSVC linker is on `PATH`.
+Use the x64 Native Tools prompt for `x86_64-pc-windows-msvc`, or the ARM64
+Native Tools prompt for `aarch64-pc-windows-msvc`. If the linker reports
+`LNK4272`, the prompt and Rust target do not match. For a native ARM64 build:
+```
+"C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" arm64
+```
+
 Fluxctl auto-detects the resulting library under `native/fluxctl_native/target`.
 Set `FLUXCTL_NATIVE_PATH=/path/to/libfluxctl_native.dylib` (or `.so`/`.dll`) to
 override the lookup path. Set `FLUXCTL_DISABLE_NATIVE=1` to force the pure
 Python fallback.
+If a built library still shows as unavailable, `fluxctl doctor` reports the
+native load error. On Windows, errors such as "not a valid Win32 application" or
+`LNK4272` usually mean the Python architecture, Rust target, and Visual Studio
+Native Tools prompt do not all match. Do not use `platform.machine()` to choose
+the DLL architecture on Windows ARM64: it may report the host (`ARM64`) for an
+emulated x64 Python. Fluxctl uses Python's `win-amd64`/`win-arm64` platform tag
+and reads the DLL's PE header directly.
 
 ## Contributor guide
 See [AGENTS.md](AGENTS.md) for coding standards, workflows, and review expectations.
+See [docs/packaging.md](docs/packaging.md) for wheel, source distribution, and
+standalone GUI/CLI packaging notes.
+See [docs/windows-prerequisites.md](docs/windows-prerequisites.md) for the
+Windows software checklist and installation walkthrough.
 
 ## Provenance
 Commands that create output files write provenance sidecars by default:
