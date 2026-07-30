@@ -40,9 +40,6 @@ shape later implementation work.
 - Document any per-filesystem export limitations found during manual testing,
   especially when a filesystem can list entries but cannot yet extract file
   data.
-- Improve Studio's file-manipulation layout with a "Hide Disk Map" control
-  that collapses the disk map and expands the lower Files/Hex/Jobs panel upward
-  for directory browsing, hex inspection, and import/export workflows.
 - Add left-panel Studio actions for creating blank supported disk images from
   common presets, so users can start with an empty FAT12/CBM/Amiga/etc. image
   and then use file import/manipulation tools without needing an external
