@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -122,6 +123,71 @@ def test_is_importable_uses_target_python(monkeypatch, tmp_path):
 
     assert installer._is_importable(python, "greaseweazle")
     assert seen == [[str(python), "-c", "import greaseweazle"]]
+
+
+def test_windows_rust_target_uses_python_platform_tag(monkeypatch, tmp_path):
+    installer = _load_installer()
+    python = tmp_path / "venv" / "Scripts" / "python.exe"
+    monkeypatch.setattr(installer.os, "name", "nt")
+    monkeypatch.setattr(
+        installer,
+        "_run_probe",
+        lambda args, cwd=installer.ROOT: subprocess.CompletedProcess(
+            args, 0, "win-amd64\n", ""
+        ),
+    )
+
+    assert installer._windows_rust_target(python) == "x86_64-pc-windows-msvc"
+
+
+def test_build_native_uses_python_rust_target(monkeypatch, tmp_path):
+    installer = _load_installer()
+    python = tmp_path / "venv" / "Scripts" / "python.exe"
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        installer.shutil,
+        "which",
+        lambda name: f"C:\\tools\\{name}.exe" if name in {"cargo", "rustup"} else None,
+    )
+    monkeypatch.setattr(
+        installer, "_windows_rust_target", lambda python: "x86_64-pc-windows-msvc"
+    )
+    monkeypatch.setattr(
+        installer,
+        "_run_optional",
+        lambda args, cwd=installer.ROOT: calls.append([str(arg) for arg in args]) or True,
+    )
+
+    installer._build_native(python)
+
+    assert calls[0][-3:] == ["target", "add", "x86_64-pc-windows-msvc"]
+    assert calls[1][-2:] == ["--target", "x86_64-pc-windows-msvc"]
+
+
+def test_yes_does_not_override_explicit_no_gui(monkeypatch, tmp_path):
+    installer = _load_installer()
+    venv_path = tmp_path / ".venv"
+    python = installer._python_in_venv(venv_path)
+    python.parent.mkdir(parents=True)
+    python.touch()
+    install_commands: list[list[str]] = []
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["install_fluxctl.py", "--yes", "--no-gui", "--venv", str(venv_path)],
+    )
+    monkeypatch.setattr(installer, "_ensure_pip", lambda python: None)
+    monkeypatch.setattr(
+        installer,
+        "_run",
+        lambda args, cwd=installer.ROOT: install_commands.append(
+            [str(arg) for arg in args]
+        ),
+    )
+    monkeypatch.setattr(installer, "_check_hxcfe", lambda path: "optional")
+
+    assert installer.main() == 0
+    assert install_commands[1][-1] == "."
 
 
 def test_greaseweazle_build_hint_mentions_python_headers(monkeypatch, capsys, tmp_path):
