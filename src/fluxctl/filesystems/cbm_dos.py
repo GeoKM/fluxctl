@@ -227,11 +227,7 @@ class CBMDOS(Filesystem):
 
     def _read_chain(self, start_track: int, start_sector: int) -> bytes:
         chunks: List[bytes] = []
-        seen: set[Tuple[int, int]] = set()
-        track, sector = start_track, start_sector
-        while track != 0 and (track, sector) not in seen:
-            seen.add((track, sector))
-            data = self._read_ts(track, sector)
+        for _track, _sector, data in self._iter_chain_blocks(start_track, start_sector):
             if len(data) < 2:
                 break
             next_track, next_sector = data[0], data[1]
@@ -240,8 +236,27 @@ class CBMDOS(Filesystem):
                 chunks.append(data[2 : 2 + used])
                 break
             chunks.append(data[2:])
-            track, sector = next_track, next_sector
         return b"".join(chunks)
+
+    def _iter_chain_blocks(self, start_track: int, start_sector: int) -> List[Tuple[int, int, bytes]]:
+        blocks: List[Tuple[int, int, bytes]] = []
+        seen: set[Tuple[int, int]] = set()
+        track, sector = start_track, start_sector
+        while track != 0 and (track, sector) not in seen:
+            seen.add((track, sector))
+            data = self._read_ts(track, sector)
+            blocks.append((track, sector, data))
+            if len(data) < 2 or data[0] == 0:
+                break
+            track, sector = data[0], data[1]
+        return blocks
+
+    def _record_for_file(self, path: str) -> DirectoryRecord:
+        target = path.lstrip("/").upper()
+        for record in self.directory:
+            if record.name.upper() == target:
+                return record
+        raise FilesystemError(f"File not found: {path}")
 
     def list_directory(self, path: str = "/") -> List[FileEntry]:
         if path not in {"/", ""}:
@@ -266,11 +281,27 @@ class CBMDOS(Filesystem):
         return entries
 
     def extract_file(self, path: str) -> bytes:
-        target = path.lstrip("/").upper()
-        for record in self.directory:
-            if record.name.upper() == target:
-                return self._read_chain(record.start_track, record.start_sector)
-        raise FilesystemError(f"File not found: {path}")
+        record = self._record_for_file(path)
+        return self._read_chain(record.start_track, record.start_sector)
+
+    def file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
+        """Return physical ``(track, head, sector_id)`` addresses occupied by a file."""
+
+        record = self._record_for_file(path)
+        addresses: set[tuple[int, int, int]] = set()
+        for track, sector, _data in self._iter_chain_blocks(record.start_track, record.start_sector):
+            addresses.add(self._logical_to_physical(track, sector))
+        return addresses
+
+    def logical_file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
+        """Return CBM logical ``(track, head, sector)`` addresses occupied by a file."""
+
+        record = self._record_for_file(path)
+        addresses: set[tuple[int, int, int]] = set()
+        for track, sector, _data in self._iter_chain_blocks(record.start_track, record.start_sector):
+            _physical_track, head, _physical_sector = self._logical_to_physical(track, sector)
+            addresses.add((track, head, sector))
+        return addresses
 
     def import_file(self, image_bytes: bytes, directory: str, filename: str, data: bytes) -> bytes:
         """Return a copy with one root-level CBM DOS PRG file imported."""

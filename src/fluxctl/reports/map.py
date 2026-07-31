@@ -81,6 +81,9 @@ class DiskMap:
         Address convention used by ``track_ids``. ``physical`` uses internal
         zero-based track rows; ``cbm_logical`` uses Commodore one-based logical
         track numbers with zero-based sectors.
+    highlighted_sectors:
+        Optional ``(track, head, sector_id)`` addresses to outline as the active
+        file/selection overlay without changing the underlying sector state.
     """
 
     tracks: List[List[str]]
@@ -91,6 +94,7 @@ class DiskMap:
     track_confidence: List[float] = field(default_factory=list)
     sector_details: List[List[SectorMapEntry]] = field(default_factory=list)
     address_style: str = "physical"
+    highlighted_sectors: set[Tuple[int, int, int]] = field(default_factory=set)
 
 
 def _sector_entry(sector: Sector) -> SectorMapEntry:

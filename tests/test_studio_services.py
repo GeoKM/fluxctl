@@ -47,6 +47,61 @@ def test_studio_builds_map_and_qc_for_flat_image() -> None:
     assert qc.total_sectors > 0
 
 
+def test_studio_reports_fat12_file_allocation_for_map_overlay() -> None:
+    allocation = services.file_allocation_for_image(FIXTURE_IMG, "ibm_mfm_720k", "mfm", "/AUTOEXEC.BAT")
+
+    assert allocation.path == "/AUTOEXEC.BAT"
+    assert allocation.sectors == {(73, 1, 4), (73, 1, 5)}
+
+
+def test_studio_reports_cbm_dos_file_allocation_for_map_overlay() -> None:
+    allocation = services.file_allocation_for_image(FIXTURE_D64, "commodore_gcr_1541_170k", "gcr", "/C/FAT ASCII")
+
+    assert allocation.sectors == {(16, 0, 6), (16, 0, 16)}
+    assert allocation.logical_sectors == {(17, 0, 6), (17, 0, 16)}
+
+
+def test_studio_reports_1581_file_allocation_for_map_overlay() -> None:
+    allocation = services.file_allocation_for_image(
+        FIXTURE_1581_D81,
+        "commodore_mfm_1581_800k",
+        "mfm",
+        "/HOW TO USE",
+    )
+
+    assert len(allocation.sectors) == 26
+    assert len(allocation.logical_sectors or set()) == 50
+    assert (47, 0, 3) in allocation.sectors
+    assert (48, 0, 5) in (allocation.logical_sectors or set())
+
+
+def test_studio_reports_amiga_file_allocation_for_map_overlay() -> None:
+    allocation = services.file_allocation_for_image(FIXTURE_ADF, "amiga_mfm_880k", "mfm", "/C/Assign")
+
+    assert allocation.sectors == {
+        (32, 1, 5),
+        (32, 1, 6),
+        (32, 1, 7),
+        (32, 1, 8),
+        (32, 1, 9),
+        (32, 1, 10),
+        (32, 1, 11),
+    }
+
+
+def test_studio_reports_c64_cpm_file_allocation_for_map_overlay() -> None:
+    allocation = services.file_allocation_for_image(
+        FIXTURE_CPM_D64,
+        "commodore_gcr_1541_170k",
+        "gcr",
+        "/ASM.COM",
+    )
+
+    assert len(allocation.sectors) == 32
+    assert (9, 0, 5) in allocation.sectors
+    assert (10, 0, 2) in allocation.sectors
+
+
 def test_studio_creates_blank_image_presets(tmp_path) -> None:
     expected_filesystems = {
         "fat12_180k": "fat12",

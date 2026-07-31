@@ -212,11 +212,7 @@ class CBMDOS1581(Filesystem):
 
     def _read_chain(self, start_track: int, start_sector: int) -> bytes:
         chunks: List[bytes] = []
-        seen: set[tuple[int, int]] = set()
-        track, sector = start_track, start_sector
-        while track != 0 and (track, sector) not in seen:
-            seen.add((track, sector))
-            data = self._read_logical_sector(track, sector)
+        for _track, _sector, data in self._iter_chain_blocks(start_track, start_sector):
             if len(data) < 2:
                 break
             next_track, next_sector = data[0], data[1]
@@ -225,12 +221,44 @@ class CBMDOS1581(Filesystem):
                 chunks.append(data[2 : 2 + used])
                 break
             chunks.append(data[2:])
-            track, sector = next_track, next_sector
         return b"".join(chunks)
+
+    def _iter_chain_blocks(self, start_track: int, start_sector: int) -> List[tuple[int, int, bytes]]:
+        blocks: List[tuple[int, int, bytes]] = []
+        seen: set[tuple[int, int]] = set()
+        track, sector = start_track, start_sector
+        while track != 0 and (track, sector) not in seen:
+            seen.add((track, sector))
+            data = self._read_logical_sector(track, sector)
+            blocks.append((track, sector, data))
+            if len(data) < 2 or data[0] == 0:
+                break
+            track, sector = data[0], data[1]
+        return blocks
+
+    def _logical_to_physical_address(self, track: int, sector: int) -> tuple[int, int, int]:
+        physical_head = self._logical_head_order[sector // 20]
+        physical_sector = (sector % 20) // 2 + 1
+        return track - 1, physical_head, physical_sector
 
     def extract_file(self, path: str) -> bytes:
         record = self._record_for_file_path(path)
         return self._read_chain(record.start_track, record.start_sector)
+
+    def file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
+        """Return physical map addresses containing a 1581 file's logical blocks."""
+
+        record = self._record_for_file_path(path)
+        addresses: set[tuple[int, int, int]] = set()
+        for track, sector, _data in self._iter_chain_blocks(record.start_track, record.start_sector):
+            addresses.add(self._logical_to_physical_address(track, sector))
+        return addresses
+
+    def logical_file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
+        """Return 1581 logical ``(track, head, sector)`` blocks for BAM/grid maps."""
+
+        record = self._record_for_file_path(path)
+        return {(track, 0, sector) for track, sector, _data in self._iter_chain_blocks(record.start_track, record.start_sector)}
 
     def import_file(self, image_bytes: bytes, directory: str, filename: str, data: bytes) -> bytes:
         """Return a copy with one root-level CBM DOS 1581 PRG file imported."""
