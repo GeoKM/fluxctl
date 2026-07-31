@@ -37,21 +37,26 @@ shape later implementation work.
   Use them to verify 8-inch FAT12 geometry, filesystem detection, sector counts,
   QC, directory listing, and file export against media known to be valid outside
   Fluxctl.
-- Document any per-filesystem export limitations found during manual testing,
-  especially when a filesystem can list entries but cannot yet extract file
-  data.
-- Improve disabled-action clarity in Studio by styling unavailable buttons with
-  an obvious greyed-out visual state, in addition to disabling clicks and
-  showing explanatory tooltips.
+- Keep `docs/filesystem_capabilities.md` updated whenever filesystem listing,
+  extraction/export, or copy-only mutation support changes.
 - Add an explicit Advanced "Directory Raw Dump" mode after defining per-filesystem
   behavior. FAT12 could dump raw 32-byte directory entries from directory
   clusters; CBM DOS, Amiga, CP/M, and other filesystems need their own directory
   record/block interpretation instead of overloading File Dump.
-- Add an optional disk-map overlay that highlights the exact sectors or blocks
-  occupied by the currently selected file. Start with FAT12 by exposing a
-  filesystem allocation API that maps a file's cluster chain to track/head/sector
-  addresses, then extend the same API to CBM DOS block chains, 1581 logical
-  sectors, Amiga file blocks, and CP/M extents.
+- Deepen selected-file disk-map overlay accuracy. Studio now highlights selected
+  file sectors for FAT12, CBM DOS, 1581, Amiga's current contiguous-file model,
+  and C64 CP/M 2.2 allocation blocks. Generic CP/M still needs per-format DPB
+  support before selected extents can be highlighted accurately, and Amiga
+  should move from contiguous block spans to full file-list block traversal.
+  Follow-up items:
+  - Model CP/M disk parameter blocks per supported layout so selected-file
+    overlays can map extents/allocation blocks for C128 CP/M 3.0 and generic
+    CP/M disks instead of only C64 CP/M 2.2.
+  - Replace the Amiga overlay's contiguous-sector assumption with real OFS/FFS
+    file header, data block, extension block, checksum, and hash-chain traversal.
+  - Manually verify selected-file highlighting in Studio across physical,
+    filesystem-logical, and BAM map modes for FAT12, CBM DOS, 1581, Amiga, and
+    CP/M fixtures.
 - Convert the Advanced HEX display panel into a HEX in-place editor. It should
   allow byte edits in both Sector Dump and File Dump modes, validate changed
   bytes, and write changes back through the same copy-only safety model used by

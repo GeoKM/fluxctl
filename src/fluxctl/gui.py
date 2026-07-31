@@ -83,6 +83,7 @@ class DiskMapWidget(QWidget):
         "bam_used": QColor("#f2c94c"),
         "bam_free": QColor("#4f5b6f"),
     }
+    HIGHLIGHT_COLOR = QColor("#ff8a3d")
     LEGEND_LABELS = {
         "good": "Good",
         "weak": "Weak",
@@ -107,8 +108,12 @@ class DiskMapWidget(QWidget):
 
     def legend_items(self) -> list[tuple[str, str]]:
         if self.disk_map and getattr(self.disk_map, "render_style", "radial") == "grid":
-            return [(state, self.LEGEND_LABELS[state]) for state in ("bam_file", "bam_system", "bam_used", "bam_free")]
-        return [(state, self.LEGEND_LABELS[state]) for state in ("good", "weak", "bad", "unused")]
+            items = [(state, self.LEGEND_LABELS[state]) for state in ("bam_file", "bam_system", "bam_used", "bam_free")]
+        else:
+            items = [(state, self.LEGEND_LABELS[state]) for state in ("good", "weak", "bad", "unused")]
+        if self.disk_map and getattr(self.disk_map, "highlighted_sectors", None):
+            items.append(("selected_file", "Selected file"))
+        return items
 
     @staticmethod
     def head_groups(disk_map) -> list[tuple[int, list[tuple[int, tuple[int, int], list[str]]]]]:
@@ -206,7 +211,8 @@ class DiskMapWidget(QWidget):
                 sector_count = max(len(sectors), 1)
                 for sector_idx, state in enumerate(sectors):
                     painter.setBrush(colors.get(state, QColor("#6b7280")))
-                    painter.setPen(QPen(QColor("#101823"), 1.35))
+                    pen = QPen(self.HIGHLIGHT_COLOR, 3.0) if self._sector_is_highlighted(_row_index, sector_idx) else QPen(QColor("#101823"), 1.35)
+                    painter.setPen(pen)
                     start = int((90 - (360 * sector_idx / sector_count)) * 16)
                     span = int(-(360 / sector_count) * 16)
                     rect_size = radius * 2
@@ -278,7 +284,8 @@ class DiskMapWidget(QWidget):
                 for sector_index, state in enumerate(sectors):
                     x = left + row_label_width + sector_index * cell
                     painter.setBrush(self.STATE_COLORS.get(state, QColor("#6b7280")))
-                    painter.setPen(QPen(QColor("#111b28"), 1.25))
+                    pen = QPen(self.HIGHLIGHT_COLOR, 2.2) if self._sector_is_highlighted(row_index, sector_index) else QPen(QColor("#111b28"), 1.25)
+                    painter.setPen(pen)
                     painter.drawRect(int(x), int(y), max(int(cell - 1), 1), max(int(cell - 1), 1))
 
             self._head_layouts.append(
@@ -320,18 +327,35 @@ class DiskMapWidget(QWidget):
             return f"T{track:02d}"
         return f"T{track + 1:02d}"
 
+    def _sector_is_highlighted(self, row_index: int, sector_index: int) -> bool:
+        if not self.disk_map or not getattr(self.disk_map, "highlighted_sectors", None):
+            return False
+        track_ids = self.disk_map.track_ids or [(idx, 0) for idx, _ in enumerate(self.disk_map.tracks)]
+        if row_index >= len(track_ids) or not self.disk_map.sector_details or row_index >= len(self.disk_map.sector_details):
+            return False
+        details = self.disk_map.sector_details[row_index]
+        if sector_index >= len(details):
+            return False
+        track, head = track_ids[row_index]
+        return (track, head, details[sector_index].sector_id) in self.disk_map.highlighted_sectors
+
     def _draw_legend(self, painter: QPainter, width: int, height: int) -> None:  # pragma: no cover - visual rendering.
         painter.setFont(QFont("Arial", 11))
         painter.setPen(QPen(QColor("#dce7f7"), 1))
         y = max(height - 28, 8)
         x = 18
         for state, label in self.legend_items():
-            painter.setBrush(self.STATE_COLORS[state])
-            painter.setPen(Qt.NoPen)
-            painter.drawRoundedRect(x, y + 4, 14, 14, 3, 3)
+            if state == "selected_file":
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(self.HIGHLIGHT_COLOR, 2.2))
+                painter.drawRoundedRect(x, y + 4, 14, 14, 3, 3)
+            else:
+                painter.setBrush(self.STATE_COLORS[state])
+                painter.setPen(Qt.NoPen)
+                painter.drawRoundedRect(x, y + 4, 14, 14, 3, 3)
             painter.setPen(QPen(QColor("#dce7f7"), 1))
             painter.drawText(x + 20, y, max(width - x - 20, 1), 24, Qt.AlignLeft | Qt.AlignVCenter, label)
-            x += 116 if state != "unused" else 150
+            x += 138 if state == "selected_file" else (116 if state != "unused" else 150)
 
     def mouseMoveEvent(self, event) -> None:  # pragma: no cover - GUI interaction.
         hit = self._hit_test(event.position().x(), event.position().y())
@@ -553,6 +577,7 @@ class FluxctlStudio(QMainWindow):
         self.files_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.files_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.files_table.itemDoubleClicked.connect(self.open_selected_file_entry)
+        self.files_table.itemSelectionChanged.connect(self.highlight_selected_file_on_map)
         self.file_panel = QWidget()
         file_panel_layout = QVBoxLayout(self.file_panel)
         file_panel_layout.setContentsMargins(0, 0, 0, 0)
@@ -714,8 +739,24 @@ class FluxctlStudio(QMainWindow):
             QLabel#filePath { color: #9ee6b8; font-weight: 600; padding: 4px 8px; }
             QPushButton { background: #243348; border: 1px solid #40536c; border-radius: 6px; padding: 8px 10px; }
             QPushButton:hover { background: #2f435f; }
+            QPushButton:disabled {
+                background: #151b25;
+                border: 1px solid #253142;
+                color: #697386;
+            }
             QComboBox, QLineEdit, QTextEdit, QTableWidget {
                 background: #0c1018; border: 1px solid #2d3a4b; border-radius: 6px; padding: 6px;
+            }
+            QComboBox:disabled, QLineEdit:disabled, QTextEdit:disabled, QTableWidget:disabled {
+                background: #0b0f16;
+                border: 1px solid #202a38;
+                color: #657080;
+            }
+            QToolTip {
+                background: #172233;
+                color: #e7edf7;
+                border: 1px solid #40536c;
+                padding: 6px;
             }
             QHeaderView::section { background: #1b2636; color: #dce7f7; padding: 6px; border: 0; }
             QTabBar::tab { background: #1b2636; padding: 8px 14px; border-top-left-radius: 6px; border-top-right-radius: 6px; }
@@ -1237,6 +1278,7 @@ class FluxctlStudio(QMainWindow):
             self.files_table.setItem(0, 0, QTableWidgetItem(f"No filesystem entries found in {self.file_browser_path}"))
             self.files_table.setItem(0, 1, QTableWidgetItem("-"))
             self.files_table.setItem(0, 2, QTableWidgetItem("-"))
+            self._clear_file_map_highlight()
             self.activity_label.setText(f"No supported filesystem entries were found in {self.file_browser_path}.")
             self._append_log(f"Listed 0 filesystem entries in {self.file_browser_path}")
             return
@@ -1250,6 +1292,7 @@ class FluxctlStudio(QMainWindow):
             self.files_table.setItem(row, 2, QTableWidgetItem(str(entry.size)))
         self.activity_label.setText(f"Listed {len(entries)} filesystem entries in {self.file_browser_path}.")
         self._append_log(f"Listed {len(entries)} filesystem entries in {self.file_browser_path}")
+        self._clear_file_map_highlight()
 
     def _set_file_browser_path(self, path: str) -> None:
         parts = [part for part in path.strip("/").split("/") if part]
@@ -1301,6 +1344,36 @@ class FluxctlStudio(QMainWindow):
                 continue
             selected.append((entry_path, bool(name_item.data(Qt.UserRole + 1))))
         return selected
+
+    def _clear_file_map_highlight(self) -> None:
+        disk_map = self.map_widget.disk_map
+        if disk_map is not None and getattr(disk_map, "highlighted_sectors", None):
+            disk_map.highlighted_sectors.clear()
+            self.map_widget.update()
+
+    def highlight_selected_file_on_map(self) -> None:
+        disk_map = self.map_widget.disk_map
+        if disk_map is None:
+            return
+        file_path, is_dir = self._selected_file_entry_path()
+        if not file_path or is_dir or self.current_path is None or self.current_summary is None:
+            self._clear_file_map_highlight()
+            return
+        try:
+            allocation = services.file_allocation_for_image(
+                self.current_path,
+                self._selected_layout() or None,
+                self._selected_encoding(),
+                file_path,
+            )
+        except Exception:
+            self._clear_file_map_highlight()
+            return
+        if getattr(disk_map, "address_style", "physical") == "cbm_logical" and allocation.logical_sectors is not None:
+            disk_map.highlighted_sectors = set(allocation.logical_sectors)
+        else:
+            disk_map.highlighted_sectors = set(allocation.sectors)
+        self.map_widget.update()
 
     def view_selected_file_hex(self) -> None:
         if not self._require_image():

@@ -58,6 +58,7 @@ class CPMFilesystem(Filesystem):
         self._probed = False
         self._records: List[CPMDirectoryRecord] = []
         self._variant = "cpm"
+        self._image: SectorImage | None = None
 
     def _directory_records(self, image: SectorImage) -> List[CPMDirectoryRecord]:
         records: List[CPMDirectoryRecord] = []
@@ -100,6 +101,7 @@ class CPMFilesystem(Filesystem):
     def probe(self, image: SectorImage) -> bool:
         """Heuristic CP/M probe: scan early sectors for directory entries."""
 
+        self._image = image
         self._records = self._directory_records(image)
         self._probed = len(self._records) >= 2
         self._variant = self._detect_variant(image)
@@ -127,6 +129,10 @@ class CPMFilesystem(Filesystem):
         if layout_id.startswith("commodore_mfm_1571_cpm_"):
             return "c128_cpm_3_0"
         return "cpm"
+
+    def _is_c64_cpm_2_2(self) -> bool:
+        layout_id = getattr(getattr(self._image, "layout", None), "layout_id", "") if self._image is not None else ""
+        return self._variant == "c64_cpm_2_2" or layout_id == "commodore_gcr_1541_170k"
 
     def list_directory(self, path: str = "/") -> List[FileEntry]:
         if path not in {"/", ""}:
@@ -157,6 +163,40 @@ class CPMFilesystem(Filesystem):
         for record in self._records:
             blocks.update(block for block in record.allocation if block)
         return blocks
+
+    def file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
+        """Return selected-file sector addresses for supported CP/M variants."""
+
+        if not self._is_c64_cpm_2_2():
+            raise FilesystemError("CP/M file allocation overlay needs a format-specific allocation map")
+        addresses: set[tuple[int, int, int]] = set()
+        for block in self._allocation_blocks_for_file(path):
+            for logical_sector in range(block * 4, block * 4 + 4):
+                logical_track = logical_sector // 17
+                sector_id = logical_sector % 17
+                track = logical_track + 2 if logical_track < 15 else logical_track - 15 + 18
+                addresses.add((track, 0, sector_id))
+        return addresses
+
+    def _allocation_blocks_for_file(self, path: str) -> set[int]:
+        target = path.lstrip("/").upper()
+        if ":" in target:
+            user_text, target_name = target.split(":", 1)
+            try:
+                target_user = int(user_text)
+            except ValueError as exc:
+                raise FilesystemError(f"Invalid CP/M user area in path: {path}") from exc
+        else:
+            target_user = 0
+            target_name = target
+        matches = [
+            record
+            for record in self._records
+            if record.user == target_user and record.name.upper() == target_name
+        ]
+        if not matches:
+            raise FilesystemError(f"File not found: {path}")
+        return {block for record in matches for block in record.allocation if block}
 
     def extract_file(self, path: str) -> bytes:
         raise FilesystemError("CP/M file extraction not implemented")

@@ -106,6 +106,24 @@ class FAT12(Filesystem):
         data = self._read_cluster_chain(entry.start_cluster)
         return data[: entry.size]
 
+    def file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
+        """Return physical ``(track, head, sector_id)`` addresses occupied by a file."""
+
+        entry = self._entry_for_file(path)
+        if self.sectors_per_track <= 0 or self.heads <= 0:
+            raise FilesystemError("FAT12 geometry is not available")
+        addresses: set[tuple[int, int, int]] = set()
+        for cluster in self._cluster_chain(entry.start_cluster):
+            start_lba = self._cluster_to_lba(cluster)
+            for sector_offset in range(self.sectors_per_cluster):
+                lba = start_lba + sector_offset
+                track = lba // (self.sectors_per_track * self.heads)
+                rem = lba % (self.sectors_per_track * self.heads)
+                head = rem // self.sectors_per_track
+                sector_id = (rem % self.sectors_per_track) + 1
+                addresses.add((track, head, sector_id))
+        return addresses
+
     def replace_file_same_size(self, image_bytes: bytes, path: str, replacement: bytes) -> bytes:
         """Return a copy of ``image_bytes`` with one file's cluster data replaced.
 

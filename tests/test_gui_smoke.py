@@ -127,6 +127,30 @@ def test_disk_map_widget_exposes_colour_legend_items() -> None:
         ("bam_used", "Allocated"),
         ("bam_free", "Free"),
     ]
+    widget.set_disk_map(DiskMap([["good"]], 1, 1, highlighted_sectors={(0, 0, 1)}))
+    assert widget.legend_items()[-1] == ("selected_file", "Selected file")
+
+
+def test_disk_map_widget_detects_highlighted_sector() -> None:
+    widget = DiskMapWidget()
+    widget.set_disk_map(
+        DiskMap(
+            [["good", "good"]],
+            1,
+            2,
+            track_ids=[(73, 1)],
+            sector_details=[
+                [
+                    SectorMapEntry(4, "good", 512, True, 1.0),
+                    SectorMapEntry(5, "good", 512, True, 1.0),
+                ]
+            ],
+            highlighted_sectors={(73, 1, 5)},
+        )
+    )
+
+    assert not widget._sector_is_highlighted(0, 0)
+    assert widget._sector_is_highlighted(0, 1)
 
 
 def test_opening_new_image_clears_file_panel() -> None:
@@ -198,6 +222,17 @@ def test_simple_mode_can_hide_and_restore_disk_map() -> None:
     assert not window.map_canvas_panel.isHidden()
     assert window.map_toggle_button.text() == "Hide Disk Map"
     assert "expand the Files" in window.map_toggle_button.toolTip()
+    window.close()
+
+
+def test_studio_styles_disabled_actions_distinctly() -> None:
+    window = FluxctlStudio()
+    style = window.styleSheet()
+
+    assert "QPushButton:disabled" in style
+    assert "color: #697386" in style
+    assert "QComboBox:disabled" in style
+    assert "QToolTip" in style
     window.close()
 
 
@@ -284,6 +319,98 @@ def test_file_panel_double_click_opens_directory(monkeypatch) -> None:
 
     assert window.file_browser_path == "/SUBDIR"
     assert opened_paths == ["/SUBDIR"]
+    window.close()
+
+
+def test_file_selection_highlights_file_allocation_on_map(monkeypatch) -> None:
+    _app()
+    window = FluxctlStudio()
+    window.current_path = FIXTURE_IMG
+    window.current_summary = services.ImageSummary(
+        path=str(FIXTURE_IMG),
+        size=FIXTURE_IMG.stat().st_size,
+        kind="img",
+        layout_id="ibm_mfm_720k",
+        encoding="mfm",
+        filesystem="fat12",
+        confidence=1.0,
+        evidence=[],
+    )
+    window.map_widget.set_disk_map(
+        DiskMap(
+            [["good", "good"]],
+            1,
+            2,
+            track_ids=[(73, 1)],
+            sector_details=[
+                [
+                    SectorMapEntry(4, "good", 512, True, 1.0),
+                    SectorMapEntry(5, "good", 512, True, 1.0),
+                ]
+            ],
+        )
+    )
+    monkeypatch.setattr(
+        services,
+        "file_allocation_for_image",
+        lambda *_args: services.FileAllocationView("/AUTOEXEC.BAT", {(73, 1, 4), (73, 1, 5)}),
+    )
+    window._show_files(
+        [
+            services.FileEntryView("AUTOEXEC.BAT", "file", 39, "/AUTOEXEC.BAT", False),
+            services.FileEntryView("TOOLS", "<DIR>", 0, "/TOOLS", True),
+        ]
+    )
+
+    window.files_table.setCurrentCell(0, 0)
+
+    assert window.map_widget.disk_map.highlighted_sectors == {(73, 1, 4), (73, 1, 5)}
+
+    window.files_table.setCurrentCell(1, 0)
+
+    assert window.map_widget.disk_map.highlighted_sectors == set()
+    window.close()
+
+
+def test_file_selection_uses_logical_allocation_on_cbm_bam_map(monkeypatch) -> None:
+    _app()
+    window = FluxctlStudio()
+    window.current_path = FIXTURE_IMG
+    window.current_summary = services.ImageSummary(
+        path=str(FIXTURE_IMG),
+        size=FIXTURE_IMG.stat().st_size,
+        kind="img",
+        layout_id="commodore_gcr_1541_170k",
+        encoding="gcr",
+        filesystem="cbm_dos",
+        confidence=1.0,
+        evidence=[],
+    )
+    window.map_widget.set_disk_map(
+        DiskMap(
+            [["bam_file"]],
+            1,
+            1,
+            render_style="grid",
+            track_ids=[(18, 0)],
+            sector_details=[[SectorMapEntry(6, "bam_file", 256, True, 1.0)]],
+            address_style="cbm_logical",
+        )
+    )
+    monkeypatch.setattr(
+        services,
+        "file_allocation_for_image",
+        lambda *_args: services.FileAllocationView(
+            "/HELLO",
+            {(17, 0, 6)},
+            logical_sectors={(18, 0, 6)},
+        ),
+    )
+    window._show_files([services.FileEntryView("HELLO", "file", 39, "/HELLO", False)])
+
+    window.files_table.setCurrentCell(0, 0)
+
+    assert window.map_widget.disk_map.highlighted_sectors == {(18, 0, 6)}
     window.close()
 
 

@@ -139,6 +139,36 @@ class AmigaOFS(Filesystem):
     def extract_file(self, path: str) -> bytes:
         if self.image is None:
             raise FilesystemError("Filesystem not probed")
+        target = self._entry_for_file(path)
+        start = target.start_sector
+        count = (target.length + self.image.bytes_per_sector - 1) // self.image.bytes_per_sector
+        data = self.image.read_sector(start, count)
+        return data[: target.length]
+
+    def file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
+        """Return physical ``(track, head, sector_id)`` addresses for a file.
+
+        The current Amiga reader extracts files as contiguous logical blocks,
+        so the overlay mirrors that same model until full AmigaDOS file-list
+        block traversal is implemented.
+        """
+
+        if self.image is None:
+            raise FilesystemError("Filesystem not probed")
+        target = self._entry_for_file(path)
+        sectors_per_track = 11
+        heads = 2
+        count = (target.length + self.image.bytes_per_sector - 1) // self.image.bytes_per_sector
+        addresses: set[tuple[int, int, int]] = set()
+        for lba in range(target.start_sector, target.start_sector + count):
+            track = lba // (sectors_per_track * heads)
+            rem = lba % (sectors_per_track * heads)
+            head = rem // sectors_per_track
+            sector_id = (rem % sectors_per_track) + 1
+            addresses.add((track, head, sector_id))
+        return addresses
+
+    def _entry_for_file(self, path: str) -> _AmigaDirEntry:
         parts = [part for part in path.strip("/").split("/") if part]
         if not parts:
             raise FilesystemError("Path must reference a file")
@@ -148,10 +178,7 @@ class AmigaOFS(Filesystem):
             raise FilesystemError(f"File '{path}' not found")
         if target.is_dir:
             raise FilesystemError("Cannot extract a directory entry")
-        start = target.start_sector
-        count = (target.length + self.image.bytes_per_sector - 1) // self.image.bytes_per_sector
-        data = self.image.read_sector(start, count)
-        return data[: target.length]
+        return target
 
     def metadata(self) -> Dict[str, str]:
         return {"filesystem": self.filesystem, "entries": str(len(self.directory))}

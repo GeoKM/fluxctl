@@ -74,6 +74,15 @@ class FileEntryView:
 
 
 @dataclass(frozen=True)
+class FileAllocationView:
+    """Filesystem allocation addresses suitable for map overlays."""
+
+    path: str
+    sectors: set[tuple[int, int, int]]
+    logical_sectors: set[tuple[int, int, int]] | None = None
+
+
+@dataclass(frozen=True)
 class HexDumpView:
     """Hex/ASCII bytes suitable for Studio inspection panels."""
 
@@ -737,6 +746,29 @@ def file_hex_dump(
         raise ValueError("No supported filesystem is available")
     data = filesystem.extract_file(file_path)
     return HexDumpView(title=f"File {file_path}", size=len(data), text=format_hex_dump(data, max_bytes=max_bytes))
+
+
+def file_allocation_for_image(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    file_path: str,
+) -> FileAllocationView:
+    """Return sector addresses occupied by a filesystem file when supported."""
+
+    load_builtin_filesystems()
+    image = _prepare_image(path, layout_id, encoding)
+    filesystem = detect_filesystem(image, path_name=path.name).plugin
+    if filesystem is None:
+        raise ValueError("No supported filesystem is available")
+    if not hasattr(filesystem, "file_sector_addresses"):
+        raise ValueError("This filesystem does not expose file sector allocation yet")
+    logical_sectors = (
+        filesystem.logical_file_sector_addresses(file_path)
+        if hasattr(filesystem, "logical_file_sector_addresses")
+        else None
+    )
+    return FileAllocationView(file_path, filesystem.file_sector_addresses(file_path), logical_sectors)
 
 
 def _mount_filesystem(path: Path, layout_id: Optional[str], encoding: str):
