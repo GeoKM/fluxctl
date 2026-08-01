@@ -11,7 +11,7 @@ from . import studio_services as services
 
 
 try:  # pragma: no cover - exercised only when GUI dependencies are installed.
-    from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
+    from PySide6.QtCore import QObject, QRunnable, QStandardPaths, Qt, QThreadPool, Signal, Slot
     from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
     from PySide6.QtWidgets import (
         QApplication,
@@ -539,6 +539,9 @@ class FluxctlStudio(QMainWindow):
         self.file_path_label = QLabel("/")
         self.file_path_label.setObjectName("filePath")
         self.file_path_label.setWordWrap(True)
+        self.file_volume_label = QLabel("")
+        self.file_volume_label.setObjectName("filePath")
+        self.file_volume_label.setWordWrap(True)
         self.file_up_button = QPushButton("Up")
         self.file_up_button.clicked.connect(self.open_parent_directory)
         self.file_root_button = QPushButton("Root")
@@ -582,6 +585,7 @@ class FluxctlStudio(QMainWindow):
         file_panel_layout = QVBoxLayout(self.file_panel)
         file_panel_layout.setContentsMargins(0, 0, 0, 0)
         file_panel_layout.addLayout(file_nav)
+        file_panel_layout.addWidget(self.file_volume_label)
         file_panel_layout.addWidget(self.files_table)
         self.log = QTextEdit()
         self.log.setReadOnly(True)
@@ -908,12 +912,12 @@ class FluxctlStudio(QMainWindow):
         if preset is None:
             self._warn("Choose a blank disk image preset first.")
             return
-        default_name = f"blank-{preset.preset_id}{preset.suffix}"
+        default_name = self._default_blank_image_output_path(preset.preset_id, preset.suffix)
         filter_text = f"{preset.label} (*{preset.suffix});;All files (*)"
         output_name, _ = QFileDialog.getSaveFileName(
             self,
             "Create blank disk image",
-            default_name,
+            str(default_name),
             filter_text,
         )
         if not output_name:
@@ -921,11 +925,40 @@ class FluxctlStudio(QMainWindow):
         output = Path(output_name)
         if output.suffix == "":
             output = output.with_suffix(preset.suffix)
+        if not output.is_absolute():
+            output = self._blank_image_default_directory() / output
+        overwrite = output.exists()
+        if overwrite and not self._confirm_overwrite_output(output):
+            return
         self._run_job(
             f"create blank {preset.label}",
-            lambda: services.create_blank_image(preset.preset_id, output),
+            lambda: services.create_blank_image(preset.preset_id, output, overwrite=overwrite),
             self._show_blank_image_result,
         )
+
+    def _confirm_overwrite_output(self, output: Path) -> bool:
+        question = (
+            "The selected output file already exists.\n\n"
+            f"{output}\n\n"
+            "Replace it with the new blank disk image?"
+        )
+        answer = QMessageBox.question(
+            self,
+            "Replace existing image?",
+            question,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return answer == QMessageBox.Yes
+
+    def _blank_image_default_directory(self) -> Path:
+        documents = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
+        if documents:
+            return Path(documents)
+        return Path.home()
+
+    def _default_blank_image_output_path(self, preset_id: str, suffix: str) -> Path:
+        return self._blank_image_default_directory() / f"blank-{preset_id}{suffix}"
 
     def _show_blank_image_result(self, result: object) -> None:
         self.current_path = Path(result.path)
@@ -943,6 +976,7 @@ class FluxctlStudio(QMainWindow):
     def _clear_image_results(self) -> None:
         self.current_summary = None
         self._set_file_browser_path("/")
+        self.file_volume_label.setText("")
         self.files_table.setRowCount(0)
         self.hex_title_label.setText("No hex data loaded")
         self.hex_text.clear()
@@ -1292,11 +1326,16 @@ class FluxctlStudio(QMainWindow):
         directory = self.file_browser_path
         self._run_job(
             f"extract --list {directory}",
-            lambda: services.list_files(self.current_path, layout, encoding, directory),
+            lambda: services.list_files_with_info(self.current_path, layout, encoding, directory),
             self._show_files,
         )
 
     def _show_files(self, entries: object) -> None:
+        volume_text = ""
+        if isinstance(entries, services.FileListView):
+            volume_text = entries.volume_text
+            entries = entries.entries
+        self.file_volume_label.setText(volume_text)
         if not entries:
             self.files_table.setRowCount(1)
             self.files_table.setItem(0, 0, QTableWidgetItem(f"No filesystem entries found in {self.file_browser_path}"))
@@ -1893,16 +1932,36 @@ class FluxctlStudio(QMainWindow):
         if not self._require_image():
             return
         exporter = self.export_combo.currentText() if hasattr(self, "export_combo") else "raw"
+        if not exporter:
+            exporter = "raw"
         suffix = ".img" if exporter == "raw" else f".{exporter}"
-        filename, _ = QFileDialog.getSaveFileName(self, "Save converted image", f"converted{suffix}", "All files (*)")
+        default_output = self._default_converted_output_path(suffix)
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save converted image",
+            str(default_output),
+            "All files (*)",
+        )
         if not filename:
             return
+        output = Path(filename)
+        if output.suffix == "":
+            output = output.with_suffix(suffix)
+        if not output.is_absolute() and self.current_path is not None:
+            output = self.current_path.parent / output
         layout = self._selected_layout()
-        args = ["convert", str(self.current_path), "--to", exporter, "--out", filename]
+        args = ["convert", str(self.current_path), "--to", exporter, "--out", str(output)]
         if layout:
             args.extend(["--layout", layout])
         args.extend(["--encoding", self._selected_encoding()])
         self._run_cli(args)
+
+    def _default_converted_output_path(self, suffix: str) -> Path:
+        if self.current_path is None:
+            return Path(f"converted{suffix}").resolve()
+        source = self.current_path
+        base_name = f"{source.stem}-converted{suffix}"
+        return source.parent / base_name
 
     def compare_dialog(self) -> None:
         if not self._require_image():

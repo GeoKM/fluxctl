@@ -36,6 +36,8 @@ class CBMDOS1581(Filesystem):
         self.image: Optional[SectorImage] = None
         self.directory: List[DirectoryRecord1581] = []
         self.dos_type = ""
+        self.disk_name = ""
+        self.disk_id = ""
         self._logical_head_order = (0, 1)
 
     def _reset(self) -> None:
@@ -90,7 +92,7 @@ class CBMDOS1581(Filesystem):
                 and header[2] == ord("D")
                 and header[25:27] == b"3D"
             ):
-                self.dos_type = "3D"
+                self._parse_header_metadata(header)
                 return True
             return False
         candidates = [
@@ -106,7 +108,7 @@ class CBMDOS1581(Filesystem):
                 and header[25:27] == b"3D"
             ):
                 self._logical_head_order = order
-                self.dos_type = "3D"
+                self._parse_header_metadata(header)
                 return True
         return False
 
@@ -431,5 +433,19 @@ class CBMDOS1581(Filesystem):
             raise FilesystemError("1581 name contains unsupported characters")
         return encoded.ljust(16, b"\xA0")
 
+    @staticmethod
+    def _decode_header_field(raw: bytes) -> str:
+        return raw.replace(b"\xA0", b" ").replace(b"\x00", b" ").decode("latin-1", errors="ignore").strip()
+
+    def _parse_header_metadata(self, header: bytes) -> None:
+        self.disk_name = self._decode_header_field(header[4:20])
+        self.disk_id = self._decode_header_field(header[22:24])
+        self.dos_type = self._decode_header_field(header[25:27])
+
     def metadata(self) -> Dict[str, str]:
-        return {"filesystem": "cbm_dos_1581", "dos_type": self.dos_type}
+        return {
+            "filesystem": "cbm_dos_1581",
+            "disk_name": self.disk_name,
+            "disk_id": self.disk_id,
+            "dos_type": self.dos_type,
+        }

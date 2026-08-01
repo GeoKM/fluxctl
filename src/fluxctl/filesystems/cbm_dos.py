@@ -35,6 +35,8 @@ class CBMDOS(Filesystem):
         self.sides = 1
         self.directory: List[DirectoryRecord] = []
         self.dos_type: bytes = b""
+        self.disk_name = ""
+        self.disk_id = ""
 
     def _reset(self) -> None:
         self.__init__()
@@ -133,7 +135,7 @@ class CBMDOS(Filesystem):
             return False
         if bam is None or len(bam) < SECTOR_SIZE:
             return False
-        self.dos_type = bam[0xA2:0xA4]
+        self._parse_disk_header(bam)
         if not self.dos_type or not all(chr(b).isalnum() for b in self.dos_type):
             return False
         try:
@@ -481,5 +483,30 @@ class CBMDOS(Filesystem):
             raise FilesystemError("CBM DOS name contains unsupported characters")
         return encoded.ljust(16, b"\xA0")
 
+    @staticmethod
+    def _decode_header_field(raw: bytes) -> str:
+        return raw.replace(b"\xA0", b" ").replace(b"\x00", b" ").decode("latin-1", errors="ignore").strip()
+
+    @staticmethod
+    def _is_alnum_pair(value: bytes) -> bool:
+        return len(value) == 2 and all(chr(byte).isalnum() for byte in value)
+
+    def _parse_disk_header(self, bam: bytes) -> None:
+        self.disk_name = self._decode_header_field(bam[0x90:0xA0])
+        early_pair = bam[0xA2:0xA4]
+        later_pair = bam[0xA5:0xA7]
+        if self._is_alnum_pair(later_pair):
+            self.dos_type = later_pair
+            disk_id_pair = early_pair
+        else:
+            self.dos_type = early_pair
+            disk_id_pair = bam[0xA0:0xA2]
+        disk_id = self._decode_header_field(disk_id_pair)
+        self.disk_id = "" if disk_id == self.dos_type.decode("latin-1", errors="ignore") else disk_id
+
     def metadata(self) -> Dict[str, str]:
-        return {"dos_type": self.dos_type.decode("latin-1", errors="ignore")}
+        return {
+            "disk_name": self.disk_name,
+            "disk_id": self.disk_id,
+            "dos_type": self.dos_type.decode("latin-1", errors="ignore"),
+        }

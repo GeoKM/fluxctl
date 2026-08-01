@@ -23,6 +23,7 @@ class AmigaOFS(Filesystem):
         self.image: Optional[SectorImage] = None
         self.directory: list[_AmigaDirEntry] = []
         self.filesystem = "amiga"
+        self.volume_label = ""
 
     @staticmethod
     def _long(data: bytes, index: int, *, signed: bool = False) -> int:
@@ -83,6 +84,11 @@ class AmigaOFS(Filesystem):
         return sorted(entries, key=lambda entry: (not entry.is_dir, entry.name.lower()))
 
     def _parse_real_directory(self) -> None:
+        assert self.image is not None
+        root = self.image.read_sector(880)
+        if len(root) >= 464 and self._long(root, 0) == 2:
+            name_len = min(root[432], 30)
+            self.volume_label = root[433 : 433 + name_len].decode("latin-1", errors="ignore")
         self.directory = self._directory_entries_from_block(880)
 
     def probe(self, image: SectorImage) -> bool:
@@ -181,4 +187,4 @@ class AmigaOFS(Filesystem):
         return target
 
     def metadata(self) -> Dict[str, str]:
-        return {"filesystem": self.filesystem, "entries": str(len(self.directory))}
+        return {"filesystem": self.filesystem, "volume_label": self.volume_label, "entries": str(len(self.directory))}

@@ -128,6 +128,24 @@ def test_studio_creates_blank_image_presets(tmp_path) -> None:
         assert entries == []
 
 
+def test_studio_blank_image_overwrite_is_explicit(tmp_path) -> None:
+    output = tmp_path / "blank.img"
+    output.write_bytes(b"existing")
+
+    try:
+        services.create_blank_image("fat12_180k", output)
+    except Exception as exc:
+        assert "already exists" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("blank image creation should reject existing files by default")
+
+    result = services.create_blank_image("fat12_180k", output, overwrite=True)
+
+    assert result.size == 184320
+    assert output.stat().st_size == 184320
+    assert output.read_bytes() != b"existing"
+
+
 def test_studio_blank_fat12_image_accepts_file_import(tmp_path) -> None:
     output = tmp_path / "blank.img"
     host_file = tmp_path / "README.TXT"
@@ -352,6 +370,29 @@ def test_studio_lists_1581_cbm_dos_files() -> None:
     assert summary.filesystem == "cbm_dos_1581"
     assert any(entry.name == "HOW TO USE" for entry in entries)
     assert any(entry.name == "PIC.DIR" and entry.kind == "<DIR>" for entry in entries)
+
+
+def test_studio_reports_cbm_volume_metadata_for_files_panel() -> None:
+    summary = services.summarize_image(FIXTURE_D64)
+    listing = services.list_files_with_info(FIXTURE_D64, summary.layout_id, summary.encoding)
+
+    assert "Name: KBBS FONTS" in listing.volume_text
+    assert "DOS: 2A" in listing.volume_text
+    assert any(entry.name == "C/FAT ASCII" for entry in listing.entries)
+
+
+def test_studio_reports_1571_and_1581_volume_metadata_for_files_panel() -> None:
+    d71_summary = services.summarize_image(FIXTURE_D71)
+    d71_listing = services.list_files_with_info(FIXTURE_D71, d71_summary.layout_id, d71_summary.encoding)
+    d81_summary = services.summarize_image(FIXTURE_1581_D81)
+    d81_listing = services.list_files_with_info(FIXTURE_1581_D81, d81_summary.layout_id, d81_summary.encoding)
+
+    assert "Name: KBBS BACKUP 1" in d71_listing.volume_text
+    assert "ID: KB" in d71_listing.volume_text
+    assert "DOS: 2A" in d71_listing.volume_text
+    assert "Name: 1581 UTILITY V02" in d81_listing.volume_text
+    assert "ID: GB" in d81_listing.volume_text
+    assert "DOS: 3D" in d81_listing.volume_text
 
 
 def test_studio_lists_1581_cbm_dos_subdirectory() -> None:

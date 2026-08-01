@@ -8,7 +8,7 @@ pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QItemSelectionModel, QTimer
-from PySide6.QtWidgets import QApplication, QAbstractItemView, QFileDialog
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QFileDialog, QMessageBox
 
 from fluxctl import studio_services as services
 from fluxctl.gui import FluxctlStudio
@@ -148,6 +148,27 @@ def test_studio_defaults_scp_conversion_to_layout_appropriate_exporter() -> None
     window.close()
 
 
+def test_convert_dialog_defaults_output_next_to_source(monkeypatch, tmp_path) -> None:
+    window = FluxctlStudio()
+    source = tmp_path / "disk.scp"
+    source.write_bytes(b"")
+    captured: dict[str, object] = {}
+    window.current_path = source
+
+    def fake_save(_parent, _title, default_name, _filter):
+        captured["default_name"] = default_name
+        return ("converted.img", "")
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", fake_save)
+    monkeypatch.setattr(window, "_run_cli", lambda args: captured.setdefault("args", args))
+
+    window.convert_dialog()
+
+    assert captured["default_name"] == str(tmp_path / "disk-converted.img")
+    assert captured["args"][5] == str(tmp_path / "converted.img")
+    window.close()
+
+
 def test_disk_map_widget_detects_highlighted_sector() -> None:
     widget = DiskMapWidget()
     widget.set_disk_map(
@@ -198,11 +219,12 @@ def test_left_panel_can_create_blank_image(monkeypatch, tmp_path) -> None:
         captured["label"] = label
         done(fn())
 
-    monkeypatch.setattr(
-        QFileDialog,
-        "getSaveFileName",
-        lambda *_args, **_kwargs: (str(output), ""),
-    )
+    def fake_save(_parent, _title, default_name, _filter):
+        captured["default_name"] = default_name
+        return ("new-disk.img", "")
+
+    monkeypatch.setattr(window, "_blank_image_default_directory", lambda: tmp_path)
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", fake_save)
     monkeypatch.setattr(window, "_run_job", run_immediate)
     monkeypatch.setattr(window, "run_probe", lambda: captured.setdefault("probed", True))
     window.blank_image_combo.setCurrentIndex(
@@ -214,6 +236,35 @@ def test_left_panel_can_create_blank_image(monkeypatch, tmp_path) -> None:
     assert output.exists()
     assert output.stat().st_size == 737280
     assert window.current_path == output
+    assert captured["default_name"] == str(tmp_path / "blank-fat12_720k.img")
+    assert captured["probed"] is True
+    assert "create blank" in str(captured["label"])
+    window.close()
+
+
+def test_left_panel_confirms_blank_image_overwrite(monkeypatch, tmp_path) -> None:
+    window = FluxctlStudio()
+    output = tmp_path / "existing.img"
+    output.write_bytes(b"existing")
+    captured: dict[str, object] = {}
+
+    def run_immediate(label, fn, done):
+        captured["label"] = label
+        done(fn())
+
+    monkeypatch.setattr(window, "_blank_image_default_directory", lambda: tmp_path)
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_args, **_kwargs: ("existing.img", ""))
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.Yes)
+    monkeypatch.setattr(window, "_run_job", run_immediate)
+    monkeypatch.setattr(window, "run_probe", lambda: captured.setdefault("probed", True))
+    window.blank_image_combo.setCurrentIndex(
+        window.blank_image_combo.findData("fat12_180k")
+    )
+
+    window.create_blank_image_dialog()
+
+    assert output.stat().st_size == 184320
+    assert output.read_bytes() != b"existing"
     assert captured["probed"] is True
     assert "create blank" in str(captured["label"])
     window.close()
@@ -460,6 +511,20 @@ def test_file_panel_selected_file_hex_updates_hex_tab() -> None:
     assert window.lower_tabs.currentWidget() == window.hex_panel
     assert "File /README.TXT" in window.hex_title_label.text()
     assert "48 45 4C 4C 4F" in window.hex_text.toPlainText()
+    window.close()
+
+
+def test_file_panel_displays_filesystem_volume_info() -> None:
+    window = FluxctlStudio()
+    window._show_files(
+        services.FileListView(
+            [services.FileEntryView("HELLO", "file", 39, "/HELLO", False)],
+            "Name: TEST DISK  ID: 01  DOS: 2A",
+        )
+    )
+
+    assert window.file_volume_label.text() == "Name: TEST DISK  ID: 01  DOS: 2A"
+    assert window.files_table.item(0, 0).text() == "HELLO"
     window.close()
 
 

@@ -66,6 +66,7 @@ class FAT12(Filesystem):
         self.total_clusters: int = 0
         self.fat: bytes = b""
         self.root_dir_data: bytes = b""
+        self.volume_label = ""
 
     def _reset(self) -> None:
         self.__init__()
@@ -323,8 +324,9 @@ class FAT12(Filesystem):
         if self._find_entry(entries, name) is not None:
             raise FilesystemError(f"FAT12 entry already exists: {name}")
 
-    def metadata(self) -> Dict[str, int]:
+    def metadata(self) -> Dict[str, object]:
         return {
+            "volume_label": self.volume_label,
             "bytes_per_sector": self.bytes_per_sector,
             "sectors_per_cluster": self.sectors_per_cluster,
             "reserved_sectors": self.reserved_sectors,
@@ -380,6 +382,25 @@ class FAT12(Filesystem):
             self.reserved_sectors + self.fat_count * self.sectors_per_fat,
             self.root_dir_sectors,
         )
+        self.volume_label = self._find_volume_label()
+
+    @staticmethod
+    def _decode_label(raw: bytes) -> str:
+        return raw.decode("ascii", errors="ignore").strip()
+
+    def _find_volume_label(self) -> str:
+        boot_label = self._decode_label(self.boot_sector[43:54]) if len(self.boot_sector) >= 54 else ""
+        if boot_label and boot_label.upper() != "NO NAME":
+            return boot_label
+        for idx in range(0, len(self.root_dir_data), 32):
+            entry = self.root_dir_data[idx : idx + 32]
+            if len(entry) < 32 or entry[0] == 0x00:
+                break
+            if entry[0] == 0xE5:
+                continue
+            if entry[11] & 0x08:
+                return self._decode_label(entry[0:11])
+        return ""
 
     def _read_cluster_chain(self, start_cluster: int) -> bytes:
         data_segments = [self._read_cluster(cluster) for cluster in self._cluster_chain(start_cluster)]
