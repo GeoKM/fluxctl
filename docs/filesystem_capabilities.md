@@ -17,6 +17,40 @@ format-specific code to safely extract or modify file data.
 | RT-11 | Yes | No | No | No | No | Probe and volume label metadata exist. Directory listing and extraction are not implemented. |
 | Raw sectors | Not a filesystem | N/A | Sector dump/export | N/A | Sector patch helpers only | Raw sector operations do not understand filesystem allocation or directory structures. |
 
+## Fluxctl Studio Function Matrix
+
+This table describes what the GUI currently enables after an image has been
+opened and probed. Write/manipulation actions always create a new image copy.
+
+| Filesystem/media | Probe, QC, physical map | Files panel | Directory drill-down | Sector HEX | File HEX | Export selected | Replace with copy | Delete from copy | Import file | Import directory | New directory | Blank image preset | Selected-file map overlay | BAM/logical map |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| FAT12 flat `.img` | Yes | Yes | Yes | Yes | Yes | Files and directories | Yes | Files and empty directories | Yes | Yes | Yes | 180K, 360K, 720K, 1.2M, 1.44M `.img` | Cluster-chain overlay | Filesystem logical map |
+| FAT12 decoded `.scp`/`.imd` | Yes | Yes | Yes | Yes | Yes | Files and directories | No | No | No | No | No | No | Cluster-chain overlay | Filesystem logical map |
+| CBM DOS 1541 `.d64` | Yes | Yes | Root only | Yes | Yes | Files | No | No | Root PRG import only | No | No | Formatted `.d64` | Track/sector chain overlay | BAM block map |
+| CBM DOS 1571 `.d71` | Yes | Yes | Root only | Yes | Yes | Files | No | No | Root PRG import only | No | No | Formatted `.d71` | Track/sector chain overlay | BAM block map for both sides |
+| CBM DOS decoded `.scp`/`.imd` | Yes | Yes when reconstruction is complete enough | Root only | Yes | Yes when file chain sectors decode | Files when file chain sectors decode | No | No | No | No | No | No | Track/sector chain overlay | BAM block map from decoded sectors |
+| CBM DOS 1581 `.d81` | Yes | Yes | Yes | Yes | Yes | Files and directories | No | No | Root PRG import only | No | No | Formatted `.d81` | 1581 logical block overlay | 1581 BAM block map |
+| CBM DOS 1581 decoded `.scp`/`.imd` | Yes | Yes when reconstruction is complete enough | Yes | Yes | Yes when file chain sectors decode | Files and directories when chains decode | No | No | No | No | No | No | 1581 logical block overlay | 1581 BAM block map from decoded sectors |
+| Amiga OFS/FFS `.adf` | Yes | Yes | Yes | Yes | Yes | Files and directories | No | No | No | No | No | Minimal OFS `.adf` | Current file block overlay is approximate | Filesystem logical map |
+| Amiga decoded `.scp`/`.imd` | Yes | Yes when reconstruction is complete enough | Yes | Yes | Yes when file blocks decode | Files and directories when blocks decode | No | No | No | No | No | No | Current file block overlay is approximate | Filesystem logical map |
+| CP/M variants | Yes | Yes | Root only | Yes | No | No | No | No | No | No | No | No | C64 CP/M 2.2 only; generic CP/M pending DPB mapping | Filesystem logical map |
+| DisplayWriter | Yes | Label entries only | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
+| RT-11 | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
+
+Notes:
+
+- `.scp` and `.imd` write/manipulation actions are disabled even when a
+  filesystem can be listed, because Fluxctl does not yet have a preservation-safe
+  way to rewrite those containers after filesystem metadata changes.
+- CBM DOS and 1581 import support currently creates root-level PRG entries. It
+  does not replace existing names and does not yet create subdirectories.
+- Amiga selected-file highlighting is useful as a locator but remains less exact
+  than FAT12 and CBM DOS until full OFS/FFS file header, extension block, and
+  hash-chain traversal is implemented.
+- CP/M export is not enabled yet; the file list is based on decoded directory
+  records and allocation metadata, but file content reconstruction still needs
+  format-specific allocation mapping.
+
 ## Export Behavior
 
 CLI and Studio file export require a filesystem plugin that can both list an
@@ -45,6 +79,9 @@ Currently enabled copy-only mutation:
   directory.
 - CBM DOS `.d64`/`.d71`: root-level file import.
 - CBM DOS 1581 `.d81`: root-level file import.
+
+Studio can also create new blank formatted images for FAT12 `.img`, CBM DOS
+`.d64`, CBM DOS `.d71`, CBM DOS 1581 `.d81`, and minimal AmigaDOS OFS `.adf`.
 
 Currently disabled mutation:
 
