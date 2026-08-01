@@ -297,6 +297,22 @@ def test_fat12_write_actions_enable_only_for_supported_flat_img() -> None:
     assert not window.directory_create_button.isEnabled()
     assert "1581 .d81 root-level PRG import" in window.file_import_button.toolTip()
 
+    window.current_path = Path("/tmp/example.adf")
+    window.current_summary = services.ImageSummary(
+        path="/tmp/example.adf",
+        size=901120,
+        kind="adf",
+        layout_id="amiga_mfm_880k",
+        encoding="mfm",
+        filesystem="amiga_ffs",
+        confidence=1.0,
+        evidence=[],
+    )
+    window._update_filesystem_write_actions()
+
+    assert not window.file_import_button.isEnabled()
+    assert "FAT12 .img and CBM DOS .d64/.d71/.d81" in window.file_import_button.toolTip()
+
     window.current_path = FIXTURE_IMG
     window.current_summary = services.ImageSummary(
         path=str(FIXTURE_IMG),

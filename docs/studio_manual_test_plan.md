@@ -1,0 +1,262 @@
+# Fluxctl Studio Manual Functionality Test Plan
+
+Use this plan when manually exercising Fluxctl Studio against known fixtures or
+new real-world disk images. The aim is to catch problems that automated tests
+miss: confusing workflow, wrong visual assumptions, stale status panels,
+surprising disabled buttons, filesystem misidentification, and format-specific
+edge cases.
+
+## Setup
+
+Start Studio from the repository checkout:
+
+```sh
+.venv/bin/fluxctl-studio
+```
+
+Before starting a focused test pass:
+
+- Run `fluxctl doctor` and note warnings about native acceleration,
+  Greaseweazle, or HxC.
+- Keep a scratch output directory for conversions, exports, and copy-only
+  mutation outputs.
+- Never choose an original fixture path as the output for mutation workflows.
+  Studio should prevent this, but it is worth verifying.
+- Record the exact image path, mode, map view, action, observed result, and any
+  traceback or status text for each issue.
+
+## General UI Smoke Tests
+
+Run these once at the start of a session.
+
+| Area | Steps | Expected result | Flag as problem if |
+| --- | --- | --- | --- |
+| Startup | Launch Studio with no image loaded. | Simple mode starts without a crash. Image-specific panels are blank or neutral. | Old image data is visible, controls imply an image is loaded, or Python exits unexpectedly. |
+| Open image | Open any known-good `.img`, `.d64`, `.d71`, `.d81`, `.adf`, `.scp`, and `.imd`. | Path updates, old file list clears, summary fields refresh, status becomes ready/good/suspect as appropriate. | Previous image files remain listed, stale map remains, or summary fields disagree with the opened image. |
+| Mode switch | Switch between Simple Mode and Advanced Mode with and without an image loaded. | No data loss; Advanced fields match current image when loaded and stay blank when not loaded. | Buttons do nothing silently, fields show stale values, or lower panel does not match selected mode/action. |
+| Hide map | Toggle Hide Disk Map and show it again. | Lower Files/Hex/Jobs area expands and returns cleanly. | Layout overlaps, file table becomes unusable, or map state is lost unexpectedly. |
+| Disabled actions | Open unsupported media for write actions, such as `.scp`, `.imd`, `.adf`, CP/M, DisplayWriter, or RT-11. | Unsupported buttons are greyed out and tooltips explain why. | Disabled buttons look active, enabled buttons fail immediately, or tooltip text is stale. |
+
+## Probe, QC, and Map Views
+
+For each fixture group below, run `Probe`, `QC Report`, and `Render Map`.
+
+Check:
+
+- Layout, encoding, filesystem, confidence, size, and status are plausible.
+- QC good/weak/missing/bad totals match the map colors.
+- Physical disk maps show the right number of heads and the correct sector
+  geometry.
+- Filesystem Logical Map and Whole Physical Disk Health have clear differences
+  where logical relevance differs from raw sector health.
+- Map legend colors match visible sector/block colors.
+- Track and sector delimiter lines remain visible at typical window sizes.
+- Hovering a map sector/block shows useful track/head/sector and quality
+  information.
+- Clicking a sector/block loads the correct Sector HEX view.
+
+Flag:
+
+- Single-sided media drawn as double-sided, or double-sided media drawn as one
+  head.
+- Commodore variable-sector GCR tracks drawn with nonexistent red sectors.
+- CP/M logical maps marking deliberately unused disk areas as filesystem
+  damage.
+- Status says suspect/error when the detail report shows no corresponding weak,
+  missing, or bad items.
+- Head/track/sector labels use confusing Commodore numbering in CBM-specific
+  views.
+
+## Fixture Coverage Matrix
+
+Use these as the baseline known fixtures.
+
+| Family | Fixtures to test | Expected focus |
+| --- | --- | --- |
+| Commodore 1541 CBM DOS | `Commodore-1541-SSDD-GCR-C64-170K.d64`, `.scp`; `0100-LADS001-CBM_LADS_Assembler-orig.d64`, `.scp`; `0008-DISC001-Disk_Disector-v5.d64`, `.scp` | GCR layout, varied sector zones, CBM DOS detection, BAM map, root file list, bad-sector diagnostics on weak captures. |
+| Commodore 1541 CP/M 2.2 | `Commodore-1541-SSDD-GCR-C64CPM-170K.d64`, `.scp` | C64 CP/M detection, logical map relevance, file list, CP/M export disabled, SCP reconstruction quality. |
+| Commodore 1571 CBM DOS | `Commodore-1571-DSDD-GCR-C128-341K.d71`, `.scp` | Two heads, side 0/side 1 physical map, BAM for both sides, root file import on `.d71`. |
+| Commodore 1571 CP/M | `Commodore-1571-DSDD-MFM-C128CPM-340K.d71`, related `.scp`; `Commodore-1571-SSDD-MFM-C128CPM-170K.d64`, related `.scp` | CP/M detection, GCR/MFM expectations, root listing, export disabled, selected-file overlay limitations. |
+| Commodore 1581 CBM DOS | `Commodore-1581-DSDD-MFM-C64-800K.d81`, `.img`, `.scp` | 80-track MFM geometry, directory drill-down, 1581 BAM map, root-file import on `.d81`, copy-only gating on `.scp/.img` where applicable. |
+| Amiga OFS/FFS | `Commodore-1010-DSDD-MFM-Amiga-880K.adf`, `.img`, `.scp` | Amiga filesystem detection, directory drill-down, file/directory export, approximate selected-file overlay, mutation disabled. |
+| IBM DOS FAT12 | 180K, 360K, 720K, 1.2M, 1.44M `.img`, `.imd`, `.scp` fixtures | FAT12 detection, directory support where available, file export, flat `.img` mutation actions, decoded container write gating. |
+| IBM 8-inch FAT12 | `IBM-Generic-DSDD-MFM-IBMPC-1200K-B.scp`, `IBM-Generic-DSDD-MFM-IBMPC-1200K-C.scp`, known-bad 1.2M variants | Geometry mismatch tolerance, empty disk behavior, bad/unknown filesystem handling, need for known-good 1.15 MB fixtures. |
+| IBM DisplayWriter | `IBM-6580-SSDD-FM-DisplayWriter-284K.scp`, `.imd`, `.img` | Mixed FM geometry, standard-label entries, document extraction disabled with a clear message. |
+| DEC RT-11 | `DEC-RX02-DSDD-MFM-RT11-500K.scp`, `.imd`, `.img` | Probe metadata, no listing/export claims, clear unsupported behavior. |
+
+## Files Panel and Directory Workflows
+
+Run on FAT12, 1581, and Amiga images with directories.
+
+| Action | Expected result | Flag as problem if |
+| --- | --- | --- |
+| List Files | Root directory appears, sorted and readable. Sizes are nonzero for normal files. | Old image entries remain, CBM DOS sizes are zero unexpectedly, directories are shown as files. |
+| Double-click directory | Files panel enters that directory. | Directory name becomes editable, nothing happens silently, or path display is wrong. |
+| Up | Moves to parent directory. | Stays in same directory or jumps to root unexpectedly. |
+| Root | Returns to `/`. | Previous nested path remains in later actions. |
+| Select multiple files | Multiple selection is visible and stable. | Only last selected item remains selected unexpectedly. |
+| View File HEX | Hex tab becomes active and shows selected file content. | Hex panel stays hidden, wrong file appears, or directory selection dumps misleading data. |
+| Select file on map | File allocation overlay appears for supported formats. | No highlight, wrong sectors highlighted, or stale highlight remains after changing file/image. |
+
+## File Export Tests
+
+Run on FAT12, CBM DOS, 1581, and Amiga. Also try CP/M, DisplayWriter, and RT-11
+to confirm unsupported export is explicit.
+
+| Action | Expected result | Flag as problem if |
+| --- | --- | --- |
+| Export one file | Destination file is created with correct name and byte size. | Empty export, wrong file content, overwritten existing file without warning. |
+| Export multiple files | All selected files are exported. | Only the last selected file appears. |
+| Export directory | Directory tree is created for filesystems with extraction support. | Directory export silently skips files or flattens subdirectories unexpectedly. |
+| Export unsupported listed entry | Clear filesystem-specific unsupported message. | Button is enabled but fails with a Python traceback or generic error. |
+| Reopen exported files | Content makes sense in a host hex editor or viewer. | Exported bytes appear shifted, truncated, padded incorrectly, or include directory metadata. |
+
+## HEX Workflows
+
+Test both Simple and Advanced Mode.
+
+| Action | Expected result | Flag as problem if |
+| --- | --- | --- |
+| Sector HEX by fields | The selected head/track/sector dumps with stable address and ASCII columns. | Off-by-one addressing, wrong head, or unavailable sector silently dumps another sector. |
+| Sector HEX by map click | Clicking a sector updates the Sector HEX view automatically. | Click does nothing, loads wrong address, or fails after map view changes. |
+| File HEX | Dumps selected file bytes and activates the Hex tab. | Wrong file, stale file, or no tab switch. |
+| Advanced Sector Dump mode | Dump button applies to selected sector fields. | Dump uses file selection or stale sector fields. |
+| Advanced File Dump mode | Dump button applies to selected file path. | Directory dumps as a file without explanation, or stale file path is used. |
+| Directory selection in file dump | Either disabled or clearly explained as not implemented except future raw directory mode. | Misleading output or crash. |
+
+## Copy-Only Mutation Tests
+
+These should be tested only on disposable copies or outputs from the blank image
+creator. Confirm every action writes a new image and leaves the source unchanged.
+
+### FAT12 `.img`
+
+| Action | Expected result | Extra checks |
+| --- | --- | --- |
+| Replace file with same size | Output copy contains new content. | Source hash unchanged. |
+| Replace file with smaller content | Output file size updates and content is not padded into visible file data. | FAT chain remains valid. |
+| Replace file with larger content within existing allocation | Output file grows correctly. | Existing directories still list. |
+| Replace file requiring new clusters | Free clusters decrease and file content is complete. | No cross-linked files. |
+| Delete file | File disappears from output copy. | Other files still readable. |
+| Delete empty directory | Directory disappears. | Non-empty directory delete should be rejected. |
+| Import file | New 8.3 ASCII file appears and exports correctly. | Long names are rejected clearly. |
+| Import directory | Tree imports recursively. | Nested files and directories are readable. |
+| Create directory | Empty directory appears and can receive imported files. | Duplicate names are rejected clearly. |
+
+### CBM DOS `.d64/.d71`
+
+| Action | Expected result | Extra checks |
+| --- | --- | --- |
+| Import root PRG file | New PRG-style entry appears in root. | Source hash unchanged. |
+| Import duplicate name | Clear rejection. | No partial output file left behind if rejected. |
+| Import subdirectory | Disabled or rejected clearly. | Button tooltip matches capability docs. |
+| Delete/replace/create directory | Disabled. | Disabled styling and tooltip are clear. |
+| Validate `.d71` in external tools | Free block count and BAM side 1 are plausible. | DirMaster/emulator should not require validation for blank `.d71` outputs. |
+
+### CBM DOS 1581 `.d81`
+
+| Action | Expected result | Extra checks |
+| --- | --- | --- |
+| Import root PRG file | New file appears and can be exported. | 1581 BAM map shows file blocks. |
+| Import into subdirectory | Disabled or rejected clearly for now. | Tooltip/status says root-only. |
+| Delete/replace/import directory/new directory | Disabled. | No misleading enabled controls. |
+
+### Unsupported Containers
+
+For `.scp` and `.imd`, write/manipulation actions should stay disabled even if
+the filesystem can list and export files.
+
+## Blank Image Creation Tests
+
+Create one image for each preset, then immediately open it in Studio.
+
+| Preset | Expected result |
+| --- | --- |
+| FAT12 180K `.img` | Probes as FAT12, empty root, mutation actions enabled. |
+| FAT12 360K `.img` | Probes as FAT12, empty root, mutation actions enabled. |
+| FAT12 720K `.img` | Probes as FAT12, empty root, mutation actions enabled. |
+| FAT12 1.2M `.img` | Probes as FAT12, empty root, mutation actions enabled. |
+| FAT12 1.44M `.img` | Probes as FAT12, empty root, mutation actions enabled. |
+| CBM DOS 1541 `.d64` | Probes as CBM DOS, BAM and directory blocks allocated, root import enabled. |
+| CBM DOS 1571 `.d71` | Probes as CBM DOS 1571, both BAM sides plausible, root import enabled. |
+| CBM DOS 1581 `.d81` | Probes as CBM DOS 1581, 80-track BAM map plausible, root import enabled. |
+| AmigaDOS OFS `.adf` | Probes as Amiga OFS, empty root, mutation disabled. |
+
+After creating each blank image, try opening it in an external emulator/tool when
+possible and note any validation or free-space disagreement.
+
+## Convert Workflow Tests
+
+For every conversion, confirm the default output format matches the source
+layout before pressing Convert.
+
+| Source | Expected default | Check |
+| --- | --- | --- |
+| 1541 GCR `.scp` | `.d64` where layout supports sector image export; `.g64` when preserving GCR track data is the better target. | Output probes as Commodore, not FAT12. |
+| 1571 GCR `.scp` | GCR-preserving or layout-appropriate Commodore output. | Does not collapse side/head geometry. |
+| IBM MFM `.scp/.imd` | Raw `.img` or `.imd` as selected. | Output probes as FAT12 where filesystem exists. |
+| Amiga MFM `.scp` | `.adf` when reconstruction is good enough. | Output probes as Amiga OFS/FFS. |
+| DisplayWriter FM `.scp/.imd` | `.imd` or raw as appropriate. | Mixed sector sizes are represented or rejected clearly. |
+
+Flag any conversion that silently chooses FAT12 for Commodore/Amiga media, loses
+head geometry, or reports success while output cannot be reopened.
+
+## Advanced Mode Tests
+
+| Area | Steps | Expected result |
+| --- | --- | --- |
+| Initial state | Enter Advanced Mode with no image. | Top panel blank; lower panel shows doctor summary only. |
+| Loaded image | Enter Advanced Mode after opening an image. | Top panel fields match current image and defaults are sensible. |
+| Info | Press Info. | Lower panel returns to text/detail view. |
+| Sectors | Change sector fields and press Sectors/Dump. | Sector list/dump reflects selected address. |
+| File path chooser | Use the dropdown to traverse directories and select files. | File path is valid and action mode follows selected file. |
+| Dump mode switch | Toggle Sector Dump and Selected File Dump. | Dump applies to the chosen target only. |
+
+## Visual and Usability Review
+
+While testing, deliberately resize the window, switch tabs, and use long paths.
+
+Look for:
+
+- Text clipping in buttons, tables, tooltips, and status bars.
+- Controls that appear clickable but are disabled or do nothing.
+- Buttons whose text does not match the action that actually runs.
+- Status messages that overwrite useful error detail too quickly.
+- Table columns that make file names, sizes, or paths hard to read.
+- Scrollbars that hide important map or table content.
+- Mismatched color meanings between physical map, filesystem logical map, and
+  BAM map.
+- Any Python crash dialog. Record the image, action, and last visible status.
+
+## Issue Report Template
+
+Use this short template when logging a finding:
+
+```text
+Image:
+Source format:
+Mode: Simple / Advanced
+Map view:
+Action:
+Expected:
+Observed:
+Status text:
+Can reproduce: yes/no
+External tool comparison:
+Notes/screenshots:
+```
+
+## Known Gaps to Keep in Mind
+
+These are expected limitations today, not necessarily bugs:
+
+- CP/M can list entries but cannot export file contents yet.
+- DisplayWriter lists standard-label entries only; document extraction is not
+  implemented.
+- RT-11 probe metadata exists, but directory listing and extraction are pending.
+- `.scp` and `.imd` filesystem-level writes are disabled.
+- CBM DOS and 1581 mutation is currently root-file import only.
+- Amiga `.adf` mutation is disabled.
+- Amiga selected-file map overlay is approximate until full OFS/FFS block-chain
+  traversal is implemented.
+- Generic CP/M selected-file overlays need per-format DPB support.

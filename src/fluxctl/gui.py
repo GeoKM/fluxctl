@@ -1226,8 +1226,8 @@ class FluxctlStudio(QMainWindow):
                 self.directory_import_button: (False, unsupported),
                 self.directory_create_button: (False, unsupported),
             }
-        if suffix not in {".img", ".d64", ".d71"}:
-            reason = "Write actions currently support FAT12 .img and CBM DOS .d64/.d71 images only."
+        if suffix not in {".img", ".d64", ".d71", ".d81"}:
+            reason = "Write actions currently support FAT12 .img and CBM DOS .d64/.d71/.d81 images only."
         else:
             filesystem = self.current_summary.filesystem or "unknown"
             reason = f"Write actions are not available for filesystem {filesystem} in this container yet."
