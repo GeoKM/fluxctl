@@ -304,6 +304,17 @@ def test_studio_styles_disabled_actions_distinctly() -> None:
     window.close()
 
 
+def test_simple_mode_uses_sidebar_summary_and_larger_file_area() -> None:
+    window = FluxctlStudio()
+
+    assert window.sidebar.minimumWidth() >= 340
+    assert window.summary_labels["layout"].text() == "-"
+    assert window.lower_tabs.minimumHeight() >= 380
+    assert window.files_table.minimumHeight() >= 340
+    assert window._map_panel_sizes[1] > window._map_panel_sizes[0]
+    window.close()
+
+
 def test_fat12_write_actions_enable_only_for_supported_flat_img() -> None:
     window = FluxctlStudio()
 
@@ -613,7 +624,7 @@ def test_advanced_panel_shows_doctor_summary_without_image() -> None:
 
     window._show_doctor(
         {
-            "version": "0.3.0",
+            "version": "0.3.1",
             "overall": "ok",
             "checks": [{"name": "layouts", "status": "ok", "detail": "114 loaded", "suggestion": ""}],
         }

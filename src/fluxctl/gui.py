@@ -433,7 +433,7 @@ class FluxctlStudio(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Fluxctl Studio")
-        self.resize(1320, 840)
+        self.resize(1440, 900)
         self.thread_pool = QThreadPool.globalInstance()
         self.active_jobs: set[Job] = set()
         self.current_path: Optional[Path] = None
@@ -460,13 +460,29 @@ class FluxctlStudio(QMainWindow):
         root_layout = QHBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
 
-        sidebar = QFrame()
-        sidebar.setObjectName("sidebar")
-        sidebar_layout = QVBoxLayout(sidebar)
+        self.sidebar = QFrame()
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setMinimumWidth(340)
+        self.sidebar.setMaximumWidth(420)
+        sidebar_layout = QVBoxLayout(self.sidebar)
         self.title = QLabel("Fluxctl Studio")
         self.title.setObjectName("title")
         self.file_label = QLabel("No image loaded")
         self.file_label.setWordWrap(True)
+        self.summary_grid = QGridLayout()
+        self.summary_grid.setColumnStretch(0, 0)
+        self.summary_grid.setColumnStretch(1, 1)
+        self.summary_labels = {}
+        for row, label in enumerate(["Layout", "Encoding", "Filesystem", "Confidence", "Size", "Status"]):
+            key = label.lower()
+            field = QLabel(label)
+            field.setObjectName("metricName")
+            self.summary_grid.addWidget(field, row, 0)
+            value = QLabel("-")
+            value.setObjectName("metric")
+            value.setWordWrap(True)
+            self.summary_labels[key] = value
+            self.summary_grid.addWidget(value, row, 1)
         self.mode = QComboBox()
         self.mode.addItems(["Simple Mode", "Advanced Mode"])
         self.mode.currentIndexChanged.connect(self._switch_mode)
@@ -488,6 +504,7 @@ class FluxctlStudio(QMainWindow):
         self.create_blank_button.clicked.connect(self.create_blank_image_dialog)
         sidebar_layout.addWidget(self.title)
         sidebar_layout.addWidget(self.file_label)
+        sidebar_layout.addLayout(self.summary_grid)
         sidebar_layout.addWidget(self.mode)
         sidebar_layout.addWidget(self.map_view)
         sidebar_layout.addWidget(self.open_button)
@@ -503,22 +520,13 @@ class FluxctlStudio(QMainWindow):
         self.stack.addWidget(self.simple)
         self.stack.addWidget(self.advanced)
 
-        root_layout.addWidget(sidebar, 0)
+        root_layout.addWidget(self.sidebar, 0)
         root_layout.addWidget(self.stack, 1)
         self.setCentralWidget(root)
 
     def _build_simple_mode(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        self.summary_grid = QGridLayout()
-        self.summary_labels = {}
-        for row, label in enumerate(["Layout", "Encoding", "Filesystem", "Confidence", "Size", "Status"]):
-            key = label.lower()
-            self.summary_grid.addWidget(QLabel(label), row, 0)
-            value = QLabel("-")
-            value.setObjectName("metric")
-            self.summary_labels[key] = value
-            self.summary_grid.addWidget(value, row, 1)
         self.activity_label = QLabel("Ready")
         self.activity_label.setObjectName("activity")
         self.activity_label.setWordWrap(True)
@@ -573,7 +581,7 @@ class FluxctlStudio(QMainWindow):
         file_nav.addWidget(self.directory_import_button)
         file_nav.addWidget(self.directory_create_button)
         self.files_table = QTableWidget(0, 3)
-        self.files_table.setMinimumHeight(260)
+        self.files_table.setMinimumHeight(340)
         self.files_table.setHorizontalHeaderLabels(["Name", "Kind", "Size"])
         self.files_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.files_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -589,7 +597,7 @@ class FluxctlStudio(QMainWindow):
         file_panel_layout.addWidget(self.files_table)
         self.log = QTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMinimumHeight(260)
+        self.log.setMinimumHeight(340)
         self.hex_title_label = QLabel("No hex data loaded")
         self.hex_title_label.setObjectName("filePath")
         self.hex_track_input = QLineEdit("0")
@@ -626,9 +634,8 @@ class FluxctlStudio(QMainWindow):
         self.simple_splitter.setChildrenCollapsible(False)
         self.map_panel = QWidget()
         self.map_panel_visible = True
-        self._map_panel_sizes = [500, 340]
+        self._map_panel_sizes = [430, 470]
         upper_layout = QVBoxLayout(self.map_panel)
-        upper_layout.addLayout(self.summary_grid)
         upper_layout.addWidget(self.activity_label)
         upper_layout.addLayout(actions)
         self.map_canvas_panel = QWidget()
@@ -637,14 +644,14 @@ class FluxctlStudio(QMainWindow):
         map_canvas_layout.addWidget(self.map_widget, 1)
         upper_layout.addWidget(self.map_canvas_panel, 1)
         self.lower_tabs = QTabWidget()
-        self.lower_tabs.setMinimumHeight(300)
+        self.lower_tabs.setMinimumHeight(380)
         self.lower_tabs.addTab(self.file_panel, "Files")
         self.lower_tabs.addTab(self.hex_panel, "Hex")
         self.lower_tabs.addTab(self.log, "Jobs")
         self.simple_splitter.addWidget(self.map_panel)
         self.simple_splitter.addWidget(self.lower_tabs)
-        self.simple_splitter.setStretchFactor(0, 3)
-        self.simple_splitter.setStretchFactor(1, 2)
+        self.simple_splitter.setStretchFactor(0, 2)
+        self.simple_splitter.setStretchFactor(1, 3)
         self.simple_splitter.setSizes(self._map_panel_sizes)
         layout.addLayout(map_toggle_row)
         layout.addWidget(self.simple_splitter)
@@ -736,8 +743,9 @@ class FluxctlStudio(QMainWindow):
         self.setStyleSheet(
             """
             QMainWindow, QWidget { background: #111722; color: #e7edf7; font-size: 13px; }
-            #sidebar { background: #090d14; min-width: 230px; max-width: 280px; border-right: 1px solid #263241; }
-            #title { font-size: 24px; font-weight: 700; margin-bottom: 16px; }
+            #sidebar { background: #090d14; min-width: 340px; max-width: 420px; border-right: 1px solid #263241; }
+            #title { font-size: 24px; font-weight: 700; margin-bottom: 10px; }
+            QLabel#metricName { color: #c9d4e5; font-weight: 600; padding: 3px 6px 3px 0; }
             QLabel#metric { color: #9ee6b8; font-weight: 600; }
             QLabel#activity { background: #172233; border: 1px solid #2f4158; border-radius: 6px; padding: 8px; color: #dce7f7; }
             QLabel#filePath { color: #9ee6b8; font-weight: 600; padding: 4px 8px; }
