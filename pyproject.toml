@@ -1,9 +1,10 @@
 [project]
 name = "fluxctl"
-version = "0.2.0"
+version = "0.3.0"
 description = "Modular SCP flux imaging toolkit"
 authors = [{name = "Fluxctl Maintainers"}]
 readme = "README.md"
+license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
 dependencies = [
     "typer>=0.9.0",

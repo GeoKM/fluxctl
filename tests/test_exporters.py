@@ -176,6 +176,66 @@ def test_raw_export_rejects_mixed_sector_sizes() -> None:
         RawIMGExporter().export(TrackSectorImage(tracks, bytes_per_sector=512))
 
 
+def test_raw_export_preserves_zero_based_sector_zero() -> None:
+    track = TrackSectors(
+        track=0,
+        head=0,
+        sectors=[
+            Sector(
+                cylinder=0,
+                head=0,
+                sector_id=0,
+                size_code=1,
+                data=b"A" * 256,
+                crc_ok=True,
+                confidence=1.0,
+            ),
+            Sector(
+                cylinder=0,
+                head=0,
+                sector_id=1,
+                size_code=1,
+                data=b"B" * 256,
+                crc_ok=True,
+                confidence=1.0,
+            ),
+        ],
+    )
+
+    exported = RawIMGExporter().export(TrackSectorImage([track], bytes_per_sector=256))
+
+    assert exported[:256] == b"A" * 256
+    assert exported[256:512] == b"B" * 256
+
+
+def test_raw_export_uses_layout_geometry_for_missing_tracks() -> None:
+    load_builtin_layouts()
+    layout = ensure_layout_loaded("commodore_gcr_1541_170k")
+    track = TrackSectors(
+        track=0,
+        head=0,
+        sectors=[
+            Sector(
+                cylinder=0,
+                head=0,
+                sector_id=0,
+                size_code=1,
+                data=b"A" * 256,
+                crc_ok=True,
+                confidence=1.0,
+            )
+        ],
+    )
+    image = TrackSectorImage([track], bytes_per_sector=256)
+    image.layout = layout
+
+    exported = RawIMGExporter().export(image)
+
+    assert len(exported) == sum(layout.track_sectors or []) * layout.sector_size
+    assert exported[:256] == b"A" * 256
+    assert exported[256:] == b"\x00" * (len(exported) - 256)
+
+
 def test_imd_export_rejects_mixed_sector_sizes() -> None:
     tracks = [
         TrackSectors(
@@ -206,3 +266,27 @@ def test_imd_export_rejects_mixed_sector_sizes() -> None:
 
     with pytest.raises(ExportError):
         IMDExporter().export(TrackSectorImage(tracks, bytes_per_sector=512))
+
+
+def test_convert_scp_auto_detects_layout_before_decoding(tmp_path: Path) -> None:
+    scp_fixture = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64-170K.scp")
+    out_path = tmp_path / "disk.d64"
+
+    result = runner.invoke(
+        app,
+        [
+            "convert",
+            str(scp_fixture),
+            "--to",
+            "d64",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Auto-detected layout commodore_gcr_1541_170k (gcr)" in result.output
+    assert out_path.exists()
+    provenance = json.loads(out_path.with_suffix(out_path.suffix + ".provenance.json").read_text())
+    assert provenance["parameters"]["resolved_layout"] == "commodore_gcr_1541_170k"
+    assert provenance["parameters"]["encoding"] == "gcr"

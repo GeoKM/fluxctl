@@ -24,6 +24,13 @@ def _app() -> QApplication:
     return app if app is not None else QApplication([])
 
 
+@pytest.fixture(autouse=True)
+def _qt_app() -> QApplication:
+    """Ensure every GUI smoke test has a QApplication before constructing widgets."""
+
+    return _app()
+
+
 def _wait_until(app: QApplication, predicate, timeout_ms: int = 5000) -> None:
     deadline = timeout_ms
 
@@ -47,7 +54,7 @@ def test_simple_mode_buttons_update_visible_activity() -> None:
     window.file_label.setText(str(FIXTURE_IMG))
 
     window.run_probe()
-    _wait_until(app, lambda: "Rendered" in window.activity_label.text())
+    _wait_until(app, lambda: window.current_summary is not None and window.map_widget.disk_map is not None)
     assert window.current_summary is not None
 
     window.run_qc()
@@ -129,6 +136,16 @@ def test_disk_map_widget_exposes_colour_legend_items() -> None:
     ]
     widget.set_disk_map(DiskMap([["good"]], 1, 1, highlighted_sectors={(0, 0, 1)}))
     assert widget.legend_items()[-1] == ("selected_file", "Selected file")
+
+
+def test_studio_defaults_scp_conversion_to_layout_appropriate_exporter() -> None:
+    window = FluxctlStudio()
+
+    assert window._default_exporter_for_image("scp", "commodore_gcr_1541_170k", "gcr") == "d64"
+    assert window._default_exporter_for_image("scp", "commodore_gcr_1571_341k", "gcr") == "g64"
+    assert window._default_exporter_for_image("scp", "ibm_mfm_720k", "mfm") == "raw"
+
+    window.close()
 
 
 def test_disk_map_widget_detects_highlighted_sector() -> None:
@@ -515,7 +532,7 @@ def test_advanced_panel_shows_doctor_summary_without_image() -> None:
 
     window._show_doctor(
         {
-            "version": "0.2.0",
+            "version": "0.3.0",
             "overall": "ok",
             "checks": [{"name": "layouts", "status": "ok", "detail": "114 loaded", "suggestion": ""}],
         }

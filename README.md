@@ -108,10 +108,11 @@ fluxctl qc disk.scp --json-out qc.json
 fluxctl visualize disk.scp --format ascii --out map.txt
 
 # Export / convert
+fluxctl convert disk.scp --to raw --out disk.img
 fluxctl convert disk.scp --to raw --out disk.img --layout ibm_mfm_720k
 fluxctl convert disk.img --to imd --out disk.imd --layout ibm_mfm_720k
-fluxctl convert disk.scp --to d64 --out disk.d64 --layout commodore_gcr_1541_170k
-fluxctl convert disk.scp --to g64 --out disk.g64 --layout commodore_gcr_1541_170k
+fluxctl convert c64.scp --to d64 --out disk.d64
+fluxctl convert c64.scp --to g64 --out disk.g64 --layout commodore_gcr_1541_170k
 fluxctl convert disk.img --to raw --out copy.img
 
 # Extraction
@@ -173,6 +174,10 @@ The GUI uses the same fluxctl package and CLI command paths as terminal
 workflows. Outputs such as converted images, QC reports, and provenance sidecars
 therefore follow the same behavior documented above.
 
+For SCP inputs, `convert` auto-detects the likely layout when `--layout` is not
+provided. Pass `--layout` when you want to force a specific interpretation or
+when a damaged/ambiguous capture cannot be identified confidently.
+
 File replacement is intentionally conservative. Studio currently supports
 replacement for FAT12 files in flat `.img` images only, and always writes a new
 image copy instead of modifying the original image. FAT12 replacements may grow
@@ -205,6 +210,11 @@ numbers: the 1541/1571 BAM is entered as track 18, head 0, sector 0.
 - Execute `.venv/bin/python -m pytest` after activating the venv to cover CLI helpers, decoding, exporters, and filesystems.
 - The repository also includes `tests/fixtures` with annotated samples so you can run targeted commands against known media.
 - For full CLI validation across SCP fixtures (with longer GCR timeouts), run `scripts/fixture_cli_smoke.py`.
+
+## License
+
+Fluxctl is licensed under the Apache License, Version 2.0. See
+[LICENSE](LICENSE) for the full license text.
 
 ## Optional integrations
 

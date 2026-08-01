@@ -981,9 +981,18 @@ class FluxctlStudio(QMainWindow):
         self.summary_labels["confidence"].setText(f"{summary.confidence:.2f}")
         self.summary_labels["size"].setText(f"{summary.size:,} bytes")
         self.summary_labels["status"].setText("ready")
-        self.activity_label.setText(
-            f"Probe found {summary.layout_id or 'unknown layout'} with {summary.confidence:.2f} confidence."
+        diagnostic = next(
+            (
+                evidence
+                for evidence in summary.evidence
+                if evidence.startswith("cbm_dos_directory_chain_missing=")
+            ),
+            None,
         )
+        activity = f"Probe found {summary.layout_id or 'unknown layout'} with {summary.confidence:.2f} confidence."
+        if diagnostic:
+            activity += f" CBM DOS directory chain is incomplete at {diagnostic.split('=', 1)[1]}."
+        self.activity_label.setText(activity)
         self._append_log(json.dumps(summary.__dict__, indent=2))
         self._update_filesystem_write_actions()
         self._update_advanced_context()
@@ -1043,7 +1052,14 @@ class FluxctlStudio(QMainWindow):
         assert self.current_summary is not None
         self._select_combo_data(self.layout_combo, self.current_summary.layout_id)
         self._select_combo_text(self.encoding_combo, self.current_summary.encoding)
-        self._select_combo_text(self.export_combo, self._default_exporter_for_image(self.current_summary.kind))
+        self._select_combo_text(
+            self.export_combo,
+            self._default_exporter_for_image(
+                self.current_summary.kind,
+                self.current_summary.layout_id,
+                self.current_summary.encoding,
+            ),
+        )
         self._select_combo_data(self.dump_mode_combo, "sector")
         self.track_input.setText("0")
         self.head_input.setText("0")
@@ -1122,7 +1138,7 @@ class FluxctlStudio(QMainWindow):
         index = combo.findText(value)
         combo.setCurrentIndex(index if index >= 0 else 0)
 
-    def _default_exporter_for_image(self, kind: str) -> str:
+    def _default_exporter_for_image(self, kind: str, layout_id: str = "", encoding: str = "") -> str:
         if kind in {"img", "raw"}:
             return "raw"
         if kind in {"imd", "adf", "d64", "g64"}:
@@ -1130,6 +1146,14 @@ class FluxctlStudio(QMainWindow):
         if kind == "d71":
             return "d64"
         if kind == "d81":
+            return "raw"
+        if kind == "scp":
+            if layout_id == "commodore_gcr_1541_170k":
+                return "d64"
+            if encoding == "gcr":
+                return "g64"
+            if layout_id == "amiga_mfm_880k":
+                return "adf"
             return "raw"
         return "raw"
 

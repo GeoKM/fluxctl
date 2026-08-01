@@ -107,7 +107,10 @@ class IMDExporter:
 
     def _sector_ids(self, sectors: Iterable[Sector]) -> list[int]:
         ids = sorted({sector.sector_id for sector in sectors})
-        return list(range(1, ids[-1] + 1)) if ids else []
+        if not ids:
+            return []
+        start = 0 if ids[0] == 0 else 1
+        return list(range(start, ids[-1] + 1))
 
     def _sector_size(self, sectors: Iterable[Sector]) -> int:
         for sector in sectors:

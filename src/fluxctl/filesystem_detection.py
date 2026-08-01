@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .filesystems import Filesystem, TrackSectorImage, load_builtin_filesystems
+from .filesystems.cbm_dos import CBMDOS
 from .plugins import registry
 
 
@@ -191,6 +192,20 @@ def _detect_commodore(image, layout_id: str) -> FilesystemDetection:
                 regions=[FilesystemRegion("head0", "cbm_dos", ["1541 BAM/directory detected"])],
                 plugin=cbm_fs,
             )
+
+        cbm_diagnostics = CBMDOS().diagnostic_evidence(image)
+        return FilesystemDetection(
+            primary="cbm_dos",
+            confidence=0.45,
+            evidence=evidence + ["cbm_dos_likely_but_incomplete=1", *cbm_diagnostics],
+            regions=[
+                FilesystemRegion(
+                    "head0",
+                    "cbm_dos",
+                    ["1541 layout and BAM evidence present, but directory reconstruction is incomplete"],
+                )
+            ],
+        )
 
     if layout_id == "commodore_gcr_1541_cpm_170k":
         if cpm_ok:
