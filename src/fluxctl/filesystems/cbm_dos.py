@@ -142,6 +142,53 @@ class CBMDOS(Filesystem):
             return False
         return True
 
+    def diagnostic_evidence(self, image: SectorImage) -> List[str]:
+        """Describe why a CBM DOS image could not be mounted.
+
+        This intentionally reports missing directory-chain sectors instead of
+        treating an incomplete flux reconstruction as an unknown filesystem.
+        The method never invents sector contents and is safe to use during
+        probing and conversion preflight.
+        """
+
+        mounted = self.probe(image)
+        if mounted:
+            return ["cbm_dos_probe=1"]
+
+        evidence: List[str] = ["cbm_dos_probe_failed=1"]
+        try:
+            bam = self._read_ts(*BAM_SECTOR)
+        except FilesystemError:
+            return evidence + ["cbm_dos_bam_missing=T18/S00"]
+
+        if len(bam) < SECTOR_SIZE:
+            return evidence + ["cbm_dos_bam_short=1"]
+        evidence.append("cbm_dos_bam_present=T18/S00")
+        if self.dos_type and all(chr(value).isalnum() for value in self.dos_type):
+            evidence.append(f"cbm_dos_type={self.dos_type.decode('latin-1')}")
+
+        track, sector = DIRECTORY_TRACK, DIRECTORY_START_SECTOR
+        seen: set[Tuple[int, int]] = set()
+        evidence.append("cbm_dos_directory_chain_start=T18/S01")
+        while track != 0 and (track, sector) not in seen:
+            seen.add((track, sector))
+            try:
+                data = self._read_ts(track, sector)
+            except FilesystemError:
+                evidence.append(f"cbm_dos_directory_chain_missing=T{track:02d}/S{sector:02d}")
+                evidence.append(f"cbm_dos_directory_chain_reached={len(seen) - 1}")
+                return evidence
+            if len(data) < 2:
+                evidence.append(f"cbm_dos_directory_chain_short=T{track:02d}/S{sector:02d}")
+                return evidence
+            track, sector = data[0], data[1]
+
+        if track == 0:
+            evidence.append("cbm_dos_directory_chain_complete=1")
+        else:
+            evidence.append("cbm_dos_directory_chain_loop=1")
+        return evidence
+
     def _bam_sector(self) -> bytes:
         return self._read_ts(*BAM_SECTOR)
 

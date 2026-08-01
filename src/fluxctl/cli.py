@@ -1608,6 +1608,8 @@ def convert(
     fluxctl convert c64.scp --layout commodore_gcr_1541_170k --to g64 --out disk.g64
     """
 
+    load_builtin_decoders()
+    load_builtin_layouts()
     load_builtin_exporters()
     layout_desc = ensure_layout_loaded(layout) if layout else None
     decoder_used = layout_desc.encoding if layout_desc else encoding
@@ -1615,7 +1617,20 @@ def convert(
     track_nibbles: list[TrackNibbles] = []
 
     if path.suffix.lower() == ".scp":
-        decode_result = _decode_tracks(path, layout, encoding=decoder_used, capture_nibbles=to == "g64")
+        if layout_desc is None:
+            scp_image = parse_scp(path)
+            encoding_candidate = detect_encoding(scp_image, path=path)
+            if encoding_candidate is None:
+                raise FluxDecodeError("Unable to auto-detect SCP encoding; pass --layout and --encoding")
+            layout_candidate = detect_layout(scp_image, encoding_candidate.encoding, path)
+            if layout_candidate is None:
+                raise FluxDecodeError("Unable to auto-detect SCP layout; pass --layout explicitly")
+            layout_desc = layout_candidate.layout
+            decoder_used = layout_desc.encoding
+            typer.echo(f"Auto-detected layout {layout_desc.layout_id} ({decoder_used})")
+        decode_result = _decode_tracks(
+            path, layout_desc.layout_id, encoding=decoder_used, capture_nibbles=to == "g64"
+        )
         if isinstance(decode_result, tuple):
             track_data, track_nibbles = decode_result
         else:
@@ -1671,6 +1686,7 @@ def convert(
         output_sha256=hashlib.sha256(exported).hexdigest(),
         parameters={
             "layout": layout or "",
+            "resolved_layout": layout_desc.layout_id if layout_desc else "",
             "encoding": decoder_used,
             "exporter": to,
             "output": str(out),
@@ -1726,11 +1742,22 @@ def extract(
                 selected_encoding = primary.encoding or selected_encoding
 
     image_obj = _prepare_image(path, selected_layout, selected_encoding)
-    filesystem = _detect_filesystem(image_obj)
+    detection = _filesystem_detection_for_image(image_obj, path)
+    filesystem = detection.plugin
 
     if filesystem is None:
         if out is None and (file_path or list_only):
-            raise FluxctlError("No filesystem detected; cannot extract named paths")
+            detail = "; ".join(
+                evidence.replace("=", ": ", 1)
+                for evidence in detection.evidence
+                if evidence.startswith(("cbm_dos_", "filesystem_"))
+            )
+            message = "Filesystem metadata was detected, but no usable filesystem view is available"
+            if detection.primary:
+                message += f" ({detection.primary})"
+            if detail:
+                message += f": {detail}"
+            raise FluxctlError(message)
         if out is None:
             typer.echo("No filesystem detected; provide --out to dump raw sectors")
             return

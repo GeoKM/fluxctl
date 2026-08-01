@@ -8,6 +8,7 @@ from fluxctl.layouts.loader import load_builtin_layouts
 FIXTURE_D64 = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64-170K.d64")
 FIXTURE_D64_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64CPM-170K.d64")
 FIXTURE_DISK_DISECTOR_D64 = Path("tests/fixtures/5.25inch/Commodore/0008-DISC001-Disk_Disector-v5.d64")
+FIXTURE_DISK_DISECTOR_SCP = Path("tests/fixtures/5.25inch/Commodore/0008-DISC001-Disk_Disector-v5.scp")
 FIXTURE_D71 = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C128-341K.d71")
 FIXTURE_D71_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-MFM-C128CPM-340K.d71")
 
@@ -60,6 +61,18 @@ def test_detects_35_track_d64_as_cbm_dos_not_cpm() -> None:
     names = [entry.name for entry in detection.plugin.list_directory("/")]
     assert "DISK RESCUE" in names
     assert "PIP.COM" not in names
+
+
+def test_reports_incomplete_cbm_dos_directory_chain_for_damaged_scp() -> None:
+    load_builtin_layouts()
+    image = _prepare_image(FIXTURE_DISK_DISECTOR_SCP, "commodore_gcr_1541_170k", "gcr")
+
+    detection = detect_filesystem(image, path_name=FIXTURE_DISK_DISECTOR_SCP.name)
+
+    assert detection.primary == "cbm_dos"
+    assert detection.plugin is None
+    assert "cbm_dos_bam_present=T18/S00" in detection.evidence
+    assert "cbm_dos_directory_chain_missing=T18/S02" in detection.evidence
 
 
 def test_detects_c128_cpm_from_directory_not_filename() -> None:

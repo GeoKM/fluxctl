@@ -41,9 +41,25 @@ class RawIMGExporter:
         payload = bytearray()
         self._padded_missing = False
 
-        for ts in sorted(track_list, key=lambda t: (t.track, t.head)):
-            ordered_ids = self._ordered_sector_ids(ts.sectors)
-            sector_map = {sector.sector_id: sector for sector in ts.sectors}
+        layout = getattr(image, "layout", None)
+        tracks_by_ch = {(ts.track, ts.head): ts for ts in track_list}
+        if layout is not None:
+            track_order = [
+                (track, head)
+                for track in range(int(getattr(layout, "tracks", 0) or 0))
+                for head in range(int(getattr(layout, "sides", 1) or 1))
+            ]
+        else:
+            track_order = sorted(tracks_by_ch)
+
+        for track, head in track_order:
+            ts = tracks_by_ch.get((track, head))
+            if ts is None:
+                ordered_ids = self._expected_sector_ids(layout, track, head, [])
+                sector_map = {}
+            else:
+                ordered_ids = self._expected_sector_ids(layout, track, head, ts.sectors)
+                sector_map = {sector.sector_id: sector for sector in ts.sectors}
             for sector_id in ordered_ids:
                 sector = sector_map.get(sector_id)
                 if sector and sector.data:
@@ -85,9 +101,19 @@ class RawIMGExporter:
             raise ExportError(f"Mixed sector sizes {sorted(sizes)} are not supported for RAW export")
         return next(iter(sizes))
 
+    def _expected_sector_ids(self, layout, track: int, head: int, sectors: Iterable[Sector]) -> List[int]:
+        if layout is not None:
+            expected_count = int(layout.expected_sectors_for_track(track, head))
+            base = int(getattr(layout, "id_rules", {}).get("sector_number_base", 1))
+            return list(range(base, base + expected_count))
+        return self._ordered_sector_ids(sectors)
+
     def _ordered_sector_ids(self, sectors: Iterable[Sector]) -> List[int]:
         ids = sorted({sector.sector_id for sector in sectors})
-        return list(range(1, ids[-1] + 1)) if ids else []
+        if not ids:
+            return []
+        start = 0 if ids[0] == 0 else 1
+        return list(range(start, ids[-1] + 1))
 
 
 __all__ = ["RawIMGExporter"]
