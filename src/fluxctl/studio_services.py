@@ -74,6 +74,14 @@ class FileEntryView:
 
 
 @dataclass(frozen=True)
+class FileListView:
+    """Filesystem directory entries plus volume/header metadata for display."""
+
+    entries: list[FileEntryView]
+    volume_text: str = ""
+
+
+@dataclass(frozen=True)
 class FileAllocationView:
     """Filesystem allocation addresses suitable for map overlays."""
 
@@ -270,12 +278,12 @@ def blank_image_presets() -> list[BlankImagePreset]:
     return list(BLANK_IMAGE_PRESETS)
 
 
-def create_blank_image(preset_id: str, output_path: Path) -> BlankImageResult:
+def create_blank_image(preset_id: str, output_path: Path, *, overwrite: bool = False) -> BlankImageResult:
     """Create a new blank disk image for a supported Studio preset."""
 
     preset = _blank_preset_by_id(preset_id)
     output_path = output_path.with_suffix(preset.suffix) if output_path.suffix == "" else output_path
-    if output_path.exists():
+    if output_path.exists() and not overwrite:
         raise ValueError(f"Output image already exists: {output_path}")
     if preset_id in FAT12_PRESETS:
         payload = _build_blank_fat12_image(FAT12_PRESETS[preset_id])
@@ -290,7 +298,10 @@ def create_blank_image(preset_id: str, output_path: Path) -> BlankImageResult:
     else:  # pragma: no cover - guarded by _blank_preset_by_id
         raise ValueError(f"Unsupported blank image preset: {preset_id}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(payload)
+    with tempfile.NamedTemporaryFile(prefix=f".{output_path.name}.", dir=output_path.parent, delete=False) as temp_file:
+        temp_name = Path(temp_file.name)
+        temp_file.write(payload)
+    shutil.move(str(temp_name), str(output_path))
     return BlankImageResult(
         path=str(output_path),
         preset_id=preset.preset_id,
@@ -1113,25 +1124,61 @@ def list_files(
 ) -> list[FileEntryView]:
     """Return directory entries when a supported filesystem is detected."""
 
+    return list_files_with_info(path, layout_id, encoding, directory).entries
+
+
+def list_files_with_info(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str = "mfm",
+    directory: str = "/",
+) -> FileListView:
+    """Return directory entries and filesystem label/header text for display."""
+
     load_builtin_filesystems()
     image = _prepare_image(path, layout_id, encoding)
     filesystem = detect_filesystem(image, path_name=path.name).plugin
     if filesystem is None:
-        return []
+        return FileListView([])
+    volume_text = _filesystem_volume_text(filesystem)
     try:
         entries = filesystem.list_directory(directory)
     except Exception:
-        return []
-    return [
-        FileEntryView(
-            entry.name,
-            "<DIR>" if entry.is_dir else "file",
-            entry.size,
-            _join_filesystem_path(directory, entry.name),
-            entry.is_dir,
-        )
-        for entry in entries
-    ]
+        return FileListView([], volume_text)
+    return FileListView(
+        [
+            FileEntryView(
+                entry.name,
+                "<DIR>" if entry.is_dir else "file",
+                entry.size,
+                _join_filesystem_path(directory, entry.name),
+                entry.is_dir,
+            )
+            for entry in entries
+        ],
+        volume_text,
+    )
+
+
+def _filesystem_volume_text(filesystem) -> str:
+    try:
+        metadata = filesystem.metadata()
+    except Exception:
+        return ""
+    disk_name = str(metadata.get("disk_name") or "").strip()
+    disk_id = str(metadata.get("disk_id") or "").strip()
+    dos_type = str(metadata.get("dos_type") or "").strip()
+    if disk_name or disk_id or dos_type:
+        parts = []
+        if disk_name:
+            parts.append(f"Name: {disk_name}")
+        if disk_id:
+            parts.append(f"ID: {disk_id}")
+        if dos_type:
+            parts.append(f"DOS: {dos_type}")
+        return "  ".join(parts)
+    volume_label = str(metadata.get("volume_label") or metadata.get("label") or "").strip()
+    return f"Label: {volume_label}" if volume_label else ""
 
 
 def provenance_json(path: Path) -> dict:
