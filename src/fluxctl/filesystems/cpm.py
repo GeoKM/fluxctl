@@ -20,6 +20,50 @@ class CPMDirectoryRecord:
     allocation: bytes
 
 
+@dataclass(frozen=True, slots=True)
+class CPMDiskParameters:
+    reserved_tracks: int
+    sectors_per_track: int
+    sector_size: int
+    block_size: int
+    skew: tuple[int, ...]
+    allocation_width: int = 1
+
+    @property
+    def sectors_per_block(self) -> int:
+        return self.block_size // self.sector_size
+
+
+STANDARD_26_SECTOR_SKEW = (
+    0,
+    6,
+    12,
+    18,
+    24,
+    4,
+    10,
+    16,
+    22,
+    2,
+    8,
+    14,
+    20,
+    1,
+    7,
+    13,
+    19,
+    25,
+    5,
+    11,
+    17,
+    23,
+    3,
+    9,
+    15,
+    21,
+)
+
+
 def _clean_name_field(field: bytes) -> str:
     return bytes(byte & 0x7F for byte in field).decode("ascii", errors="ignore").rstrip()
 
@@ -130,6 +174,21 @@ class CPMFilesystem(Filesystem):
             return "c128_cpm_3_0"
         return "cpm"
 
+    def _disk_parameters(self) -> CPMDiskParameters | None:
+        if self._image is None:
+            return None
+        layout = getattr(self._image, "layout", None)
+        layout_id = getattr(layout, "layout_id", "")
+        if layout_id == "dec_dec_rx02_rx02_250k":
+            return CPMDiskParameters(
+                reserved_tracks=2,
+                sectors_per_track=26,
+                sector_size=128,
+                block_size=1024,
+                skew=STANDARD_26_SECTOR_SKEW,
+            )
+        return None
+
     def _is_c64_cpm_2_2(self) -> bool:
         layout_id = getattr(getattr(self._image, "layout", None), "layout_id", "") if self._image is not None else ""
         return self._variant == "c64_cpm_2_2" or layout_id == "commodore_gcr_1541_170k"
@@ -179,6 +238,9 @@ class CPMFilesystem(Filesystem):
         return addresses
 
     def _allocation_blocks_for_file(self, path: str) -> set[int]:
+        return set(self._records_for_file(path, require_records=False)[1])
+
+    def _records_for_file(self, path: str, *, require_records: bool) -> tuple[list[CPMDirectoryRecord], list[int]]:
         target = path.lstrip("/").upper()
         if ":" in target:
             user_text, target_name = target.split(":", 1)
@@ -196,10 +258,57 @@ class CPMFilesystem(Filesystem):
         ]
         if not matches:
             raise FilesystemError(f"File not found: {path}")
-        return {block for record in matches for block in record.allocation if block}
+        blocks: list[int] = []
+        for record in sorted(matches, key=lambda item: item.extent):
+            if require_records and record.records == 0:
+                continue
+            blocks.extend(self._record_allocation_blocks(record))
+        return sorted(matches, key=lambda item: item.extent), blocks
+
+    def _record_allocation_blocks(self, record: CPMDirectoryRecord) -> list[int]:
+        params = self._disk_parameters()
+        width = params.allocation_width if params is not None else 1
+        blocks: list[int] = []
+        if width == 1:
+            blocks.extend(block for block in record.allocation if block)
+        elif width == 2:
+            for offset in range(0, len(record.allocation), 2):
+                block = int.from_bytes(record.allocation[offset : offset + 2], "little")
+                if block:
+                    blocks.append(block)
+        return blocks
+
+    def _read_logical_sector(self, sector_index: int, params: CPMDiskParameters) -> bytes:
+        if self._image is None:
+            raise FilesystemError("CP/M image is not mounted")
+        if params.sector_size != getattr(self._image, "bytes_per_sector", params.sector_size):
+            raise FilesystemError("CP/M disk parameter block does not match image sector size")
+        track = sector_index // params.sectors_per_track
+        logical_sector = sector_index % params.sectors_per_track
+        try:
+            physical_sector = params.skew[logical_sector]
+        except IndexError as exc:
+            raise FilesystemError("CP/M sector skew table does not match sectors per track") from exc
+        physical_lba = track * params.sectors_per_track + physical_sector
+        return self._image.read_sector(physical_lba)
+
+    def _read_allocation_block(self, block: int, params: CPMDiskParameters) -> bytes:
+        first_sector = params.reserved_tracks * params.sectors_per_track + block * params.sectors_per_block
+        return b"".join(
+            self._read_logical_sector(first_sector + offset, params)
+            for offset in range(params.sectors_per_block)
+        )
 
     def extract_file(self, path: str) -> bytes:
-        raise FilesystemError("CP/M file extraction not implemented")
+        params = self._disk_parameters()
+        if params is None:
+            raise FilesystemError("CP/M file extraction needs a format-specific disk parameter block")
+        records, blocks = self._records_for_file(path, require_records=True)
+        if not records:
+            raise FilesystemError(f"File has no extractable records: {path}")
+        expected_size = sum(record.records for record in records) * 128
+        data = b"".join(self._read_allocation_block(block, params) for block in blocks)
+        return data[:expected_size]
 
     def metadata(self) -> Dict[str, Any]:
         return {
