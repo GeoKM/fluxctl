@@ -179,7 +179,7 @@ class CPMFilesystem(Filesystem):
             return None
         layout = getattr(self._image, "layout", None)
         layout_id = getattr(layout, "layout_id", "")
-        if layout_id == "dec_dec_rx02_rx02_250k":
+        if layout_id in {"generic_fm_8inch_cpm_256k", "dec_dec_rx02_rx02_250k"}:
             return CPMDiskParameters(
                 reserved_tracks=2,
                 sectors_per_track=26,

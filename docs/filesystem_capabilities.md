@@ -12,7 +12,7 @@ format-specific code to safely extract or modify file data.
 | CBM DOS 1541/1571 | Yes | Yes | Yes | Root only | Root file import for `.d64`/`.d71` | No delete, replace, directory import, or directory creation yet. Import writes PRG-style files into a new image copy and does not overwrite entries. |
 | CBM DOS 1581 | Yes | Yes | Yes | Yes | Root file import for `.d81` | Real 1581 BAM allocation exists for root-file import. Delete, replace, directory import, and directory creation are pending. |
 | Amiga OFS/FFS | Yes | Yes | Yes | Yes | No | Reader supports file/directory export. `.adf` mutation is pending because allocation bitmap, block checksums, file headers, and directory hash chains must be updated correctly. |
-| CP/M variants | Yes | Yes | Yes for modelled DPBs | Root only | No | CP/M 26-sector 250K extraction is supported. Other CP/M variants can list directory entries, but need their own disk parameter blocks before extraction is enabled. |
+| CP/M variants | Yes | Yes | Yes for modelled DPBs | Root only | No | CP/M 26-sector 256K FM extraction is supported. Other CP/M variants can list directory entries, but need their own disk parameter blocks before extraction is enabled. |
 | DisplayWriter | Yes | Label directory only | No | No | No | The reader lists IBM standard-label `HDR1` records from track 0. Actual DisplayWriter document extraction is not implemented. |
 | RT-11 | Yes | No | No | No | No | Probe and volume label metadata exist. Directory listing and extraction are not implemented. |
 | Raw sectors | Not a filesystem | N/A | Sector dump/export | N/A | Sector patch helpers only | Raw sector operations do not understand filesystem allocation or directory structures. |
@@ -33,7 +33,7 @@ opened and probed. Write/manipulation actions always create a new image copy.
 | CBM DOS 1581 decoded `.scp`/`.imd` | Yes | Yes when reconstruction is complete enough | Yes | Yes | Yes when file chain sectors decode | Files and directories when chains decode | No | No | No | No | No | No | 1581 logical block overlay | 1581 BAM block map from decoded sectors |
 | Amiga OFS/FFS `.adf` | Yes | Yes | Yes | Yes | Yes | Files and directories | No | No | No | No | No | Minimal OFS `.adf` | Current file block overlay is approximate | Filesystem logical map |
 | Amiga decoded `.scp`/`.imd` | Yes | Yes when reconstruction is complete enough | Yes | Yes | Yes when file blocks decode | Files and directories when blocks decode | No | No | No | No | No | No | Current file block overlay is approximate | Filesystem logical map |
-| CP/M variants | Yes | Yes | Root only | Yes | Yes for CP/M 26-sector 250K files | Files for modelled DPBs | No | No | No | No | No | No | C64 CP/M 2.2 only; more CP/M DPBs pending | Filesystem logical map |
+| CP/M variants | Yes | Yes | Root only | Yes | Yes for CP/M 26-sector 256K FM files | Files for modelled DPBs | No | No | No | No | No | No | C64 CP/M 2.2 only; more CP/M DPBs pending | Filesystem logical map |
 | DisplayWriter | Yes | Label entries only | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
 | RT-11 | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
 
@@ -48,7 +48,7 @@ Notes:
   than FAT12 and CBM DOS until full OFS/FFS file header, extension block, and
   hash-chain traversal is implemented.
 - CP/M export is enabled only when Fluxctl has a modelled disk parameter block.
-  The CP/M 26-sector 250K DPB is supported; C64/C128 and other generic CP/M
+  The CP/M 26-sector 256K FM DPB is supported; C64/C128 and other generic CP/M
   layouts still need their own allocation maps.
 
 ## Export Behavior
@@ -61,7 +61,7 @@ export with a format-specific error.
 Known list-without-extract cases:
 
 - **CP/M**: exports files for modelled disk parameter blocks such as CP/M
-  26-sector 250K media. Other CP/M variants still list root entries but reject
+  26-sector 256K FM media. Other CP/M variants still list root entries but reject
   extraction until their DPB and sector translation are implemented.
 - **DisplayWriter**: lists standard-label `HDR1` records only; the document data
   format has not been decoded.

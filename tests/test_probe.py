@@ -35,8 +35,8 @@ FIXTURE_ADF_REAL = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MF
 FIXTURE_AMIGA_IMG = FIXTURE_ADF_REAL
 FIXTURE_1581_IMG = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MFM-C64-800K.img")
 FIXTURE_1581_D81 = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MFM-C64-800K.d81")
-FIXTURE_CPM_SRC1_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSDD-CPM22-SRC1.img")
-FIXTURE_CPM_SRC2_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSDD-CPM22-SRC2.img")
+FIXTURE_CPM_SRC1_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC1-256K.img")
+FIXTURE_CPM_SRC2_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC2-256K.img")
 
 
 def test_probe_includes_gcr_candidates() -> None:
@@ -233,8 +233,8 @@ def test_probe_supports_8inch_cpm_source_images() -> None:
         result = runner.invoke(cli.app, ["probe", str(fixture)])
         assert result.exit_code == 0
         payload = json.loads(result.stdout)
-        assert payload[0]["layout_id"] == "dec_dec_rx02_rx02_250k"
-        assert payload[0]["encoding"] == "dec_rx02"
+        assert payload[0]["layout_id"] == "generic_fm_8inch_cpm_256k"
+        assert payload[0]["encoding"] == "fm"
         assert payload[0]["filesystem"] == "cpm"
 
 
