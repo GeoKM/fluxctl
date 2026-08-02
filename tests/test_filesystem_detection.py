@@ -11,6 +11,8 @@ FIXTURE_DISK_DISECTOR_D64 = Path("tests/fixtures/5.25inch/Commodore/0008-DISC001
 FIXTURE_DISK_DISECTOR_SCP = Path("tests/fixtures/5.25inch/Commodore/0008-DISC001-Disk_Disector-v5.scp")
 FIXTURE_D71 = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C128-341K.d71")
 FIXTURE_D71_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-MFM-C128CPM-340K.d71")
+FIXTURE_CPM_SRC1_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSDD-CPM22-SRC1.img")
+FIXTURE_CPM_SRC2_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSDD-CPM22-SRC2.img")
 
 
 def test_detects_1541_cbm_dos_with_strong_probe() -> None:
@@ -86,3 +88,20 @@ def test_detects_c128_cpm_from_directory_not_filename() -> None:
     assert detection.plugin is not None
     names = [entry.name for entry in detection.plugin.list_directory("/")]
     assert "SETDEF.COM" in names
+
+
+def test_detects_8inch_cpm_source_images_from_directory_records() -> None:
+    load_builtin_layouts()
+    expected_names = {
+        FIXTURE_CPM_SRC1_IMG: "OS1BOOT.ASM",
+        FIXTURE_CPM_SRC2_IMG: "SYSGEN.ASM",
+    }
+
+    for fixture, expected_name in expected_names.items():
+        image = _prepare_image(fixture, "dec_dec_rx02_rx02_250k", "dec_rx02")
+        detection = detect_filesystem(image, path_name="not-from-name.img")
+
+        assert detection.primary == "cpm"
+        assert detection.plugin is not None
+        names = [entry.name for entry in detection.plugin.list_directory("/")]
+        assert expected_name in names

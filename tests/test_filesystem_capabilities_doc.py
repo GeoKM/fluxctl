@@ -40,5 +40,5 @@ def test_filesystem_capabilities_documents_current_studio_media() -> None:
 
     assert "Root PRG import only" in text
     assert "Files and empty directories" in text
-    assert "CP/M export is not enabled yet" in text
+    assert "CP/M export is enabled only when Fluxctl has a modelled disk parameter block" in text
     assert "`.scp` and `.imd` write/manipulation actions are disabled" in text
