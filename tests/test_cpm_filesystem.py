@@ -9,13 +9,13 @@ from fluxctl.filesystem_detection import detect_filesystem
 from fluxctl.layouts.loader import load_builtin_layouts
 
 
-FIXTURE_CPM_SRC1 = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSDD-CPM22-SRC1.img")
-FIXTURE_CPM_SRC2 = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSDD-CPM22-SRC2.img")
+FIXTURE_CPM_SRC1 = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC1-256K.img")
+FIXTURE_CPM_SRC2 = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC2-256K.img")
 
 
 def _mount_cpm_fixture(path: Path):
     load_builtin_layouts()
-    image = _prepare_image(path, "dec_dec_rx02_rx02_250k", "dec_rx02")
+    image = _prepare_image(path, "generic_fm_8inch_cpm_256k", "fm")
     detection = detect_filesystem(image, path_name=path.name)
     assert detection.plugin is not None
     return detection.plugin
@@ -65,8 +65,8 @@ def test_cpm_26_sector_cli_extract_writes_file(tmp_path: Path) -> None:
 def test_cpm_26_sector_studio_exports_multiple_selected_files(tmp_path: Path) -> None:
     result = services.export_filesystem_entries(
         FIXTURE_CPM_SRC2,
-        "dec_dec_rx02_rx02_250k",
-        "dec_rx02",
+        "generic_fm_8inch_cpm_256k",
+        "fm",
         ["/LOAD.LIN", "/LOAD.PLM"],
         tmp_path,
     )

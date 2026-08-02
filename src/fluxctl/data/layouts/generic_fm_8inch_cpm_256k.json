@@ -1,0 +1,31 @@
+{
+  "schema_version": "layout.v1",
+  "layout_id": "generic_fm_8inch_cpm_256k",
+  "name": "Generic 8-inch CP/M 256K FM",
+  "encoding": "fm",
+  "rpm_nominal": 360,
+  "sides": 1,
+  "tracks": 77,
+  "sectors_per_track": 26,
+  "sector_size": 128,
+  "gap3_hint": 26,
+  "id_rules": {
+    "cylinder_field": "track_index",
+    "head_field": "side_index",
+    "sector_number_base": 1
+  },
+  "crc": {
+    "type": "crc16_ccitt",
+    "poly": 4129,
+    "init": 65535,
+    "refin": false,
+    "refout": false,
+    "xorout": 0
+  },
+  "address_marks": {
+    "iam": "fc",
+    "idam": "fe",
+    "dam": "fb",
+    "ddam": "f8"
+  }
+}
