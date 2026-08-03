@@ -675,7 +675,7 @@ class FluxctlStudio(QMainWindow):
         self.encoding_combo = QComboBox()
         self.encoding_combo.addItems(["mfm", "fm", "gcr", "auto"])
         self.export_combo = QComboBox()
-        self.export_combo.addItems(["raw", "imd", "adf", "d64", "g64"])
+        self.export_combo.addItems(["raw", "imd", "adf", "d64", "d71", "d81", "g64"])
         self.dump_mode_combo = QComboBox()
         self.dump_mode_combo.addItem("Sector", "sector")
         self.dump_mode_combo.addItem("File", "file")
@@ -1188,13 +1188,15 @@ class FluxctlStudio(QMainWindow):
     def _default_exporter_for_image(self, kind: str, layout_id: str = "", encoding: str = "") -> str:
         if kind in {"img", "raw"}:
             return "raw"
-        if kind in {"imd", "adf", "d64", "g64"}:
+        if kind in {"imd", "adf", "d64", "d71", "g64"}:
             return kind
-        if kind == "d71":
-            return "d64"
         if kind == "d81":
             return "raw"
         if kind == "scp":
+            if layout_id == "commodore_mfm_1581_800k":
+                return "d81"
+            if layout_id == "commodore_gcr_1571_341k":
+                return "d71"
             if layout_id == "commodore_gcr_1541_170k":
                 return "d64"
             if encoding == "gcr":
@@ -1213,19 +1215,21 @@ class FluxctlStudio(QMainWindow):
             choices.append(("adf", "Amiga Disk File (.adf)"))
         if layout_id.startswith("commodore_gcr_1541") or kind == "d64":
             choices.append(("d64", "Commodore 1541 image (.d64)"))
+        if layout_id == "commodore_gcr_1571_341k" or kind == "d71":
+            choices.append(("d71", "Commodore 1571 image (.d71)"))
+        if layout_id == "commodore_mfm_1581_800k" or kind == "d81":
+            choices.append(("d81", "Commodore 1581 image (.d81)"))
         if encoding == "gcr" or kind == "g64":
             choices.append(("g64", "Commodore GCR track image (.g64)"))
-        if kind in {"adf", "d64", "g64"} and all(choice[0] != kind for choice in choices):
+        if kind in {"adf", "d64", "d71", "d81", "g64"} and all(choice[0] != kind for choice in choices):
             choices.append((kind, f"Same container (.{kind})"))
         return choices
 
     def _default_roundtrip_back_exporter_for_image(self, kind: str) -> str:
         if kind in {"img", "raw", "scp", "imd"}:
             return "raw"
-        if kind in {"adf", "d64", "g64"}:
+        if kind in {"adf", "d64", "d71", "g64"}:
             return kind
-        if kind == "d71":
-            return "d64"
         if kind == "d81":
             return "raw"
         return "raw"
@@ -2076,7 +2080,7 @@ class FluxctlStudio(QMainWindow):
         layout.addWidget(intro)
 
         form = QFormLayout()
-        exporters = ["raw", "imd", "adf", "d64", "g64"]
+        exporters = ["raw", "imd", "adf", "d64", "d71", "d81", "g64"]
         to_combo = QComboBox()
         to_combo.addItems(exporters)
         self._select_combo_text(to_combo, default_to)

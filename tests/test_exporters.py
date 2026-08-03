@@ -324,6 +324,122 @@ def test_convert_amiga_scp_to_adf_preserves_filesystem(tmp_path: Path) -> None:
     assert "Installer\t61640 bytes" in list_result.output
 
 
+def test_convert_1581_img_to_d81_matches_fixture(tmp_path: Path) -> None:
+    img_fixture = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MFM-C64-800K.img")
+    d81_fixture = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MFM-C64-800K.d81")
+    out_path = tmp_path / "disk.d81"
+
+    result = runner.invoke(
+        app,
+        [
+            "convert",
+            str(img_fixture),
+            "--layout",
+            "commodore_mfm_1581_800k",
+            "--to",
+            "d81",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert out_path.read_bytes() == d81_fixture.read_bytes()
+
+
+def test_convert_1581_d81_to_raw_img_matches_fixture(tmp_path: Path) -> None:
+    img_fixture = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MFM-C64-800K.img")
+    d81_fixture = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MFM-C64-800K.d81")
+    out_path = tmp_path / "disk.img"
+
+    result = runner.invoke(
+        app,
+        [
+            "convert",
+            str(d81_fixture),
+            "--to",
+            "raw",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert out_path.read_bytes() == img_fixture.read_bytes()
+
+
+def test_convert_1581_scp_to_d81_matches_fixture(tmp_path: Path) -> None:
+    scp_fixture = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MFM-C64-800K.scp")
+    d81_fixture = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MFM-C64-800K.d81")
+    out_path = tmp_path / "disk.d81"
+
+    result = runner.invoke(
+        app,
+        [
+            "convert",
+            str(scp_fixture),
+            "--layout",
+            "commodore_mfm_1581_800k",
+            "--to",
+            "d81",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert out_path.read_bytes() == d81_fixture.read_bytes()
+
+
+def test_convert_1571_scp_to_d71_matches_fixture(tmp_path: Path) -> None:
+    scp_fixture = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C128-341K.scp")
+    d71_fixture = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C128-341K.d71")
+    out_path = tmp_path / "disk.d71"
+
+    result = runner.invoke(
+        app,
+        [
+            "convert",
+            str(scp_fixture),
+            "--layout",
+            "commodore_gcr_1571_341k",
+            "--encoding",
+            "gcr",
+            "--to",
+            "d71",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert out_path.read_bytes() == d71_fixture.read_bytes()
+
+
+def test_roundtrip_1571_d71_through_d71_matches() -> None:
+    d71_fixture = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C128-341K.d71")
+
+    result = runner.invoke(
+        app,
+        [
+            "roundtrip",
+            str(d71_fixture),
+            "--layout",
+            "commodore_gcr_1571_341k",
+            "--encoding",
+            "gcr",
+            "--to",
+            "d71",
+            "--back-to",
+            "d71",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Forward check: MATCH" in result.output
+    assert "Round-trip check: MATCH" in result.output
+
+
 def test_convert_amiga_adf_to_imd_can_be_read_back(tmp_path: Path) -> None:
     adf_fixture = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.adf")
     out_path = tmp_path / "amiga.imd"
