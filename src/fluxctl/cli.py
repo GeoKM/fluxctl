@@ -8,6 +8,8 @@ import os
 import platform
 import shutil
 import sys
+import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
@@ -54,6 +56,7 @@ Typical workflows:
   fluxctl probe disk.scp
   fluxctl qc disk.scp --layout ibm_mfm_720k --json-out qc.json
   fluxctl convert disk.scp --layout ibm_mfm_720k --to raw --out disk.img
+  fluxctl roundtrip disk.scp --layout amiga_mfm_880k --to adf
   fluxctl extract disk.img --list
 
 Use `fluxctl COMMAND --help` for command-specific examples.
@@ -1234,6 +1237,112 @@ def _is_lossy(track_data: Optional[list[TrackSectors]], exporter_metadata: dict)
     return missing or sector_health or exporter_metadata.get("padded_missing", False)
 
 
+@dataclass(slots=True)
+class ConvertPayload:
+    payload: bytes
+    layout: Optional[LayoutDescriptor]
+    encoding: str
+    track_data: Optional[list[TrackSectors]]
+    exporter_name: str
+    exporter_version: str
+    exporter_metadata: dict
+
+    @property
+    def layout_id(self) -> str:
+        return self.layout.layout_id if self.layout else ""
+
+
+def _prepare_convert_payload(path: Path, to: str, layout: Optional[str], encoding: str) -> ConvertPayload:
+    load_builtin_decoders()
+    load_builtin_layouts()
+    load_builtin_exporters()
+    layout_desc = ensure_layout_loaded(layout) if layout else None
+    decoder_used = layout_desc.encoding if layout_desc else encoding
+    track_data: Optional[list[TrackSectors]] = None
+    track_nibbles: list[TrackNibbles] = []
+
+    if path.suffix.lower() == ".scp":
+        if layout_desc is None:
+            scp_image = parse_scp(path)
+            encoding_candidate = detect_encoding(scp_image, path=path)
+            if encoding_candidate is None:
+                raise FluxDecodeError("Unable to auto-detect SCP encoding; pass --layout and --encoding")
+            layout_candidate = detect_layout(scp_image, encoding_candidate.encoding, path)
+            if layout_candidate is None:
+                raise FluxDecodeError("Unable to auto-detect SCP layout; pass --layout explicitly")
+            layout_desc = layout_candidate.layout
+            decoder_used = layout_desc.encoding
+            typer.echo(f"Auto-detected layout {layout_desc.layout_id} ({decoder_used})")
+        if layout_desc.layout_id.startswith("amiga_"):
+            track_data = _decode_amiga_tracks(path, layout_desc)
+        else:
+            decode_result = _decode_tracks(
+                path, layout_desc.layout_id, encoding=decoder_used, capture_nibbles=to == "g64"
+            )
+            if isinstance(decode_result, tuple):
+                track_data, track_nibbles = decode_result
+            else:
+                track_data = decode_result
+        image_obj = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size if layout_desc else None)
+        if track_nibbles:
+            image_obj.tracks_nibbles = track_nibbles
+        if layout_desc:
+            image_obj.layout = layout_desc
+            geometry_sectors = None
+            if track_data:
+                try:
+                    geometry_sectors = layout_desc.expected_sectors_for_track(track_data[0].track, track_data[0].head)
+                except Exception:
+                    geometry_sectors = layout_desc.sectors_per_track
+            image_obj.set_geometry(geometry_sectors or layout_desc.sectors_per_track, layout_desc.sides)
+    elif path.suffix.lower() == ".imd":
+        track_data, imd_geom, _meta = load_imd_image(path)
+        image_obj = TrackSectorImage(track_data, bytes_per_sector=imd_geom.sector_size)
+        image_obj.set_geometry(imd_geom.spt or imd_geom.tracks, imd_geom.heads)
+    elif layout_desc:
+        image_obj = _prepare_image(path, layout_desc.layout_id, decoder_used)
+        if isinstance(image_obj, TrackSectorImage):
+            track_data = image_obj.tracks
+    else:
+        image_obj = RawSectorImage(path.read_bytes())
+
+    plugin = registry.exporter.get(to)
+    if plugin is None:
+        raise typer.BadParameter("Unsupported exporter")
+
+    exporter = plugin.entry
+    if not exporter.supports(image_obj):
+        raise ExportError(f"Exporter '{to}' does not support this image type")
+
+    payload = exporter.export(image_obj)
+    return ConvertPayload(
+        payload=payload,
+        layout=layout_desc,
+        encoding=decoder_used,
+        track_data=track_data,
+        exporter_name=plugin.name,
+        exporter_version=plugin.version,
+        exporter_metadata=exporter.metadata(),
+    )
+
+
+def _exporter_suffix(exporter: str) -> str:
+    return ".img" if exporter == "raw" else f".{exporter}"
+
+
+def _infer_roundtrip_back_exporter(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in {".img", ".ima", ".raw", ".scp", ".imd"}:
+        return "raw"
+    if suffix in {".adf", ".d64", ".g64"}:
+        return suffix.lstrip(".")
+    if suffix == ".d71":
+        return "d64"
+    if suffix == ".d81":
+        return "raw"
+    return "raw"
+
+
 @provenance_app.command("show")
 def provenance_show(path: Path = typer.Argument(..., exists=True, readable=True)) -> None:
     """Print a provenance JSON file."""
@@ -1613,73 +1722,10 @@ def convert(
     fluxctl convert c64.scp --layout commodore_gcr_1541_170k --to g64 --out disk.g64
     """
 
-    load_builtin_decoders()
-    load_builtin_layouts()
-    load_builtin_exporters()
-    layout_desc = ensure_layout_loaded(layout) if layout else None
-    decoder_used = layout_desc.encoding if layout_desc else encoding
-    track_data: Optional[list[TrackSectors]] = None
-    track_nibbles: list[TrackNibbles] = []
-
-    if path.suffix.lower() == ".scp":
-        if layout_desc is None:
-            scp_image = parse_scp(path)
-            encoding_candidate = detect_encoding(scp_image, path=path)
-            if encoding_candidate is None:
-                raise FluxDecodeError("Unable to auto-detect SCP encoding; pass --layout and --encoding")
-            layout_candidate = detect_layout(scp_image, encoding_candidate.encoding, path)
-            if layout_candidate is None:
-                raise FluxDecodeError("Unable to auto-detect SCP layout; pass --layout explicitly")
-            layout_desc = layout_candidate.layout
-            decoder_used = layout_desc.encoding
-            typer.echo(f"Auto-detected layout {layout_desc.layout_id} ({decoder_used})")
-        decode_result = _decode_tracks(
-            path, layout_desc.layout_id, encoding=decoder_used, capture_nibbles=to == "g64"
-        )
-        if isinstance(decode_result, tuple):
-            track_data, track_nibbles = decode_result
-        else:
-            track_data = decode_result
-        image_obj = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size if layout_desc else None)
-        if track_nibbles:
-            image_obj.tracks_nibbles = track_nibbles
-        if layout_desc:
-            image_obj.layout = layout_desc
-            # Use per-track sector counts for geometry when available; reconstruction already
-            # handles layouts that vary across cylinders.
-            geometry_sectors = None
-            if track_data:
-                try:
-                    geometry_sectors = layout_desc.expected_sectors_for_track(
-                        track_data[0].track, track_data[0].head
-                    )
-                except Exception:
-                    geometry_sectors = layout_desc.sectors_per_track
-            image_obj.set_geometry(geometry_sectors or layout_desc.sectors_per_track, layout_desc.sides)
-    elif path.suffix.lower() == ".imd":
-        track_data, imd_geom, _meta = load_imd_image(path)
-        image_obj = TrackSectorImage(track_data, bytes_per_sector=imd_geom.sector_size)
-        image_obj.set_geometry(imd_geom.spt or imd_geom.tracks, imd_geom.heads)
-        track_data = track_data
-    elif layout_desc:
-        image_obj = _prepare_image(path, layout_desc.layout_id, decoder_used)
-        if isinstance(image_obj, TrackSectorImage):
-            track_data = image_obj.tracks
-    else:
-        image_obj = RawSectorImage(path.read_bytes())
-
-    plugin = registry.exporter.get(to)
-    if plugin is None:
-        raise typer.BadParameter("Unsupported exporter")
-
-    exporter = plugin.entry
-    if not exporter.supports(image_obj):
-        raise ExportError(f"Exporter '{to}' does not support this image type")
-
-    exported = exporter.export(image_obj)
+    result = _prepare_convert_payload(path, to, layout, encoding)
+    exported = result.payload
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(exported)
-    exporter_metadata = exporter.metadata()
 
     provenance = ProvenanceRecord(
         tool_name="fluxctl",
@@ -1691,23 +1737,164 @@ def convert(
         output_sha256=hashlib.sha256(exported).hexdigest(),
         parameters={
             "layout": layout or "",
-            "resolved_layout": layout_desc.layout_id if layout_desc else "",
-            "encoding": decoder_used,
+            "resolved_layout": result.layout_id,
+            "encoding": result.encoding,
             "exporter": to,
             "output": str(out),
         },
-        plugins={"exporter": plugin.name, "exporter_version": plugin.version, "decoder": decoder_used},
-        decoder=decoder_used,
+        plugins={"exporter": result.exporter_name, "exporter_version": result.exporter_version, "decoder": result.encoding},
+        decoder=result.encoding,
         encoder=to,
     )
     prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
     write_provenance(provenance, prov_target)
 
-    if _is_lossy(track_data, exporter_metadata):
+    if _is_lossy(result.track_data, result.exporter_metadata):
         typer.secho(
             "Warning: export may be lossy due to missing or low-confidence sectors", fg=typer.colors.YELLOW
         )
     typer.echo(f"Wrote {out}")
+
+
+@app.command()
+@_handle_cli_errors
+def roundtrip(
+    path: Path = typer.Argument(..., exists=True, readable=True),
+    to: str = typer.Option(..., "--to", help="First exporter key to test (raw, imd, adf, d64, g64)"),
+    back_to: Optional[str] = typer.Option(
+        None,
+        "--back-to",
+        help="Exporter key for the return leg. Defaults to the source container where meaningful, or raw for SCP/IMD.",
+    ),
+    layout: Optional[str] = typer.Option(None, "--layout", help="Layout ID for SCP reconstruction or flat image geometry"),
+    encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding for SCP sources"),
+    work_dir: Optional[Path] = typer.Option(None, "--work-dir", help="Keep intermediate images in this directory"),
+    json_out: Optional[Path] = typer.Option(None, "--json-out", help="Write round-trip report to JSON"),
+    prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar for --json-out"),
+):
+    """Verify sector-level losslessness through a conversion round trip.
+
+    Examples:
+    fluxctl roundtrip disk.scp --layout amiga_mfm_880k --to adf
+    fluxctl roundtrip disk.adf --to raw --back-to adf
+    fluxctl roundtrip disk.img --layout amiga_mfm_880k --to adf --back-to raw
+    """
+
+    back_exporter = back_to or _infer_roundtrip_back_exporter(path)
+    temp_context = tempfile.TemporaryDirectory(prefix="fluxctl-roundtrip-") if work_dir is None else None
+    base_dir = Path(temp_context.name) if temp_context is not None else work_dir
+    assert base_dir is not None
+    base_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        first_path = base_dir / f"{path.stem}-to-{to}{_exporter_suffix(to)}"
+        final_path = base_dir / f"{path.stem}-roundtrip-{back_exporter}{_exporter_suffix(back_exporter)}"
+
+        first = _prepare_convert_payload(path, to, layout, encoding)
+        first_path.write_bytes(first.payload)
+
+        resolved_layout = first.layout_id or layout
+        original_bytes, original_meta = _image_bytes_for_compare(path, resolved_layout, first.encoding)
+        first_bytes, first_meta = _image_bytes_for_compare(first_path, resolved_layout, first.encoding)
+        second = _prepare_convert_payload(first_path, back_exporter, resolved_layout, first.encoding)
+        final_path.write_bytes(second.payload)
+        final_bytes, final_meta = _image_bytes_for_compare(final_path, resolved_layout, first.encoding)
+
+        original_sha = hashlib.sha256(original_bytes).hexdigest()
+        first_sha = hashlib.sha256(first_bytes).hexdigest()
+        final_sha = hashlib.sha256(final_bytes).hexdigest()
+        forward_diff = _first_diff_offset(original_bytes, first_bytes)
+        final_diff = _first_diff_offset(original_bytes, final_bytes)
+        forward_match = forward_diff is None and len(original_bytes) == len(first_bytes)
+        roundtrip_match = final_diff is None and len(original_bytes) == len(final_bytes)
+        lossy = _is_lossy(first.track_data, first.exporter_metadata) or _is_lossy(second.track_data, second.exporter_metadata)
+
+        report = {
+            "input": str(path),
+            "to": to,
+            "back_to": back_exporter,
+            "layout": resolved_layout or "",
+            "encoding": first.encoding,
+            "work_dir": str(base_dir) if work_dir is not None else "",
+            "first_path": str(first_path) if work_dir is not None else "",
+            "final_path": str(final_path) if work_dir is not None else "",
+            "original_sha256": original_sha,
+            "first_sha256": first_sha,
+            "final_sha256": final_sha,
+            "original_length": len(original_bytes),
+            "first_length": len(first_bytes),
+            "final_length": len(final_bytes),
+            "forward_match": forward_match,
+            "roundtrip_match": roundtrip_match,
+            "forward_first_diff_offset": forward_diff,
+            "roundtrip_first_diff_offset": final_diff,
+            "lossy_warning": lossy,
+            "meta": {
+                "original": original_meta,
+                "first": first_meta,
+                "final": final_meta,
+            },
+        }
+
+        typer.echo(f"Input decoded sha256:      {original_sha} ({len(original_bytes)} bytes)")
+        typer.echo(f"After --to {to} sha256:    {first_sha} ({len(first_bytes)} bytes)")
+        typer.echo(f"After --back-to {back_exporter}: {final_sha} ({len(final_bytes)} bytes)")
+        if work_dir is not None:
+            typer.echo(f"Intermediate images: {base_dir}")
+        if lossy:
+            typer.secho("Warning: one conversion leg reported missing or low-confidence sectors", fg=typer.colors.YELLOW)
+        if forward_match:
+            typer.secho("Forward check: MATCH", fg=typer.colors.GREEN)
+        else:
+            typer.secho("Forward check: DIFFER", fg=typer.colors.YELLOW)
+            if forward_diff is not None:
+                typer.echo(f"Forward first difference at decoded offset {forward_diff}")
+        if roundtrip_match:
+            typer.secho("Round-trip check: MATCH", fg=typer.colors.GREEN)
+        else:
+            typer.secho("Round-trip check: DIFFER", fg=typer.colors.YELLOW)
+            if final_diff is not None:
+                typer.echo(f"Round-trip first difference at decoded offset {final_diff}")
+
+        if json_out:
+            json_out.parent.mkdir(parents=True, exist_ok=True)
+            json_out.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            prov_target = prov_out or json_out.with_suffix(json_out.suffix + ".provenance.json")
+            record = ProvenanceRecord(
+                tool_name="fluxctl",
+                tool_version=__version__,
+                operation="roundtrip",
+                input_path=path,
+                input_sha256=sha256_file(path),
+                output_path=json_out,
+                output_sha256=ProvenanceRecord.sha256_file(json_out),
+                parameters={
+                    "to": to,
+                    "back_to": back_exporter,
+                    "layout": layout or "",
+                    "resolved_layout": resolved_layout or "",
+                    "encoding": first.encoding,
+                    "work_dir": str(work_dir or ""),
+                    "json_out": str(json_out),
+                },
+                plugins={"forward_exporter": first.exporter_name, "back_exporter": second.exporter_name},
+                decoder=first.encoding,
+                encoder=back_exporter,
+                evidence=[
+                    f"original_decoded_sha256={original_sha}",
+                    f"first_decoded_sha256={first_sha}",
+                    f"final_decoded_sha256={final_sha}",
+                    f"forward_match={int(forward_match)}",
+                    f"roundtrip_match={int(roundtrip_match)}",
+                ],
+            )
+            write_provenance(record, prov_target)
+            typer.echo(f"Wrote round-trip report to {json_out}")
+
+        if not roundtrip_match:
+            raise typer.Exit(code=1)
+    finally:
+        if temp_context is not None:
+            temp_context.cleanup()
 
 
 @app.command()

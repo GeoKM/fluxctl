@@ -169,6 +169,58 @@ def test_convert_dialog_defaults_output_next_to_source(monkeypatch, tmp_path) ->
     window.close()
 
 
+def test_roundtrip_dialog_runs_cli_with_selected_options(monkeypatch, tmp_path) -> None:
+    window = FluxctlStudio()
+    source = tmp_path / "disk.adf"
+    source.write_bytes(b"")
+    captured: dict[str, object] = {}
+    window.current_path = source
+    window.current_summary = services.ImageSummary(
+        path=str(source),
+        size=0,
+        kind="adf",
+        layout_id="amiga_mfm_880k",
+        encoding="mfm",
+        filesystem="amiga_ffs",
+        confidence=1.0,
+        evidence=[],
+    )
+    monkeypatch.setattr(services, "list_files", lambda *_args, **_kwargs: [])
+    window._update_advanced_context()
+
+    monkeypatch.setattr(
+        window,
+        "_roundtrip_options_dialog",
+        lambda _default_to, _default_back: {
+            "to": "raw",
+            "back_to": "adf",
+            "work_dir": tmp_path / "roundtrip-work",
+            "json_out": Path("disk-roundtrip.json"),
+        },
+    )
+    monkeypatch.setattr(window, "_run_cli", lambda args: captured.setdefault("args", args))
+
+    window.roundtrip_dialog()
+
+    assert captured["args"] == [
+        "roundtrip",
+        str(source),
+        "--to",
+        "raw",
+        "--back-to",
+        "adf",
+        "--work-dir",
+        str(tmp_path / "roundtrip-work"),
+        "--json-out",
+        str(tmp_path / "disk-roundtrip.json"),
+        "--layout",
+        "amiga_mfm_880k",
+        "--encoding",
+        "mfm",
+    ]
+    window.close()
+
+
 def test_disk_map_widget_detects_highlighted_sector() -> None:
     widget = DiskMapWidget()
     widget.set_disk_map(

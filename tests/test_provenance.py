@@ -104,6 +104,7 @@ def test_help_mentions_real_world_examples() -> None:
     convert_help = runner.invoke(app, ["convert", "--help"])
     patch_help = runner.invoke(app, ["patch", "--help"])
     compare_help = runner.invoke(app, ["compare", "--help"])
+    roundtrip_help = runner.invoke(app, ["roundtrip", "--help"])
 
     assert convert_help.exit_code == 0
     assert "disk.img --layout ibm_mfm_720k --to imd" in convert_help.output
@@ -111,3 +112,5 @@ def test_help_mentions_real_world_examples() -> None:
     assert "T:H:S:HEX" in patch_help.output
     assert compare_help.exit_code == 0
     assert "--prov-out" in compare_help.output
+    assert roundtrip_help.exit_code == 0
+    assert "disk.adf --to raw --back-to adf" in roundtrip_help.output

@@ -77,6 +77,8 @@ python3 scripts/install_fluxctl.py
 - **doctor**: check the local installation and optional helper integrations.
 - **probe**: detect encoding, layout, and filesystem (where detectable) for SCP and flat images.
 - **compare**: hash + byte diff two images; SCP inputs are decoded first.
+- **roundtrip**: convert through an intermediate format and verify decoded-sector
+  hashes after each leg.
 - **qc**: generate quality control reports (JSON or text).
 - **visualize**: render ASCII or SVG disk maps.
 - **extract**: detect filesystems and extract files or raw sectors.
@@ -102,6 +104,15 @@ fluxctl probe disk.scp
 # Compare two images (SCP decoded on the fly)
 fluxctl compare a.scp b.img --json-out diff.json
 fluxctl compare before.img after.img
+
+# Verify conversion losslessness through decoded sector hashes. Round-trip
+# checks compare reconstructed sector bytes, not raw flux timing bytes.
+fluxctl roundtrip amiga.scp --layout amiga_mfm_880k --to adf --json-out roundtrip.json
+fluxctl roundtrip disk.adf --to raw --back-to adf --work-dir /tmp/fluxctl-roundtrip
+
+# Planned once SCP export exists:
+# fluxctl roundtrip disk.adf --to scp --back-to adf
+# fluxctl roundtrip disk.img --layout ibm_mfm_720k --to scp --back-to raw
 
 # Quality reports and maps
 fluxctl qc disk.scp --json-out qc.json
