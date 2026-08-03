@@ -201,6 +201,29 @@ layout before pressing Convert.
 Flag any conversion that silently chooses FAT12 for Commodore/Amiga media, loses
 head geometry, or reports success while output cannot be reopened.
 
+Also use the Studio `Round Trip...` action after important conversions. Choose
+the same intermediate format as the conversion target, keep intermediates when
+you want to inspect the generated images, and optionally save the JSON report.
+The Jobs panel should show the same `Forward check` and `Round-trip check`
+results as the CLI.
+
+## CLI Round-Trip Tests
+
+Use `fluxctl roundtrip` when checking whether a conversion preserves decoded
+sector content. These tests compare the sector image reconstructed from each
+step, not the raw container bytes.
+
+| Workflow | Command shape | Expected result |
+| --- | --- | --- |
+| SCP to emulator image | `fluxctl roundtrip source.scp --layout amiga_mfm_880k --to adf --json-out roundtrip.json` | Forward and round-trip checks both report `MATCH`. |
+| Flat image through raw | `fluxctl roundtrip source.adf --to raw --back-to adf --work-dir scratch` | The final decoded hash matches the original. |
+| Future SCP export | `fluxctl roundtrip source.adf --to scp --back-to adf` | Once SCP export exists, the generated SCP should decode back to the same sector image. |
+| Future raw-to-SCP export | `fluxctl roundtrip source.img --layout ibm_mfm_720k --to scp --back-to raw` | Once SCP export exists, the generated SCP should decode back to the same raw sector bytes. |
+
+Flag any `DIFFER` result where the source image has no weak/missing/bad sector
+warnings, or any workflow that claims success but produces an output image that
+cannot be probed/listed.
+
 ## Advanced Mode Tests
 
 | Area | Steps | Expected result |

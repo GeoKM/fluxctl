@@ -17,7 +17,10 @@ try:  # pragma: no cover - exercised only when GUI dependencies are installed.
         QApplication,
         QAbstractItemView,
         QComboBox,
+        QDialog,
+        QDialogButtonBox,
         QFileDialog,
+        QFormLayout,
         QFrame,
         QGridLayout,
         QHBoxLayout,
@@ -538,6 +541,7 @@ class FluxctlStudio(QMainWindow):
             ("Render Map", self.run_map),
             ("List Files", self.run_list_files),
             ("Convert...", self.convert_dialog),
+            ("Round Trip...", self.roundtrip_dialog),
         ]:
             button = QPushButton(text)
             button.clicked.connect(handler)
@@ -711,6 +715,7 @@ class FluxctlStudio(QMainWindow):
             ("Patch...", self.patch_dialog),
             ("Compare...", self.compare_dialog),
             ("Convert...", self.convert_dialog),
+            ("Round Trip...", self.roundtrip_dialog),
             ("Open Provenance...", self.open_provenance),
         ]:
             button = QPushButton(text)
@@ -1196,6 +1201,17 @@ class FluxctlStudio(QMainWindow):
                 return "g64"
             if layout_id == "amiga_mfm_880k":
                 return "adf"
+            return "raw"
+        return "raw"
+
+    def _default_roundtrip_back_exporter_for_image(self, kind: str) -> str:
+        if kind in {"img", "raw", "scp", "imd"}:
+            return "raw"
+        if kind in {"adf", "d64", "g64"}:
+            return kind
+        if kind == "d71":
+            return "d64"
+        if kind == "d81":
             return "raw"
         return "raw"
 
@@ -1963,6 +1979,119 @@ class FluxctlStudio(QMainWindow):
             args.extend(["--layout", layout])
         args.extend(["--encoding", self._selected_encoding()])
         self._run_cli(args)
+
+    def roundtrip_dialog(self) -> None:
+        if not self._require_image():
+            return
+        assert self.current_path is not None
+        current_kind = self.current_summary.kind if self.current_summary else self.current_path.suffix.lower().lstrip(".")
+        default_to = self.export_combo.currentText() if hasattr(self, "export_combo") else "raw"
+        if not default_to:
+            default_to = self._default_exporter_for_image(
+                current_kind,
+                self.current_summary.layout_id if self.current_summary else "",
+                self.current_summary.encoding if self.current_summary else "",
+            )
+        default_back = self._default_roundtrip_back_exporter_for_image(current_kind)
+        options = self._roundtrip_options_dialog(default_to, default_back)
+        if options is None:
+            return
+
+        args = ["roundtrip", str(self.current_path), "--to", options["to"]]
+        if options.get("back_to"):
+            args.extend(["--back-to", options["back_to"]])
+        work_dir = options.get("work_dir")
+        if work_dir:
+            args.extend(["--work-dir", str(self._resolve_source_relative_path(Path(str(work_dir))))])
+        json_out = options.get("json_out")
+        if json_out:
+            args.extend(["--json-out", str(self._resolve_source_relative_path(Path(str(json_out))))])
+        layout = self._selected_layout()
+        if layout:
+            args.extend(["--layout", layout])
+        args.extend(["--encoding", self._selected_encoding()])
+        self._run_cli(args)
+
+    def _roundtrip_options_dialog(self, default_to: str, default_back: str) -> Optional[dict[str, object]]:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Round Trip Conversion Check")
+        layout = QVBoxLayout(dialog)
+        intro = QLabel(
+            "Convert to an intermediate format, convert back, then compare decoded sector hashes. "
+            "This confirms sector-image fidelity rather than raw flux timing equality."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        form = QFormLayout()
+        exporters = ["raw", "imd", "adf", "d64", "g64"]
+        to_combo = QComboBox()
+        to_combo.addItems(exporters)
+        self._select_combo_text(to_combo, default_to)
+        back_combo = QComboBox()
+        back_combo.addItem("Auto", "")
+        back_combo.addItems(exporters)
+        self._select_combo_text(back_combo, default_back)
+        work_dir_input = QLineEdit("")
+        report_input = QLineEdit("")
+        work_row = QHBoxLayout()
+        work_row.addWidget(work_dir_input, 1)
+        work_browse = QPushButton("Browse...")
+        work_row.addWidget(work_browse)
+        report_row = QHBoxLayout()
+        report_row.addWidget(report_input, 1)
+        report_browse = QPushButton("Browse...")
+        report_row.addWidget(report_browse)
+
+        def choose_work_dir() -> None:
+            start = str(self.current_path.parent) if self.current_path is not None else ""
+            selected = QFileDialog.getExistingDirectory(dialog, "Keep intermediate images in folder", start)
+            if selected:
+                work_dir_input.setText(selected)
+
+        def choose_report() -> None:
+            default = "roundtrip.json"
+            if self.current_path is not None:
+                default = str(self.current_path.parent / f"{self.current_path.stem}-roundtrip.json")
+            selected, _ = QFileDialog.getSaveFileName(dialog, "Save round-trip JSON report", default, "JSON (*.json);;All files (*)")
+            if selected:
+                report_input.setText(selected)
+
+        work_browse.clicked.connect(choose_work_dir)
+        report_browse.clicked.connect(choose_report)
+        form.addRow("Intermediate format", to_combo)
+        form.addRow("Return format", back_combo)
+        form.addRow("Keep intermediates", work_row)
+        form.addRow("JSON report", report_row)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        result: dict[str, object] = {"to": to_combo.currentText()}
+        back_to = str(back_combo.currentData() or "")
+        if back_to:
+            result["back_to"] = back_to
+        work_dir = work_dir_input.text().strip()
+        if work_dir:
+            result["work_dir"] = Path(work_dir)
+        report = report_input.text().strip()
+        if report:
+            report_path = Path(report)
+            if report_path.suffix == "":
+                report_path = report_path.with_suffix(".json")
+            if not report_path.is_absolute() and self.current_path is not None:
+                report_path = self.current_path.parent / report_path
+            result["json_out"] = report_path
+        return result
+
+    def _resolve_source_relative_path(self, path: Path) -> Path:
+        if path.is_absolute() or self.current_path is None:
+            return path
+        return self.current_path.parent / path
 
     def _default_converted_output_path(self, suffix: str) -> Path:
         if self.current_path is None:

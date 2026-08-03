@@ -290,3 +290,63 @@ def test_convert_scp_auto_detects_layout_before_decoding(tmp_path: Path) -> None
     provenance = json.loads(out_path.with_suffix(out_path.suffix + ".provenance.json").read_text())
     assert provenance["parameters"]["resolved_layout"] == "commodore_gcr_1541_170k"
     assert provenance["parameters"]["encoding"] == "gcr"
+
+
+def test_convert_amiga_scp_to_adf_preserves_filesystem(tmp_path: Path) -> None:
+    scp_fixture = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.scp")
+    out_path = tmp_path / "amiga.adf"
+
+    result = runner.invoke(
+        app,
+        [
+            "convert",
+            str(scp_fixture),
+            "--to",
+            "adf",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert out_path.stat().st_size == 901120
+
+    list_result = runner.invoke(app, ["extract", str(out_path), "--list"])
+
+    assert list_result.exit_code == 0, list_result.output
+    assert "C\t<DIR>" in list_result.output
+    assert "Installer\t61640 bytes" in list_result.output
+
+
+def test_roundtrip_flat_adf_through_raw_matches(tmp_path: Path) -> None:
+    adf_fixture = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.adf")
+    report_path = tmp_path / "roundtrip.json"
+    work_dir = tmp_path / "work"
+
+    result = runner.invoke(
+        app,
+        [
+            "roundtrip",
+            str(adf_fixture),
+            "--to",
+            "raw",
+            "--back-to",
+            "adf",
+            "--layout",
+            "amiga_mfm_880k",
+            "--work-dir",
+            str(work_dir),
+            "--json-out",
+            str(report_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Forward check: MATCH" in result.output
+    assert "Round-trip check: MATCH" in result.output
+    report = json.loads(report_path.read_text())
+    assert report["forward_match"] is True
+    assert report["roundtrip_match"] is True
+    assert report["layout"] == "amiga_mfm_880k"
+    assert Path(report["first_path"]).exists()
+    assert Path(report["final_path"]).exists()
