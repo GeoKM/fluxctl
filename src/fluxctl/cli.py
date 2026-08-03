@@ -723,7 +723,10 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
     if ext == ".imd":
         tracks, geom, _meta = load_imd_image(path)
         image = TrackSectorImage(tracks, bytes_per_sector=geom.sector_size)
-        image.set_geometry(geom.spt or geom.tracks, geom.heads)
+        sector_base = int(layout_desc.id_rules.get("sector_number_base", 1)) if layout_desc else 1
+        image.set_geometry(geom.spt or geom.tracks, geom.heads, sector_base)
+        if layout_desc:
+            image.layout = layout_desc
         return image
     if layout_desc:
         track_data = _decode_tracks(path, layout_id, encoding=encoding)
@@ -1298,7 +1301,10 @@ def _prepare_convert_payload(path: Path, to: str, layout: Optional[str], encodin
     elif path.suffix.lower() == ".imd":
         track_data, imd_geom, _meta = load_imd_image(path)
         image_obj = TrackSectorImage(track_data, bytes_per_sector=imd_geom.sector_size)
-        image_obj.set_geometry(imd_geom.spt or imd_geom.tracks, imd_geom.heads)
+        sector_base = int(layout_desc.id_rules.get("sector_number_base", 1)) if layout_desc else 1
+        image_obj.set_geometry(imd_geom.spt or imd_geom.tracks, imd_geom.heads, sector_base)
+        if layout_desc:
+            image_obj.layout = layout_desc
     elif layout_desc:
         image_obj = _prepare_image(path, layout_desc.layout_id, decoder_used)
         if isinstance(image_obj, TrackSectorImage):

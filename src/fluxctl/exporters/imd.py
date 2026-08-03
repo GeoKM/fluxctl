@@ -61,16 +61,16 @@ class IMDExporter:
             for sector_id in sector_ids:
                 sector = sector_map.get(sector_id)
                 stype, encoded = self._encode_sector(sector, sector_size)
-                if stype in (0x03, 0x04):
+                if stype in (0x02, 0x04, 0x06, 0x08):
                     self._padded_missing = self._padded_missing or sector is None or not sector.data
                 sector_types.append(stype)
                 sector_payloads.append(encoded)
 
             payload.extend(bytes([self._mode_for_track(ts), ts.track, ts.head, len(sector_ids), size_code]))
             payload.extend(bytes(sector_ids))
-            payload.extend(bytes(sector_types))
             for stype, encoded in zip(sector_types, sector_payloads):
-                if stype in (0x03, 0x04):
+                payload.append(stype)
+                if stype in (0x02, 0x04, 0x06, 0x08):
                     payload.extend(encoded[:1])
                 elif stype == 0x00:
                     payload.extend(b"")
@@ -130,17 +130,19 @@ class IMDExporter:
 
     def _encode_sector(self, sector: Sector | None, sector_size: int) -> tuple[int, bytes]:
         if sector is None or not sector.data:
-            return (0x03, bytes([0xF6]))
+            return (0x06, bytes([0xF6]))
         padded = sector.data
         if len(padded) < sector_size:
             padded = padded.ljust(sector_size, b"\x00")
         if len(set(padded)) == 1:
             fill = padded[:1]
-            return (0x03 if not sector.deleted else 0x04, fill)
+            if not sector.crc_ok:
+                return (0x08 if sector.deleted else 0x06, fill)
+            return (0x04 if sector.deleted else 0x02, fill)
         if not sector.crc_ok:
-            return (0x05, padded)
+            return (0x07 if sector.deleted else 0x05, padded)
         if sector.deleted:
-            return (0x02, padded)
+            return (0x03, padded)
         return (0x01, padded)
 
 

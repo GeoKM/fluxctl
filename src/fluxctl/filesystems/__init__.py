@@ -81,7 +81,7 @@ class TrackSectorImage:
     def __init__(self, tracks: Sequence[TrackSectors], bytes_per_sector: Optional[int] = None):
         self.tracks = list(tracks)
         self.bytes_per_sector = bytes_per_sector or self._infer_sector_size()
-        self._geometry: Optional[Tuple[int, int]] = None
+        self._geometry: Optional[Tuple[int, int, int]] = None
         self._sector_lookup = self._build_lookup()
 
     def _infer_sector_size(self) -> int:
@@ -99,8 +99,8 @@ class TrackSectorImage:
             raise FilesystemError("No sectors available for filesystem access")
         return lookup
 
-    def set_geometry(self, sectors_per_track: int, heads: int) -> None:
-        self._geometry = (sectors_per_track, heads)
+    def set_geometry(self, sectors_per_track: int, heads: int, sector_base: int = 1) -> None:
+        self._geometry = (sectors_per_track, heads, sector_base)
 
     def _chs_for_lba(self, lba: int) -> Tuple[int, int, int]:
         if self._geometry is None:
@@ -108,11 +108,11 @@ class TrackSectorImage:
             if lba < 0 or lba >= len(keys):
                 raise FilesystemError("Geometry unknown; LBA exceeds available sectors")
             return keys[lba]
-        sectors_per_track, heads = self._geometry
+        sectors_per_track, heads, sector_base = self._geometry
         track = lba // (sectors_per_track * heads)
         rem = lba % (sectors_per_track * heads)
         head = rem // sectors_per_track
-        sector_id = (rem % sectors_per_track) + 1
+        sector_id = (rem % sectors_per_track) + sector_base
         return (track, head, sector_id)
 
     def read_sector(self, lba: int, count: int = 1) -> bytes:

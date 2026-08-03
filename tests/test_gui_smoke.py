@@ -155,6 +155,8 @@ def test_convert_dialog_defaults_output_next_to_source(monkeypatch, tmp_path) ->
     captured: dict[str, object] = {}
     window.current_path = source
 
+    monkeypatch.setattr(window, "_choose_convert_exporter", lambda *_args: "raw")
+
     def fake_save(_parent, _title, default_name, _filter):
         captured["default_name"] = default_name
         return ("converted.img", "")
@@ -166,6 +168,86 @@ def test_convert_dialog_defaults_output_next_to_source(monkeypatch, tmp_path) ->
 
     assert captured["default_name"] == str(tmp_path / "disk-converted.img")
     assert captured["args"][5] == str(tmp_path / "converted.img")
+    window.close()
+
+
+def test_convert_dialog_can_choose_raw_for_amiga_scp(monkeypatch, tmp_path) -> None:
+    window = FluxctlStudio()
+    source = tmp_path / "amiga.scp"
+    source.write_bytes(b"")
+    captured: dict[str, object] = {}
+    window.current_path = source
+    window.current_summary = services.ImageSummary(
+        path=str(source),
+        size=0,
+        kind="scp",
+        layout_id="amiga_mfm_880k",
+        encoding="mfm",
+        filesystem="amiga_ffs",
+        confidence=1.0,
+        evidence=[],
+    )
+
+    monkeypatch.setattr(window, "_choose_convert_exporter", lambda *_args: "raw")
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda _parent, _title, default_name, _filter: (default_name, ""),
+    )
+    monkeypatch.setattr(window, "_run_cli", lambda args: captured.setdefault("args", args))
+
+    window.convert_dialog()
+
+    assert captured["args"] == [
+        "convert",
+        str(source),
+        "--to",
+        "raw",
+        "--out",
+        str(tmp_path / "amiga-converted.img"),
+        "--layout",
+        "amiga_mfm_880k",
+        "--encoding",
+        "mfm",
+    ]
+    window.close()
+
+
+def test_convert_dialog_warns_for_amiga_imd_target(monkeypatch, tmp_path) -> None:
+    window = FluxctlStudio()
+    source = tmp_path / "amiga.scp"
+    source.write_bytes(b"")
+    captured: dict[str, object] = {}
+    warnings: list[str] = []
+    window.current_path = source
+    window.current_summary = services.ImageSummary(
+        path=str(source),
+        size=0,
+        kind="scp",
+        layout_id="amiga_mfm_880k",
+        encoding="mfm",
+        filesystem="amiga_ffs",
+        confidence=1.0,
+        evidence=[],
+    )
+
+    monkeypatch.setattr(window, "_choose_convert_exporter", lambda *_args: "imd")
+    monkeypatch.setattr(window, "_warn", lambda message: warnings.append(message))
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda _parent, _title, default_name, _filter: (default_name, ""),
+    )
+    monkeypatch.setattr(window, "_run_cli", lambda args: captured.setdefault("args", args))
+
+    window.convert_dialog()
+
+    assert warnings == [
+        "IMD will store decoded Amiga sectors only. It will not preserve Amiga physical track "
+        "encoding. Use ADF for native Amiga images or SCP for preservation."
+    ]
+    assert captured["args"][3] == "imd"
+    assert captured["args"][5] == str(tmp_path / "amiga-converted.imd")
     window.close()
 
 

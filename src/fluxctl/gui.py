@@ -1204,6 +1204,21 @@ class FluxctlStudio(QMainWindow):
             return "raw"
         return "raw"
 
+    def _exporter_choices_for_image(self, kind: str, layout_id: str = "", encoding: str = "") -> list[tuple[str, str]]:
+        choices = [
+            ("raw", "Raw sector image (.img)"),
+            ("imd", "ImageDisk (.imd)"),
+        ]
+        if layout_id == "amiga_mfm_880k" or kind == "adf":
+            choices.append(("adf", "Amiga Disk File (.adf)"))
+        if layout_id.startswith("commodore_gcr_1541") or kind == "d64":
+            choices.append(("d64", "Commodore 1541 image (.d64)"))
+        if encoding == "gcr" or kind == "g64":
+            choices.append(("g64", "Commodore GCR track image (.g64)"))
+        if kind in {"adf", "d64", "g64"} and all(choice[0] != kind for choice in choices):
+            choices.append((kind, f"Same container (.{kind})"))
+        return choices
+
     def _default_roundtrip_back_exporter_for_image(self, kind: str) -> str:
         if kind in {"img", "raw", "scp", "imd"}:
             return "raw"
@@ -1955,9 +1970,21 @@ class FluxctlStudio(QMainWindow):
     def convert_dialog(self) -> None:
         if not self._require_image():
             return
-        exporter = self.export_combo.currentText() if hasattr(self, "export_combo") else "raw"
+        assert self.current_path is not None
+        current_kind = self.current_summary.kind if self.current_summary else self.current_path.suffix.lower().lstrip(".")
+        layout_id = self.current_summary.layout_id if self.current_summary else ""
+        encoding = self.current_summary.encoding if self.current_summary else self._selected_encoding()
+        default_exporter = self.export_combo.currentText() if hasattr(self, "export_combo") else ""
+        if not default_exporter:
+            default_exporter = self._default_exporter_for_image(current_kind, layout_id, encoding)
+        exporter = self._choose_convert_exporter(default_exporter, current_kind, layout_id, encoding)
         if not exporter:
-            exporter = "raw"
+            return
+        if exporter == "imd" and self._is_amiga_context(current_kind, layout_id):
+            self._warn(
+                "IMD will store decoded Amiga sectors only. It will not preserve Amiga physical track "
+                "encoding. Use ADF for native Amiga images or SCP for preservation."
+            )
         suffix = ".img" if exporter == "raw" else f".{exporter}"
         default_output = self._default_converted_output_path(suffix)
         filename, _ = QFileDialog.getSaveFileName(
@@ -1979,6 +2006,31 @@ class FluxctlStudio(QMainWindow):
             args.extend(["--layout", layout])
         args.extend(["--encoding", self._selected_encoding()])
         self._run_cli(args)
+
+    def _choose_convert_exporter(self, default_exporter: str, kind: str, layout_id: str, encoding: str) -> str:
+        choices = self._exporter_choices_for_image(kind, layout_id, encoding)
+        labels = [label for _exporter, label in choices]
+        default_index = next(
+            (index for index, (exporter, _label) in enumerate(choices) if exporter == default_exporter),
+            0,
+        )
+        selected, ok = QInputDialog.getItem(
+            self,
+            "Convert Target",
+            "Convert image to:",
+            labels,
+            default_index,
+            False,
+        )
+        if not ok:
+            return ""
+        for exporter, label in choices:
+            if label == selected:
+                return exporter
+        return ""
+
+    def _is_amiga_context(self, kind: str, layout_id: str) -> bool:
+        return kind == "adf" or layout_id.startswith("amiga_")
 
     def roundtrip_dialog(self) -> None:
         if not self._require_image():

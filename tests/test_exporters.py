@@ -11,6 +11,7 @@ from fluxctl.exporters.imd import IMDExporter
 from fluxctl.exporters.raw_img import RawIMGExporter
 from fluxctl.exceptions import ExportError
 from fluxctl.filesystems import RawSectorImage, TrackSectorImage
+from fluxctl.imd import load_imd_image
 from fluxctl.layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from fluxctl.scp import sha256_file
 from fluxctl.sector.models import Sector, TrackSectors
@@ -130,6 +131,11 @@ def test_imd_export_from_flat_img_uses_layout(tmp_path: Path, img_fixture: Path)
     provenance = json.loads(out_path.with_suffix(out_path.suffix + ".provenance.json").read_text())
     assert provenance["parameters"]["layout"] == "ibm_mfm_720k"
     assert provenance["encoder"] == "imd"
+
+    layout = ensure_layout_loaded("ibm_mfm_720k")
+    tracks, geometry, _meta = load_imd_image(out_path)
+    assert len(tracks) == layout.tracks * layout.sides
+    assert geometry.sector_size == 512
 
 
 def test_exporters_support_track_image(img_fixture: Path, layout_720k) -> None:
@@ -310,6 +316,43 @@ def test_convert_amiga_scp_to_adf_preserves_filesystem(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert out_path.stat().st_size == 901120
+
+    list_result = runner.invoke(app, ["extract", str(out_path), "--list"])
+
+    assert list_result.exit_code == 0, list_result.output
+    assert "C\t<DIR>" in list_result.output
+    assert "Installer\t61640 bytes" in list_result.output
+
+
+def test_convert_amiga_adf_to_imd_can_be_read_back(tmp_path: Path) -> None:
+    adf_fixture = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.adf")
+    out_path = tmp_path / "amiga.imd"
+
+    result = runner.invoke(
+        app,
+        [
+            "convert",
+            str(adf_fixture),
+            "--layout",
+            "amiga_mfm_880k",
+            "--to",
+            "imd",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    tracks, geometry, _meta = load_imd_image(out_path)
+    assert len(tracks) == 160
+    assert geometry.heads == 2
+    assert geometry.spt == 11
+    assert geometry.sector_size == 512
+
+    probe_result = runner.invoke(app, ["probe", str(out_path)])
+
+    assert probe_result.exit_code == 0, probe_result.output
+    assert "amiga_mfm_880k" in probe_result.output
 
     list_result = runner.invoke(app, ["extract", str(out_path), "--list"])
 
