@@ -188,7 +188,9 @@ possible and note any validation or free-space disagreement.
 ## Convert Workflow Tests
 
 For every conversion, confirm the default output format matches the source
-layout before pressing Convert.
+layout before pressing Convert. The Convert dialog should also let the tester
+choose another suitable target format, such as raw `.img` for an Amiga `.scp`,
+before the save-location dialog appears.
 
 | Source | Expected default | Check |
 | --- | --- | --- |
@@ -196,10 +198,13 @@ layout before pressing Convert.
 | 1571 GCR `.scp` | GCR-preserving or layout-appropriate Commodore output. | Does not collapse side/head geometry. |
 | IBM MFM `.scp/.imd` | Raw `.img` or `.imd` as selected. | Output probes as FAT12 where filesystem exists. |
 | Amiga MFM `.scp` | `.adf` when reconstruction is good enough. | Output probes as Amiga OFS/FFS. |
+| Amiga MFM `.scp` to raw | `.img` when the tester chooses raw sector image. | Output probes as Amiga OFS/FFS with `--layout amiga_mfm_880k`. |
+| Amiga MFM `.scp` to IMD | `.imd` remains available as a decoded-sector interchange target. | Studio warns that IMD does not preserve Amiga physical track encoding; regenerated IMD should QC good and list files, but ADF remains the recommended Amiga target. |
 | DisplayWriter FM `.scp/.imd` | `.imd` or raw as appropriate. | Mixed sector sizes are represented or rejected clearly. |
 
-Flag any conversion that silently chooses FAT12 for Commodore/Amiga media, loses
-head geometry, or reports success while output cannot be reopened.
+Flag any conversion that silently chooses FAT12 for Commodore/Amiga media,
+does not offer an appropriate alternate target, loses head geometry, or reports
+success while output cannot be reopened.
 
 Also use the Studio `Round Trip...` action after important conversions. Choose
 the same intermediate format as the conversion target, keep intermediates when

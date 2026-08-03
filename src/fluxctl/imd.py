@@ -257,7 +257,8 @@ def load_imd_image(path: Path, *, fill: int = IMD_FILL_DEFAULT) -> Tuple[List[Tr
             sectors = tracks_data.get((cyl, head), [])
             present_ids = {s.sector_id for s in sectors}
             # Fill missing logical sector IDs so geometry is contiguous.
-            for sid in range(1, spt + 1):
+            sector_base = 0 if 0 in present_ids else 1
+            for sid in range(sector_base, sector_base + spt):
                 if sid in present_ids:
                     continue
                 sectors.append(
