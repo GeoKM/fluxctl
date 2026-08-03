@@ -691,6 +691,18 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
     layout_desc = ensure_layout_loaded(layout_id) if layout_id else None
     ext = path.suffix.lower()
 
+    if layout_desc and ext == ".d81" and layout_desc.layout_id == "commodore_mfm_1581_800k":
+        from .exporters.d81 import d81_bytes_to_physical_tracks
+
+        image = TrackSectorImage(d81_bytes_to_physical_tracks(path.read_bytes()), bytes_per_sector=layout_desc.sector_size)
+        image.layout = layout_desc
+        image.set_geometry(
+            layout_desc.sectors_per_track,
+            layout_desc.sides,
+            int(layout_desc.id_rules.get("sector_number_base", 1)),
+        )
+        return image
+
     # For flat images with a known layout, build TrackSectorImage directly from the blob
     # instead of trying to decode as SCP.
     if layout_desc and ext not in {".scp", ".imd"}:
@@ -1261,6 +1273,9 @@ def _prepare_convert_payload(path: Path, to: str, layout: Optional[str], encodin
     load_builtin_exporters()
     layout_desc = ensure_layout_loaded(layout) if layout else None
     decoder_used = layout_desc.encoding if layout_desc else encoding
+    if layout_desc is None and path.suffix.lower() == ".d81":
+        layout_desc = ensure_layout_loaded("commodore_mfm_1581_800k")
+        decoder_used = layout_desc.encoding
     track_data: Optional[list[TrackSectors]] = None
     track_nibbles: list[TrackNibbles] = []
 
@@ -1340,10 +1355,8 @@ def _infer_roundtrip_back_exporter(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix in {".img", ".ima", ".raw", ".scp", ".imd"}:
         return "raw"
-    if suffix in {".adf", ".d64", ".g64"}:
+    if suffix in {".adf", ".d64", ".d71", ".g64"}:
         return suffix.lstrip(".")
-    if suffix == ".d71":
-        return "d64"
     if suffix == ".d81":
         return "raw"
     return "raw"
@@ -1714,7 +1727,7 @@ def visualize(
 @_handle_cli_errors
 def convert(
     path: Path = typer.Argument(..., exists=True, readable=True),
-    to: str = typer.Option(..., "--to", help="Exporter key (raw, imd, adf, d64, g64)"),
+    to: str = typer.Option(..., "--to", help="Exporter key (raw, imd, adf, d64, d71, d81, g64)"),
     out: Path = typer.Option(..., "--out", help="Destination image path"),
     layout: Optional[str] = typer.Option(None, "--layout", help="Layout ID for SCP reconstruction or flat image geometry"),
     encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding for SCP sources"),
@@ -1726,6 +1739,8 @@ def convert(
     fluxctl convert disk.scp --layout ibm_mfm_720k --to raw --out disk.img
     fluxctl convert disk.img --layout ibm_mfm_720k --to imd --out disk.imd
     fluxctl convert c64.scp --layout commodore_gcr_1541_170k --to g64 --out disk.g64
+    fluxctl convert c128.scp --layout commodore_gcr_1571_341k --to d71 --out disk.d71
+    fluxctl convert 1581.scp --layout commodore_mfm_1581_800k --to d81 --out disk.d81
     """
 
     result = _prepare_convert_payload(path, to, layout, encoding)
@@ -1766,7 +1781,7 @@ def convert(
 @_handle_cli_errors
 def roundtrip(
     path: Path = typer.Argument(..., exists=True, readable=True),
-    to: str = typer.Option(..., "--to", help="First exporter key to test (raw, imd, adf, d64, g64)"),
+    to: str = typer.Option(..., "--to", help="First exporter key to test (raw, imd, adf, d64, d71, d81, g64)"),
     back_to: Optional[str] = typer.Option(
         None,
         "--back-to",

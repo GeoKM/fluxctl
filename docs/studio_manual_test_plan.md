@@ -195,7 +195,10 @@ before the save-location dialog appears.
 | Source | Expected default | Check |
 | --- | --- | --- |
 | 1541 GCR `.scp` | `.d64` where layout supports sector image export; `.g64` when preserving GCR track data is the better target. | Output probes as Commodore, not FAT12. |
-| 1571 GCR `.scp` | GCR-preserving or layout-appropriate Commodore output. | Does not collapse side/head geometry. |
+| 1571 GCR `.scp` | `.d71` when layout is `commodore_gcr_1571_341k`. | Does not collapse side/head geometry. |
+| 1581 MFM `.scp` | `.d81` when layout is `commodore_mfm_1581_800k`. | Output probes as CBM DOS 1581 and lists files. |
+| 1581 `.img` | `.d81` when the tester chooses Commodore 1581 image. | Output matches the 819,200-byte D81 flat sector image. |
+| 1581 `.d81` | Raw `.img` by default. | Output matches the original 819,200-byte sector image. |
 | IBM MFM `.scp/.imd` | Raw `.img` or `.imd` as selected. | Output probes as FAT12 where filesystem exists. |
 | Amiga MFM `.scp` | `.adf` when reconstruction is good enough. | Output probes as Amiga OFS/FFS. |
 | Amiga MFM `.scp` to raw | `.img` when the tester chooses raw sector image. | Output probes as Amiga OFS/FFS with `--layout amiga_mfm_880k`. |

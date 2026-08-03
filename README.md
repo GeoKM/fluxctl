@@ -82,7 +82,7 @@ python3 scripts/install_fluxctl.py
 - **qc**: generate quality control reports (JSON or text).
 - **visualize**: render ASCII or SVG disk maps.
 - **extract**: detect filesystems and extract files or raw sectors.
-- **convert**: export to raw, IMD, ADF, D64, and G64 images.
+- **convert**: export to raw, IMD, ADF, D64, D71, D81, and G64 images.
 - **sectors/dump/patch**: per-track listing, hex dump, and simple patching helpers.
 - **studio**: optional desktop GUI for guided and advanced workflows.
 
@@ -124,6 +124,9 @@ fluxctl convert disk.scp --to raw --out disk.img --layout ibm_mfm_720k
 fluxctl convert disk.img --to imd --out disk.imd --layout ibm_mfm_720k
 fluxctl convert c64.scp --to d64 --out disk.d64
 fluxctl convert c64.scp --to g64 --out disk.g64 --layout commodore_gcr_1541_170k
+fluxctl convert c128.scp --to d71 --out disk.d71 --layout commodore_gcr_1571_341k
+fluxctl convert 1581.scp --to d81 --out disk.d81 --layout commodore_mfm_1581_800k
+fluxctl convert disk.d81 --to raw --out disk.img
 fluxctl convert disk.img --to raw --out copy.img
 
 # Extraction

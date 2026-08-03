@@ -142,8 +142,17 @@ def test_studio_defaults_scp_conversion_to_layout_appropriate_exporter() -> None
     window = FluxctlStudio()
 
     assert window._default_exporter_for_image("scp", "commodore_gcr_1541_170k", "gcr") == "d64"
-    assert window._default_exporter_for_image("scp", "commodore_gcr_1571_341k", "gcr") == "g64"
+    assert window._default_exporter_for_image("scp", "commodore_gcr_1571_341k", "gcr") == "d71"
+    assert window._default_exporter_for_image("scp", "commodore_mfm_1581_800k", "mfm") == "d81"
+    assert window._default_exporter_for_image("d71", "commodore_gcr_1571_341k", "gcr") == "d71"
+    assert window._default_exporter_for_image("d81", "commodore_mfm_1581_800k", "mfm") == "raw"
     assert window._default_exporter_for_image("scp", "ibm_mfm_720k", "mfm") == "raw"
+    assert ("d71", "Commodore 1571 image (.d71)") in window._exporter_choices_for_image(
+        "scp", "commodore_gcr_1571_341k", "gcr"
+    )
+    assert ("d81", "Commodore 1581 image (.d81)") in window._exporter_choices_for_image(
+        "scp", "commodore_mfm_1581_800k", "mfm"
+    )
 
     window.close()
 
