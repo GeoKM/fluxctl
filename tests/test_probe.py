@@ -41,6 +41,14 @@ FIXTURE_OSBORNE_CPM22_IMD = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-
 FIXTURE_OSBORNE_WSTR_IMD = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-WSTR-200K.imd")
 FIXTURE_OSBORNE_CPM22_IMG = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-CPM22-200K.img")
 FIXTURE_OSBORNE_WSTR_IMG = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-WSTR-200K.img")
+FIXTURE_OSBORNE_CPM22_SCP = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-CPM22-200K.scp")
+FIXTURE_OSBORNE_WSTR_SCP = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-WSTR-200K.scp")
+FIXTURE_KAYPRO_CPM22_IMD = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-CPM22-200K.imd")
+FIXTURE_KAYPRO_WSTR_IMD = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-WSTR-200K.imd")
+FIXTURE_KAYPRO_CPM22_IMG = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-CPM22-200K.img")
+FIXTURE_KAYPRO_WSTR_IMG = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-WSTR-200K.img")
+FIXTURE_KAYPRO_CPM22_SCP = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-CPM22-200K.scp")
+FIXTURE_KAYPRO_WSTR_SCP = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-WSTR-200K.scp")
 
 
 def test_probe_includes_gcr_candidates() -> None:
@@ -249,11 +257,31 @@ def test_probe_supports_osborne_5inch_cpm_images() -> None:
         FIXTURE_OSBORNE_WSTR_IMD,
         FIXTURE_OSBORNE_CPM22_IMG,
         FIXTURE_OSBORNE_WSTR_IMG,
+        FIXTURE_OSBORNE_CPM22_SCP,
+        FIXTURE_OSBORNE_WSTR_SCP,
     ):
         result = runner.invoke(cli.app, ["probe", str(fixture)])
         assert result.exit_code == 0
         payload = json.loads(result.stdout)
         assert payload[0]["layout_id"] == "osborne_mfm_ssdd_200k"
+        assert payload[0]["encoding"] == "mfm"
+        assert payload[0]["filesystem"] == "cpm"
+
+
+def test_probe_supports_kaypro_5inch_cpm_images() -> None:
+    runner = CliRunner()
+    for fixture in (
+        FIXTURE_KAYPRO_CPM22_IMD,
+        FIXTURE_KAYPRO_WSTR_IMD,
+        FIXTURE_KAYPRO_CPM22_IMG,
+        FIXTURE_KAYPRO_WSTR_IMG,
+        FIXTURE_KAYPRO_CPM22_SCP,
+        FIXTURE_KAYPRO_WSTR_SCP,
+    ):
+        result = runner.invoke(cli.app, ["probe", str(fixture)])
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload[0]["layout_id"] == "kaypro_mfm_ssdd_40_200k"
         assert payload[0]["encoding"] == "mfm"
         assert payload[0]["filesystem"] == "cpm"
 

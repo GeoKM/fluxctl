@@ -516,7 +516,27 @@ def test_fat12_write_actions_enable_only_for_supported_flat_img() -> None:
     window._update_filesystem_write_actions()
 
     assert not window.file_import_button.isEnabled()
-    assert "FAT12 .img and CBM DOS .d64/.d71/.d81" in window.file_import_button.toolTip()
+    assert "modelled CP/M .img" in window.file_import_button.toolTip()
+
+    window.current_path = Path("/tmp/example.img")
+    window.current_summary = services.ImageSummary(
+        path="/tmp/example.img",
+        size=204800,
+        kind="img",
+        layout_id="kaypro_mfm_ssdd_40_200k",
+        encoding="mfm",
+        filesystem="cpm",
+        confidence=1.0,
+        evidence=[],
+    )
+    window._update_filesystem_write_actions()
+
+    assert not window.file_replace_button.isEnabled()
+    assert window.file_delete_button.isEnabled()
+    assert window.file_import_button.isEnabled()
+    assert not window.directory_import_button.isEnabled()
+    assert not window.directory_create_button.isEnabled()
+    assert "modelled CP/M flat .img" in window.file_import_button.toolTip()
 
     window.current_path = FIXTURE_IMG
     window.current_summary = services.ImageSummary(

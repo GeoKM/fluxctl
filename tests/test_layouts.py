@@ -25,3 +25,12 @@ def test_osborne_cpm_5inch_mfm_layout_loads():
     assert desc.tracks == 40
     assert desc.sectors_per_track == 5
     assert desc.sector_size == 1024
+
+
+def test_kaypro_cpm_5inch_mfm_layout_loads():
+    desc = ensure_layout_loaded("kaypro_mfm_ssdd_40_200k")
+    assert desc.encoding == "mfm"
+    assert desc.sides == 1
+    assert desc.tracks == 40
+    assert desc.sectors_per_track == 10
+    assert desc.sector_size == 512

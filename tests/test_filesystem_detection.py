@@ -13,6 +13,7 @@ FIXTURE_D71 = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C1
 FIXTURE_D71_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-MFM-C128CPM-340K.d71")
 FIXTURE_CPM_SRC1_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC1-256K.img")
 FIXTURE_CPM_SRC2_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC2-256K.img")
+FIXTURE_KAYPRO_CPM22_IMD = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-CPM22-200K.imd")
 
 
 def test_detects_1541_cbm_dos_with_strong_probe() -> None:
@@ -105,3 +106,15 @@ def test_detects_8inch_cpm_source_images_from_directory_records() -> None:
         assert detection.plugin is not None
         names = [entry.name for entry in detection.plugin.list_directory("/")]
         assert expected_name in names
+
+
+def test_detects_kaypro_cpm_before_rt11_false_positive() -> None:
+    load_builtin_layouts()
+    image = _prepare_image(FIXTURE_KAYPRO_CPM22_IMD, "kaypro_mfm_ssdd_40_200k", "mfm")
+
+    detection = detect_filesystem(image, path_name="not-rt11.imd")
+
+    assert detection.primary == "cpm"
+    assert detection.plugin is not None
+    names = [entry.name for entry in detection.plugin.list_directory("/")]
+    assert "STAT.COM" in names

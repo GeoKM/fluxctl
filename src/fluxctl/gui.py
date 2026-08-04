@@ -1273,6 +1273,18 @@ class FluxctlStudio(QMainWindow):
         if suffix == ".img" and filesystem == "fat12":
             reason = "Available for FAT12 flat .img images. Operations write a new image copy."
             return {button: (True, reason) for button in self._filesystem_write_buttons()}
+        if suffix == ".img" and filesystem == "cpm":
+            reason = (
+                "Available for modelled CP/M flat .img images. File import and delete write a new image copy. "
+                "Replace and directory actions are not implemented yet."
+            )
+            return {
+                self.file_replace_button: (False, reason),
+                self.file_delete_button: (True, reason),
+                self.file_import_button: (True, reason),
+                self.directory_import_button: (False, reason),
+                self.directory_create_button: (False, reason),
+            }
         if suffix in {".d64", ".d71"} and filesystem in {"cbm_dos", "cbm_dos_1571"}:
             unsupported = (
                 "This CBM DOS image supports root-level file import, replace, and delete in a new image copy. "
@@ -1301,7 +1313,7 @@ class FluxctlStudio(QMainWindow):
                 self.directory_create_button: (True, reason),
             }
         if suffix not in {".img", ".d64", ".d71", ".d81"}:
-            reason = "Write actions currently support FAT12 .img and CBM DOS .d64/.d71/.d81 images only."
+            reason = "Write actions currently support FAT12 .img, modelled CP/M .img, and CBM DOS .d64/.d71/.d81 images only."
         else:
             filesystem = self.current_summary.filesystem or "unknown"
             reason = f"Write actions are not available for filesystem {filesystem} in this container yet."

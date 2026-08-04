@@ -24,6 +24,7 @@ from .filesystem_detection import detect_filesystem
 from .filesystems import RawSectorImage, TrackSectorImage, load_builtin_filesystems
 from .filesystems.cbm_dos import CBMDOS
 from .filesystems.cbm_dos_1581 import CBMDOS1581
+from .filesystems.cpm import CPMFilesystem, cpm_disk_parameters_for_layout
 from .filesystems.fat12 import FAT12
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from .plugins import registry
@@ -269,6 +270,24 @@ BLANK_IMAGE_PRESETS: tuple[BlankImagePreset, ...] = tuple(
         901120,
         "Minimal empty AmigaDOS image with DOS boot marker.",
     ),
+    BlankImagePreset(
+        "cpm_osborne_200k_img",
+        "Osborne 1 CP/M SSDD 200K (.img)",
+        ".img",
+        "osborne_mfm_ssdd_200k",
+        "cpm",
+        204800,
+        "Formatted empty CP/M image for Osborne 1 SSDD 40-track MFM disks.",
+    ),
+    BlankImagePreset(
+        "cpm_kaypro_200k_img",
+        "Kaypro II CP/M SSDD 200K (.img)",
+        ".img",
+        "kaypro_mfm_ssdd_40_200k",
+        "cpm",
+        204800,
+        "Formatted empty CP/M image for Kaypro II SSDD 40-track MFM disks.",
+    ),
 )
 
 
@@ -295,6 +314,10 @@ def create_blank_image(preset_id: str, output_path: Path, *, overwrite: bool = F
         payload = _build_blank_1581_image()
     elif preset_id == "amiga_ofs_adf":
         payload = _build_blank_amiga_image()
+    elif preset_id == "cpm_osborne_200k_img":
+        payload = _build_blank_cpm_image("osborne_mfm_ssdd_200k")
+    elif preset_id == "cpm_kaypro_200k_img":
+        payload = _build_blank_cpm_image("kaypro_mfm_ssdd_40_200k")
     else:  # pragma: no cover - guarded by _blank_preset_by_id
         raise ValueError(f"Unsupported blank image preset: {preset_id}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -463,6 +486,24 @@ def _build_blank_amiga_image() -> bytes:
     root[0:4] = (2).to_bytes(4, "big")
     root[508:512] = (-2).to_bytes(4, "big", signed=True)
     image[880 * 512 : 881 * 512] = root
+    return bytes(image)
+
+
+def _build_blank_cpm_image(layout_id: str) -> bytes:
+    layout = ensure_layout_loaded(layout_id)
+    params = cpm_disk_parameters_for_layout(layout_id)
+    if params is None:  # pragma: no cover - guarded by caller presets
+        raise ValueError(f"No modelled CP/M DPB for {layout_id}")
+    image = bytearray(b"\xE5" * (layout.tracks * layout.sides * layout.sectors_per_track * layout.sector_size))
+    markers = {
+        "kaypro_mfm_ssdd_40_200k": b"FLUXCTL CPM KAYPROII",
+        "osborne_mfm_ssdd_200k": b"FLUXCTL CPM OSBORNE",
+    }
+    marker = markers.get(layout_id, b"FLUXCTL CPM")
+    image[: len(marker)] = marker
+    directory_start = params.reserved_tracks * params.sectors_per_track * params.sector_size
+    directory_size = params.directory_blocks * params.block_size
+    image[directory_start : directory_start + directory_size] = b"\xE5" * directory_size
     return bytes(image)
 
 
@@ -951,10 +992,16 @@ def delete_filesystem_entry_with_copy(
     suffix = path.suffix.lower()
     image_bytes = _read_source_for_mutation(path, output_path)
     if suffix == ".img":
-        filesystem = _probe_fat12_bytes(image_bytes)
-        entry = _find_entry(filesystem, fs_path)
-        patched = filesystem.delete_entry(image_bytes, fs_path)
-        filesystem_name = "fat12"
+        try:
+            filesystem = _probe_fat12_bytes(image_bytes)
+            entry = _find_entry(filesystem, fs_path)
+            patched = filesystem.delete_entry(image_bytes, fs_path)
+            filesystem_name = "fat12"
+        except ValueError:
+            filesystem = _probe_cpm_bytes(image_bytes, layout_id)
+            entry = _find_entry(filesystem, fs_path)
+            patched = filesystem.delete_entry(image_bytes, fs_path)
+            filesystem_name = "cpm"
     elif suffix in {".d64", ".d71"}:
         filesystem = _probe_cbm_dos_bytes(image_bytes)
         entries = filesystem.list_directory("/")
@@ -972,7 +1019,10 @@ def delete_filesystem_entry_with_copy(
         patched = filesystem.delete_entry(image_bytes, fs_path)
         filesystem_name = "cbm_dos_1581"
     else:
-        raise ValueError("Delete is currently supported only for FAT12 .img and CBM DOS .d64/.d71/.d81 images")
+        raise ValueError(
+            "Delete is currently supported only for FAT12 .img, modelled CP/M .img, "
+            "and CBM DOS .d64/.d71/.d81 images"
+        )
     _write_new_image_copy(output_path, patched)
     return MutationResult(str(output_path), "delete", 1, entry.size, filesystem_name)
 
@@ -1018,9 +1068,14 @@ def import_file_with_copy(
     suffix = path.suffix.lower()
     if suffix == ".img":
         image_bytes = _read_fat12_source_for_mutation(path, output_path)
-        filesystem = _probe_fat12_bytes(image_bytes)
-        patched = filesystem.import_file(image_bytes, directory, host_file.name, data)
-        filesystem_name = "fat12"
+        try:
+            filesystem = _probe_fat12_bytes(image_bytes)
+            patched = filesystem.import_file(image_bytes, directory, host_file.name, data)
+            filesystem_name = "fat12"
+        except ValueError:
+            filesystem = _probe_cpm_bytes(image_bytes, layout_id)
+            patched = filesystem.import_file(image_bytes, directory, host_file.name, data)
+            filesystem_name = "cpm"
     elif suffix in {".d64", ".d71"}:
         image_bytes = _read_source_for_mutation(path, output_path)
         filesystem = _probe_cbm_dos_bytes(image_bytes)
@@ -1084,6 +1139,21 @@ def _probe_fat12_bytes(image_bytes: bytes) -> FAT12:
     filesystem = FAT12()
     if not filesystem.probe(RawSectorImage(image_bytes)):
         raise ValueError("FAT12 mutation is currently supported only for FAT12 images")
+    return filesystem
+
+
+def _probe_cpm_bytes(image_bytes: bytes, layout_id: Optional[str]) -> CPMFilesystem:
+    if layout_id is None:
+        raise ValueError("CP/M import needs a modelled layout")
+    layout = ensure_layout_loaded(layout_id)
+    params = cpm_disk_parameters_for_layout(layout_id)
+    if params is None:
+        raise ValueError("CP/M import is currently supported only for modelled CP/M .img layouts")
+    filesystem = CPMFilesystem()
+    image = RawSectorImage(image_bytes, bytes_per_sector=params.sector_size)
+    image.layout = layout
+    if not filesystem.probe(image):
+        raise ValueError("CP/M import is currently supported only for formatted modelled CP/M images")
     return filesystem
 
 
