@@ -6,6 +6,7 @@ from typing import Optional
 
 from .filesystems import Filesystem, TrackSectorImage, load_builtin_filesystems
 from .filesystems.cbm_dos import CBMDOS
+from .filesystems.cpm import cpm_disk_parameters_for_layout
 from .plugins import registry
 
 
@@ -52,6 +53,16 @@ def detect_filesystem(image, *, path_name: str = "") -> FilesystemDetection:
     if layout_id.startswith("commodore_"):
         return _detect_commodore(image, layout_id)
 
+    cpm = registry.filesystem.get("cpm")
+    if cpm_disk_parameters_for_layout(layout_id) is not None and cpm and cpm.entry.probe(image):
+        return FilesystemDetection(
+            primary=_metadata_name("cpm", cpm.entry),
+            confidence=0.85,
+            evidence=[f"layout={layout_id}", "cpm_dpb_layout=1", "cpm_directory_probe=1"],
+            regions=[FilesystemRegion("disk", "cpm", ["CP/M directory entries at modelled DPB directory start"])],
+            plugin=cpm.entry,
+        )
+
     for key, plugin in registry.filesystem.items():
         fs = plugin.entry
         if key == "cpm":
@@ -64,7 +75,6 @@ def detect_filesystem(image, *, path_name: str = "") -> FilesystemDetection:
                 plugin=fs,
             )
 
-    cpm = registry.filesystem.get("cpm")
     if cpm and cpm.entry.probe(image):
         return FilesystemDetection(
             primary="cpm",

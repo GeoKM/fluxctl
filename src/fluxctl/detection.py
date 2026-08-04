@@ -14,7 +14,7 @@ from .plugins import registry
 from .sector.reconstruct import build_track_sectors_from_revolutions
 from .sector.models import TrackSectors
 from .filesystems import TrackSectorImage
-from .filesystems.cpm import CPMFilesystem
+from .filesystems.cpm import CPMFilesystem, cpm_directory_score_for_layout, cpm_disk_parameters_for_layout
 
 
 @dataclass(slots=True)
@@ -424,11 +424,15 @@ def detect_layout(
                 evidence.append("mfm_8inch_128_bonus=1")
             # Flux median can be misleading across controllers; omit it for MFM scoring.
 
-        if "cpm" in desc.layout_id and desc.encoding == "mfm":
+        if ("cpm" in desc.layout_id or _is_modelled_cpm_layout(desc)) and desc.encoding == "mfm":
             if logical_tracks > desc.tracks and (logical_tracks - desc.tracks) <= 5:
                 score += 0.15
                 evidence.append("cpm_track_bonus=1")
-            if _probe_cpm_filesystem(image, plugin.entry, desc):
+            cpm_layout_score = _cpm_directory_score_for_layout(image, plugin.entry, desc)
+            if cpm_layout_score >= 2:
+                score += 0.4
+                evidence.append(f"cpm_layout_directory_entries={cpm_layout_score}")
+            elif _probe_cpm_filesystem(image, plugin.entry, desc):
                 score += 0.25
                 evidence.append("cpm_fs_probe=1")
 
@@ -441,6 +445,55 @@ def detect_layout(
 
 
 def _probe_cpm_filesystem(image: SCPImage, decoder: Decoder, desc: LayoutDescriptor) -> bool:
+    if cpm_disk_parameters_for_layout(desc.layout_id) is not None:
+        return _cpm_directory_score_for_layout(image, decoder, desc) >= 2
+    return _probe_generic_cpm_filesystem(image, decoder, desc)
+
+
+def _cpm_directory_score_for_layout(image: SCPImage, decoder: Decoder, desc: LayoutDescriptor) -> int:
+    params = cpm_disk_parameters_for_layout(desc.layout_id)
+    if params is None:
+        return 0
+    directory_track = params.reserved_tracks
+    tracks: list[TrackSectors] = []
+    sector_base = int(desc.id_rules.get("sector_number_base", 1))
+    for track_flux in image.tracks:
+        if track_flux.track < directory_track:
+            continue
+        if track_flux.track > directory_track + 1:
+            break
+        if not track_flux.revolutions:
+            continue
+        try:
+            track_sectors = build_track_sectors_from_revolutions(
+                track_flux.revolutions,
+                decoder,
+                cylinder=track_flux.track,
+                head=track_flux.side,
+                expected_sectors=desc.sectors_per_track,
+                encoding=desc.encoding,
+                timebase_ns=image.timebase_ns,
+            )
+        except FluxDecodeError:
+            continue
+        if track_sectors.sectors:
+            tracks.append(track_sectors)
+    if not tracks:
+        return 0
+    try:
+        image_view = TrackSectorImage(tracks, bytes_per_sector=desc.sector_size)
+        image_view.layout = desc
+        image_view.set_geometry(desc.sectors_per_track, desc.sides, sector_base)
+    except Exception:
+        return 0
+    return cpm_directory_score_for_layout(image_view, desc.layout_id)
+
+
+def _is_modelled_cpm_layout(desc: LayoutDescriptor) -> bool:
+    return cpm_disk_parameters_for_layout(desc.layout_id) is not None
+
+
+def _probe_generic_cpm_filesystem(image: SCPImage, decoder: Decoder, desc: LayoutDescriptor) -> bool:
     tracks: list[TrackSectors] = []
     for track_flux in image.tracks[: min(6, len(image.tracks))]:
         if not track_flux.revolutions:
@@ -539,13 +592,21 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
                     score -= 0.1
                     evidence.append(f"sector_size_mismatch={observed_size}")
             if (
-                "cpm" in desc.layout_id
+                ("cpm" in desc.layout_id or _is_modelled_cpm_layout(desc))
                 and logical_tracks > desc.tracks
                 and (logical_tracks - desc.tracks) <= 5
                 and (gcr_conf is None or gcr_conf < 0.9)
             ):
                 score += 0.3
                 evidence.append("cpm_track_bonus=1")
+            if _is_modelled_cpm_layout(desc) and mfm_decoder is not None:
+                cpm_layout_score = _cpm_directory_score_for_layout(image, mfm_decoder, desc)
+                if cpm_layout_score >= 2:
+                    score += 0.45
+                    evidence.append(f"cpm_layout_directory_entries={cpm_layout_score}")
+                else:
+                    score -= 0.15
+                    evidence.append("cpm_layout_directory_miss=1")
         if desc.encoding == "gcr":
             geometry = gcr_geometry
             if geometry.get("track_samples") and geometry.get("tracks_with_sectors") == 0:

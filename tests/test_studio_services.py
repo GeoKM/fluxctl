@@ -113,6 +113,8 @@ def test_studio_creates_blank_image_presets(tmp_path) -> None:
         "cbm_dos_1571_d71": "cbm_dos_1571",
         "cbm_dos_1581_d81": "cbm_dos_1581",
         "amiga_ofs_adf": "amiga_ofs",
+        "cpm_osborne_200k_img": "cpm",
+        "cpm_kaypro_200k_img": "cpm",
     }
 
     for preset in services.blank_image_presets():
@@ -126,6 +128,69 @@ def test_studio_creates_blank_image_presets(tmp_path) -> None:
         assert summary.layout_id == preset.layout_id
         assert summary.filesystem == expected_filesystems[preset.preset_id]
         assert entries == []
+
+
+def test_studio_blank_cpm_images_probe_as_selected_layout(tmp_path) -> None:
+    for preset_id, layout_id in [
+        ("cpm_osborne_200k_img", "osborne_mfm_ssdd_200k"),
+        ("cpm_kaypro_200k_img", "kaypro_mfm_ssdd_40_200k"),
+    ]:
+        output = tmp_path / f"{preset_id}.img"
+        services.create_blank_image(preset_id, output)
+
+        summary = services.summarize_image(output)
+        entries = services.list_files(output, layout_id, "mfm")
+
+        assert output.stat().st_size == 204800
+        assert summary.layout_id == layout_id
+        assert summary.filesystem == "cpm"
+        assert entries == []
+
+
+def test_studio_blank_cpm_images_accept_file_import(tmp_path) -> None:
+    for preset_id, layout_id, file_name in [
+        ("cpm_osborne_200k_img", "osborne_mfm_ssdd_200k", "HELLOOSB.TXT"),
+        ("cpm_kaypro_200k_img", "kaypro_mfm_ssdd_40_200k", "HELLOKAY.TXT"),
+    ]:
+        output = tmp_path / f"{preset_id}.img"
+        imported_path = tmp_path / f"{preset_id}-with-file.img"
+        deleted_path = tmp_path / f"{preset_id}-deleted.img"
+        host_file = tmp_path / file_name
+        host_file.write_bytes(b"CP/M IMPORT TEST\r\n")
+        services.create_blank_image(preset_id, output)
+
+        imported = services.import_file_with_copy(
+            output,
+            layout_id,
+            "mfm",
+            "/",
+            host_file,
+            imported_path,
+        )
+        entries = services.list_files(imported_path, layout_id, "mfm")
+        exported = services.export_filesystem_entries(
+            imported_path,
+            layout_id,
+            "mfm",
+            ["/" + file_name],
+            tmp_path / f"{preset_id}-exported",
+        )
+
+        assert imported.filesystem == "cpm"
+        assert [entry.name for entry in entries] == [file_name]
+        assert entries[0].size == 128
+        assert (Path(exported.path) / file_name).read_bytes().startswith(b"CP/M IMPORT TEST\r\n")
+
+        deleted = services.delete_filesystem_entry_with_copy(
+            imported_path,
+            layout_id,
+            "mfm",
+            "/" + file_name,
+            deleted_path,
+        )
+        assert deleted.filesystem == "cpm"
+        assert deleted.entries == 1
+        assert services.list_files(deleted_path, layout_id, "mfm") == []
 
 
 def test_studio_blank_image_overwrite_is_explicit(tmp_path) -> None:

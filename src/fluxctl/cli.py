@@ -25,6 +25,7 @@ from .exceptions import ExportError, FluxDecodeError, FluxctlError
 from .filesystem_detection import FilesystemDetection, detect_filesystem
 from .exporters import load_builtin_exporters
 from .filesystems import Filesystem, RawSectorImage, TrackSectorImage, load_builtin_filesystems
+from .filesystems.cpm import cpm_directory_score_for_layout
 from .imd import load_imd_image
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from .models import Bitstream, CandidateFormat, LayoutDescriptor, ProvenanceRecord
@@ -769,6 +770,7 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
     ".d81": ("commodore_mfm_1581_800k",),
     ".adf": ("amiga_mfm_880k",),
     ".imd": (
+        "kaypro_mfm_ssdd_40_200k",
         "osborne_mfm_ssdd_200k",
         "generic_mfm_8inch_500k",
         "ibm_displaywriter_fm_284k",
@@ -781,6 +783,7 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
         "ibm_mfm_1440k",
     ),
     ".img": (
+        "kaypro_mfm_ssdd_40_200k",
         "osborne_mfm_ssdd_200k",
         "generic_mfm_8inch_500k",
         "generic_fm_8inch_cpm_256k",
@@ -962,21 +965,35 @@ def _layout_data_distance(layout: LayoutDescriptor, data_len: int) -> int:
 
 
 def _flat_layout_filesystem_penalty(layout: LayoutDescriptor, filesystem_name: Optional[str]) -> int:
-    if layout.layout_id == "generic_fm_8inch_cpm_256k" and filesystem_name != "cpm":
-        return 2
+    modelled_cpm_layouts = {
+        "generic_fm_8inch_cpm_256k",
+        "kaypro_mfm_ssdd_40_200k",
+        "osborne_mfm_ssdd_200k",
+    }
+    if layout.layout_id in modelled_cpm_layouts and filesystem_name != "cpm":
+        return 3
     if filesystem_name == "c64_cpm_2_2":
         return 0 if layout.layout_id == "commodore_gcr_1541_cpm_170k" else 1
     if filesystem_name == "c128_cpm_3_0":
         return 0 if layout.layout_id.startswith("commodore_mfm_1571_cpm_") else 2
     if filesystem_name == "cpm":
-        generic_cpm_layouts = {
-            "generic_fm_8inch_cpm_256k",
-            "osborne_mfm_ssdd_200k",
-        }
-        return 0 if layout.layout_id in generic_cpm_layouts else 1
+        return 0 if layout.layout_id in modelled_cpm_layouts else 1
+    if filesystem_name == "rt11":
+        return 0 if layout.layout_id in {"generic_mfm_8inch_500k", "dec_dec_rx02_rx02_250k"} else 3
     if filesystem_name == "cbm_dos" and layout.layout_id == "commodore_gcr_1541_cpm_170k":
         return 1
     return 0
+
+
+def _cpm_layout_marker_score(data: bytes, layout_id: str) -> int:
+    markers = {
+        "kaypro_mfm_ssdd_40_200k": b"FLUXCTL CPM KAYPROII",
+        "osborne_mfm_ssdd_200k": b"FLUXCTL CPM OSBORNE",
+    }
+    active_markers = [marker for marker in markers.values() if data.startswith(marker)]
+    if not active_markers:
+        return 0
+    return 1 if data.startswith(markers.get(layout_id, b"\x00")) else -1
 
 
 def _sectors_from_blob(
@@ -1090,12 +1107,17 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
         imd_tracks, imd_geom, imd_meta = load_imd_image(path)
         imd_image = TrackSectorImage(imd_tracks)
         if imd_geom and imd_geom.spt and imd_geom.heads:
-            imd_image.set_geometry(imd_geom.spt, imd_geom.heads)
+            sector_ids = [sec.sector_id for ts in imd_tracks for sec in ts.sectors]
+            sector_base = min(sector_ids) if sector_ids else 1
+            imd_image.set_geometry(imd_geom.spt, imd_geom.heads, sector_base)
         imd_total_bytes = sum(len(sec.data) for ts in imd_tracks for sec in ts.sectors)
         data = bytearray(imd_geom.tracks * imd_geom.heads * imd_geom.spt * imd_geom.sector_size)
         for ts in imd_tracks:
             for sec in ts.sectors:
-                off = ((ts.track * imd_geom.heads + ts.head) * imd_geom.spt + (sec.sector_id - 1)) * imd_geom.sector_size
+                sector_offset = sec.sector_id - sector_base
+                if sector_offset < 0 or sector_offset >= imd_geom.spt:
+                    continue
+                off = ((ts.track * imd_geom.heads + ts.head) * imd_geom.spt + sector_offset) * imd_geom.sector_size
                 # Ensure we never change the bytearray length even when sector sizes vary.
                 payload = (sec.data + b"\x00" * imd_geom.sector_size)[: imd_geom.sector_size]
                 data[off : off + imd_geom.sector_size] = payload
@@ -1216,14 +1238,25 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
             evidence=layout_evidence,
         )
         filesystem_penalty = _flat_layout_filesystem_penalty(layout, filesystem_name)
+        cpm_directory_penalty = 0
+        if filesystem_name == "cpm":
+            cpm_marker_score = _cpm_layout_marker_score(data_bytes, layout.layout_id)
+            cpm_directory_score = cpm_directory_score_for_layout(image_obj, layout.layout_id)
+            cpm_directory_penalty = 0 if cpm_directory_score >= 2 or cpm_marker_score > 0 else 3
+            if cpm_directory_score:
+                candidate.evidence.append(f"cpm_layout_directory_entries={cpm_directory_score}")
+            if cpm_marker_score > 0:
+                candidate.evidence.append("cpm_blank_marker_match=1")
+            elif cpm_marker_score < 0:
+                candidate.evidence.append("cpm_blank_marker_mismatch=1")
         geometry_penalty = _imd_penalty(layout)
-        score = (filesystem_penalty, geometry_penalty, distance)
+        score = (filesystem_penalty, cpm_directory_penalty, geometry_penalty, distance)
         if best_score is None or score < best_score:
             best_candidate = candidate
             best_score = score
 
     if best_candidate:
-        if imd_filesystem_name and best_candidate.filesystem != imd_filesystem_name:
+        if imd_filesystem_name and best_candidate.filesystem is None:
             best_candidate.filesystem = imd_filesystem_name
             best_candidate.evidence = [entry for entry in best_candidate.evidence if not entry.startswith("filesystem=")]
             best_candidate.evidence.append(f"filesystem={imd_filesystem_name}")
