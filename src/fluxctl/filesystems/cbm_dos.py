@@ -26,6 +26,12 @@ class DirectoryRecord:
         return False
 
 
+@dataclass(slots=True)
+class _DirectorySlot:
+    offset: int
+    record: DirectoryRecord
+
+
 class CBMDOS(Filesystem):
     """Reader for Commodore CBM DOS disks (1541/1571)."""
 
@@ -301,10 +307,41 @@ class CBMDOS(Filesystem):
         return blocks
 
     def _record_for_file(self, path: str) -> DirectoryRecord:
+        return self._directory_slot_for_path(path).record
+
+    def _directory_slot_for_path(self, path: str) -> _DirectorySlot:
         target = path.lstrip("/").upper()
-        for record in self.directory:
-            if record.name.upper() == target:
-                return record
+        if not target:
+            raise FilesystemError("Path must reference a file")
+        track, sector = DIRECTORY_TRACK, DIRECTORY_START_SECTOR
+        seen: set[Tuple[int, int]] = set()
+        while track != 0 and (track, sector) not in seen:
+            seen.add((track, sector))
+            data = self._read_ts(track, sector)
+            sector_offset = self._ts_to_lba(track, sector) * SECTOR_SIZE
+            for idx in range(8):
+                entry_offset = sector_offset + 2 + idx * 32
+                entry = data[2 + idx * 32 : 2 + (idx + 1) * 32]
+                if len(entry) < 32 or entry[0] in {0x00, 0xE5}:
+                    continue
+                start_track = entry[1]
+                start_sector = entry[2]
+                if start_track == 0:
+                    continue
+                name = entry[3:19].replace(b"\xA0", b" ").rstrip(b" \x00").decode("latin-1")
+                if name.upper() == target:
+                    return _DirectorySlot(
+                        entry_offset,
+                        DirectoryRecord(
+                            name=name,
+                            start_track=start_track,
+                            start_sector=start_sector,
+                            file_type=entry[0],
+                            blocks=int.from_bytes(entry[28:30], "little"),
+                        ),
+                    )
+            track = data[0]
+            sector = data[1]
         raise FilesystemError(f"File not found: {path}")
 
     def list_directory(self, path: str = "/") -> List[FileEntry]:
@@ -389,6 +426,48 @@ class CBMDOS(Filesystem):
         patched[slot : slot + 32] = entry
         return bytes(patched)
 
+    def replace_file(self, image_bytes: bytes, path: str, replacement: bytes) -> bytes:
+        """Return a copy with one root-level CBM DOS file's contents replaced."""
+
+        slot = self._directory_slot_for_path(path)
+        blocks_needed = max(1, (len(replacement) + (SECTOR_SIZE - 3)) // (SECTOR_SIZE - 2))
+        patched = bytearray(image_bytes)
+        for track, sector, _data in self._iter_chain_blocks(slot.record.start_track, slot.record.start_sector):
+            self._mark_block_free(patched, track, sector)
+
+        blocks = self._find_free_blocks_from_bytes(patched, blocks_needed)
+        for index, (track, sector) in enumerate(blocks):
+            block = bytearray(SECTOR_SIZE)
+            chunk = replacement[index * (SECTOR_SIZE - 2) : (index + 1) * (SECTOR_SIZE - 2)]
+            if index == len(blocks) - 1:
+                block[0] = 0
+                block[1] = len(chunk)
+            else:
+                next_track, next_sector = blocks[index + 1]
+                block[0] = next_track
+                block[1] = next_sector
+            block[2 : 2 + len(chunk)] = chunk
+            self._write_ts(patched, track, sector, block)
+            self._mark_block_used(patched, track, sector)
+
+        entry = bytearray(patched[slot.offset : slot.offset + 32])
+        entry[0] = (entry[0] & 0xF8) | 0x02 | 0x80
+        entry[1] = blocks[0][0]
+        entry[2] = blocks[0][1]
+        entry[28:30] = len(blocks).to_bytes(2, "little")
+        patched[slot.offset : slot.offset + 32] = entry
+        return bytes(patched)
+
+    def delete_entry(self, image_bytes: bytes, path: str) -> bytes:
+        """Return a copy with one root-level CBM DOS file scratched."""
+
+        slot = self._directory_slot_for_path(path)
+        patched = bytearray(image_bytes)
+        for track, sector, _data in self._iter_chain_blocks(slot.record.start_track, slot.record.start_sector):
+            self._mark_block_free(patched, track, sector)
+        patched[slot.offset] = 0x00
+        return bytes(patched)
+
     def _write_ts(self, image_bytes: bytearray, track: int, sector: int, data: bytes) -> None:
         offset = self._ts_to_lba(track, sector) * SECTOR_SIZE
         if offset + SECTOR_SIZE > len(image_bytes):
@@ -437,18 +516,43 @@ class CBMDOS(Filesystem):
             if image_bytes[count_offset] > 0:
                 image_bytes[count_offset] -= 1
 
+    def _mark_block_free(self, image_bytes: bytearray, track: int, sector: int) -> None:
+        location = self._bam_bitmap_location(track, sector)
+        if location is None:
+            raise FilesystemError("No BAM entry available for CBM DOS block")
+        count_offset, byte_offset, bit = location
+        if byte_offset >= len(image_bytes):
+            raise FilesystemError("BAM bitmap exceeds image size")
+        mask = 1 << bit
+        if not image_bytes[byte_offset] & mask:
+            image_bytes[byte_offset] |= mask
+            if image_bytes[count_offset] < 255:
+                image_bytes[count_offset] += 1
+
     def _find_free_blocks(self, count: int) -> list[tuple[int, int]]:
+        return self._find_free_blocks_from_bytes(None, count)
+
+    def _find_free_blocks_from_bytes(self, image_bytes: Optional[bytearray], count: int) -> list[tuple[int, int]]:
         blocks: list[tuple[int, int]] = []
         reserved_tracks = {18, 53} if self.sides > 1 else {18}
         for track in range(1, len(self.sectors_per_track) + 1):
             if track in reserved_tracks:
                 continue
             for sector in range(self._sectors_for_track(track - 1)):
-                if self._block_is_free(track, sector):
+                if self._block_is_free_in_bytes(image_bytes, track, sector):
                     blocks.append((track, sector))
                     if len(blocks) == count:
                         return blocks
         raise FilesystemError(f"Need {count:,} free CBM DOS block(s), found {len(blocks):,}")
+
+    def _block_is_free_in_bytes(self, image_bytes: Optional[bytearray], track: int, sector: int) -> bool:
+        if image_bytes is None:
+            return self._block_is_free(track, sector)
+        location = self._bam_bitmap_location(track, sector)
+        if location is None:
+            return False
+        _count_offset, byte_offset, bit = location
+        return byte_offset < len(image_bytes) and bool(image_bytes[byte_offset] & (1 << bit))
 
     def _find_free_directory_slot(self) -> int:
         track, sector = DIRECTORY_TRACK, DIRECTORY_START_SECTOR

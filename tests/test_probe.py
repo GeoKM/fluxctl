@@ -37,6 +37,10 @@ FIXTURE_1581_IMG = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MF
 FIXTURE_1581_D81 = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MFM-C64-800K.d81")
 FIXTURE_CPM_SRC1_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC1-256K.img")
 FIXTURE_CPM_SRC2_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC2-256K.img")
+FIXTURE_OSBORNE_CPM22_IMD = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-CPM22-200K.imd")
+FIXTURE_OSBORNE_WSTR_IMD = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-WSTR-200K.imd")
+FIXTURE_OSBORNE_CPM22_IMG = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-CPM22-200K.img")
+FIXTURE_OSBORNE_WSTR_IMG = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-WSTR-200K.img")
 
 
 def test_probe_includes_gcr_candidates() -> None:
@@ -235,6 +239,22 @@ def test_probe_supports_8inch_cpm_source_images() -> None:
         payload = json.loads(result.stdout)
         assert payload[0]["layout_id"] == "generic_fm_8inch_cpm_256k"
         assert payload[0]["encoding"] == "fm"
+        assert payload[0]["filesystem"] == "cpm"
+
+
+def test_probe_supports_osborne_5inch_cpm_images() -> None:
+    runner = CliRunner()
+    for fixture in (
+        FIXTURE_OSBORNE_CPM22_IMD,
+        FIXTURE_OSBORNE_WSTR_IMD,
+        FIXTURE_OSBORNE_CPM22_IMG,
+        FIXTURE_OSBORNE_WSTR_IMG,
+    ):
+        result = runner.invoke(cli.app, ["probe", str(fixture)])
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload[0]["layout_id"] == "osborne_mfm_ssdd_200k"
+        assert payload[0]["encoding"] == "mfm"
         assert payload[0]["filesystem"] == "cpm"
 
 

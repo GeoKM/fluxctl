@@ -16,3 +16,12 @@ def test_generic_cpm_8inch_fm_layout_loads():
     assert desc.tracks == 77
     assert desc.sectors_per_track == 26
     assert desc.sector_size == 128
+
+
+def test_osborne_cpm_5inch_mfm_layout_loads():
+    desc = ensure_layout_loaded("osborne_mfm_ssdd_200k")
+    assert desc.encoding == "mfm"
+    assert desc.sides == 1
+    assert desc.tracks == 40
+    assert desc.sectors_per_track == 5
+    assert desc.sector_size == 1024

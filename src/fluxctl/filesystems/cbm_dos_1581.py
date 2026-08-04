@@ -29,6 +29,12 @@ class DirectoryRecord1581:
         return (self.file_type & 0x07) == 5
 
 
+@dataclass(slots=True)
+class _DirectorySlot1581:
+    offset: int
+    record: DirectoryRecord1581
+
+
 class CBMDOS1581(Filesystem):
     """Reader for 1581 CBM DOS 10 logical sectors."""
 
@@ -199,6 +205,22 @@ class CBMDOS1581(Filesystem):
             records = self._parse_directory_from(match.start_track, match.start_sector)
         return records
 
+    def _directory_start_for_path(self, path: str) -> tuple[int, int]:
+        parts = [part for part in path.strip("/").split("/") if part]
+        if not parts:
+            return DIRECTORY_TRACK, DIRECTORY_START_SECTOR
+        records = self.directory
+        current = (DIRECTORY_TRACK, DIRECTORY_START_SECTOR)
+        for part in parts:
+            match = next((record for record in records if record.name.lower() == part.lower()), None)
+            if match is None:
+                raise FilesystemError(f"Directory '{path}' not found")
+            if not match.is_dir:
+                raise FilesystemError(f"'{part}' is not a directory")
+            current = (match.start_track, match.start_sector)
+            records = self._parse_directory_from(match.start_track, match.start_sector)
+        return current
+
     def _record_for_file_path(self, path: str) -> DirectoryRecord1581:
         parts = [part for part in path.strip("/").split("/") if part]
         if not parts:
@@ -210,6 +232,43 @@ class CBMDOS1581(Filesystem):
                 if record.is_dir:
                     raise FilesystemError("Cannot extract a directory entry")
                 return record
+        raise FilesystemError(f"File not found: {path}")
+
+    def _root_directory_slot_for_path(self, path: str) -> _DirectorySlot1581:
+        parts = [part for part in path.strip("/").split("/") if part]
+        if not parts:
+            raise FilesystemError("Path must reference a file")
+        if len(parts) > 1:
+            raise FilesystemError("1581 mutation currently supports root directory entries only")
+        target = parts[0].lower()
+        track, sector = DIRECTORY_TRACK, DIRECTORY_START_SECTOR
+        seen: set[tuple[int, int]] = set()
+        while track != 0 and (track, sector) not in seen:
+            seen.add((track, sector))
+            data = self._read_logical_sector(track, sector)
+            sector_offset = self._logical_offset(track, sector)
+            for idx in range(8):
+                entry_offset = sector_offset + 2 + idx * 32
+                entry = data[2 + idx * 32 : 2 + (idx + 1) * 32]
+                if len(entry) < 32 or entry[0] in {0x00, 0xE5}:
+                    continue
+                start_track = entry[1]
+                start_sector = entry[2]
+                if start_track == 0:
+                    continue
+                name = entry[3:19].replace(b"\xA0", b" ").rstrip(b" \x00").decode("latin-1")
+                if name.lower() == target:
+                    return _DirectorySlot1581(
+                        entry_offset,
+                        DirectoryRecord1581(
+                            name=name,
+                            start_track=start_track,
+                            start_sector=start_sector,
+                            file_type=entry[0],
+                            blocks=int.from_bytes(entry[28:30], "little"),
+                        ),
+                    )
+            track, sector = data[0], data[1]
         raise FilesystemError(f"File not found: {path}")
 
     def _read_chain(self, start_track: int, start_sector: int) -> bytes:
@@ -263,16 +322,15 @@ class CBMDOS1581(Filesystem):
         return {(track, 0, sector) for track, sector, _data in self._iter_chain_blocks(record.start_track, record.start_sector)}
 
     def import_file(self, image_bytes: bytes, directory: str, filename: str, data: bytes) -> bytes:
-        """Return a copy with one root-level CBM DOS 1581 PRG file imported."""
+        """Return a copy with one CBM DOS 1581 PRG file imported."""
 
-        if directory.strip("/") != "":
-            raise FilesystemError("1581 import currently supports the root directory only")
         raw_name = self._encode_directory_name(filename)
         target_name = raw_name.replace(b"\xA0", b" ").rstrip().decode("latin-1")
-        if any(record.name.upper() == target_name.upper() for record in self.directory):
+        directory_start = self._directory_start_for_path(directory)
+        if any(record.name.upper() == target_name.upper() for record in self._records_for_path(directory)):
             raise FilesystemError(f"1581 entry already exists: {target_name}")
 
-        slot = self._find_free_directory_slot()
+        slot = self._find_free_directory_slot(*directory_start)
         blocks_needed = max(1, (len(data) + (LOGICAL_SECTOR_SIZE - 3)) // (LOGICAL_SECTOR_SIZE - 2))
         blocks = self._find_free_blocks(blocks_needed)
         patched = bytearray(image_bytes)
@@ -297,6 +355,79 @@ class CBMDOS1581(Filesystem):
         entry[3:19] = raw_name
         entry[28:30] = len(blocks).to_bytes(2, "little")
         patched[slot : slot + 32] = entry
+        return bytes(patched)
+
+    def create_directory(self, image_bytes: bytes, parent: str, name: str) -> bytes:
+        """Return a copy with one empty 1581 directory created."""
+
+        raw_name = self._encode_directory_name(name)
+        target_name = raw_name.replace(b"\xA0", b" ").rstrip().decode("latin-1")
+        parent_start = self._directory_start_for_path(parent)
+        if any(record.name.upper() == target_name.upper() for record in self._records_for_path(parent)):
+            raise FilesystemError(f"1581 entry already exists: {target_name}")
+
+        slot = self._find_free_directory_slot(*parent_start)
+        blocks = self._find_free_blocks(1)
+        patched = bytearray(image_bytes)
+        directory_block = bytearray(LOGICAL_SECTOR_SIZE)
+        directory_block[0] = 0
+        directory_block[1] = 0
+        self._write_logical_sector(patched, blocks[0][0], blocks[0][1], directory_block)
+        self._mark_block_used(patched, blocks[0][0], blocks[0][1])
+
+        entry = bytearray(32)
+        entry[0] = 0x85  # closed DIR
+        entry[1] = blocks[0][0]
+        entry[2] = blocks[0][1]
+        entry[3:19] = raw_name
+        entry[28:30] = len(blocks).to_bytes(2, "little")
+        patched[slot : slot + 32] = entry
+        return bytes(patched)
+
+    def replace_file(self, image_bytes: bytes, path: str, replacement: bytes) -> bytes:
+        """Return a copy with one root-level 1581 file's contents replaced."""
+
+        slot = self._root_directory_slot_for_path(path)
+        if slot.record.is_dir:
+            raise FilesystemError("1581 replace currently supports files only")
+        blocks_needed = max(1, (len(replacement) + (LOGICAL_SECTOR_SIZE - 3)) // (LOGICAL_SECTOR_SIZE - 2))
+        patched = bytearray(image_bytes)
+        for track, sector, _data in self._iter_chain_blocks(slot.record.start_track, slot.record.start_sector):
+            self._mark_block_free(patched, track, sector)
+
+        blocks = self._find_free_blocks_from_bytes(patched, blocks_needed)
+        for index, (track, sector) in enumerate(blocks):
+            block = bytearray(LOGICAL_SECTOR_SIZE)
+            chunk = replacement[index * (LOGICAL_SECTOR_SIZE - 2) : (index + 1) * (LOGICAL_SECTOR_SIZE - 2)]
+            if index == len(blocks) - 1:
+                block[0] = 0
+                block[1] = len(chunk)
+            else:
+                next_track, next_sector = blocks[index + 1]
+                block[0] = next_track
+                block[1] = next_sector
+            block[2 : 2 + len(chunk)] = chunk
+            self._write_logical_sector(patched, track, sector, block)
+            self._mark_block_used(patched, track, sector)
+
+        entry = bytearray(patched[slot.offset : slot.offset + 32])
+        entry[0] = (entry[0] & 0xF8) | 0x02 | 0x80
+        entry[1] = blocks[0][0]
+        entry[2] = blocks[0][1]
+        entry[28:30] = len(blocks).to_bytes(2, "little")
+        patched[slot.offset : slot.offset + 32] = entry
+        return bytes(patched)
+
+    def delete_entry(self, image_bytes: bytes, path: str) -> bytes:
+        """Return a copy with one root-level 1581 file scratched."""
+
+        slot = self._root_directory_slot_for_path(path)
+        if slot.record.is_dir:
+            raise FilesystemError("1581 directory delete is not implemented yet")
+        patched = bytearray(image_bytes)
+        for track, sector, _data in self._iter_chain_blocks(slot.record.start_track, slot.record.start_sector):
+            self._mark_block_free(patched, track, sector)
+        patched[slot.offset] = 0x00
         return bytes(patched)
 
     def bam_blocks(self, max_tracks: Optional[int] = None) -> List[tuple[int, int, int, str]]:
@@ -384,7 +515,23 @@ class CBMDOS1581(Filesystem):
             if image_bytes[count_offset] > 0:
                 image_bytes[count_offset] -= 1
 
+    def _mark_block_free(self, image_bytes: bytearray, track: int, sector: int) -> None:
+        location = self._bam_bitmap_location(track, sector)
+        if location is None:
+            raise FilesystemError("No 1581 BAM entry available for block")
+        count_offset, byte_offset, bit = location
+        if byte_offset >= len(image_bytes):
+            raise FilesystemError("1581 BAM bitmap exceeds image size")
+        mask = 1 << bit
+        if not image_bytes[byte_offset] & mask:
+            image_bytes[byte_offset] |= mask
+            if image_bytes[count_offset] < 255:
+                image_bytes[count_offset] += 1
+
     def _find_free_blocks(self, count: int) -> list[tuple[int, int]]:
+        return self._find_free_blocks_from_bytes(None, count)
+
+    def _find_free_blocks_from_bytes(self, image_bytes: Optional[bytearray], count: int) -> list[tuple[int, int]]:
         blocks: list[tuple[int, int]] = []
         reserved = {
             (DIRECTORY_TRACK, DIRECTORY_HEADER_SECTOR),
@@ -395,14 +542,27 @@ class CBMDOS1581(Filesystem):
             for sector in range(LOGICAL_SECTORS_PER_TRACK):
                 if (track, sector) in reserved:
                     continue
-                if self._block_is_free(track, sector):
+                if self._block_is_free_in_bytes(image_bytes, track, sector):
                     blocks.append((track, sector))
                     if len(blocks) == count:
                         return blocks
         raise FilesystemError(f"Need {count:,} free 1581 block(s), found {len(blocks):,}")
 
-    def _find_free_directory_slot(self) -> int:
-        track, sector = DIRECTORY_TRACK, DIRECTORY_START_SECTOR
+    def _block_is_free_in_bytes(self, image_bytes: Optional[bytearray], track: int, sector: int) -> bool:
+        if image_bytes is None:
+            return self._block_is_free(track, sector)
+        location = self._bam_bitmap_location(track, sector)
+        if location is None:
+            return False
+        _count_offset, byte_offset, bit = location
+        return byte_offset < len(image_bytes) and bool(image_bytes[byte_offset] & (1 << bit))
+
+    def _find_free_directory_slot(
+        self,
+        start_track: int = DIRECTORY_TRACK,
+        start_sector: int = DIRECTORY_START_SECTOR,
+    ) -> int:
+        track, sector = start_track, start_sector
         seen: set[tuple[int, int]] = set()
         while track != 0 and (track, sector) not in seen:
             seen.add((track, sector))
