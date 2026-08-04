@@ -281,13 +281,14 @@ Notes/screenshots:
 
 These are expected limitations today, not necessarily bugs:
 
-- CP/M can list entries but cannot export file contents yet.
+- CP/M export and selected-file map overlays are available for modelled DPBs.
+  Other CP/M variants may list entries but still need per-format DPB support.
 - DisplayWriter lists standard-label entries only; document extraction is not
   implemented.
 - RT-11 probe metadata exists, but directory listing and extraction are pending.
 - `.scp` and `.imd` filesystem-level writes are disabled.
-- CBM DOS and 1581 mutation is currently root-file import only.
+- CBM DOS and 1581 mutation is limited to the explicitly enabled copy-only
+  actions in the capability matrix.
 - Amiga `.adf` mutation is disabled.
 - Amiga selected-file map overlay is approximate until full OFS/FFS block-chain
   traversal is implemented.
-- Generic CP/M selected-file overlays need per-format DPB support.

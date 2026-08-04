@@ -282,7 +282,7 @@ class CPMFilesystem(Filesystem):
             return False
         for offset in range(0, len(data), 32):
             entry = data[offset : offset + 32]
-            if len(entry) == 32 and entry != b"\xE5" * 32:
+            if len(entry) == 32 and entry[0] != 0xE5:
                 return False
         return bool(data)
 
@@ -357,14 +357,30 @@ class CPMFilesystem(Filesystem):
     def file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
         """Return selected-file sector addresses for supported CP/M variants."""
 
-        if not self._is_c64_cpm_2_2():
+        if self._is_c64_cpm_2_2():
+            addresses: set[tuple[int, int, int]] = set()
+            for block in self._allocation_blocks_for_file(path):
+                for logical_sector in range(block * 4, block * 4 + 4):
+                    logical_track = logical_sector // 17
+                    sector_id = logical_sector % 17
+                    track = logical_track + 2 if logical_track < 15 else logical_track - 15 + 18
+                    addresses.add((track, 0, sector_id))
+            return addresses
+
+        params = self._disk_parameters()
+        layout = getattr(self._image, "layout", None) if self._image is not None else None
+        if params is None or layout is None:
             raise FilesystemError("CP/M file allocation overlay needs a format-specific allocation map")
-        addresses: set[tuple[int, int, int]] = set()
+
+        sector_base = int(getattr(layout, "id_rules", {}).get("sector_number_base", 1))
+        addresses = set()
         for block in self._allocation_blocks_for_file(path):
-            for logical_sector in range(block * 4, block * 4 + 4):
-                logical_track = logical_sector // 17
-                sector_id = logical_sector % 17
-                track = logical_track + 2 if logical_track < 15 else logical_track - 15 + 18
+            first_sector = params.reserved_tracks * params.sectors_per_track + block * params.sectors_per_block
+            for offset in range(params.sectors_per_block):
+                logical_sector = first_sector + offset
+                physical_lba = self._physical_lba_for_logical_sector(logical_sector, params)
+                track = physical_lba // params.sectors_per_track
+                sector_id = (physical_lba % params.sectors_per_track) + sector_base
                 addresses.add((track, 0, sector_id))
         return addresses
 

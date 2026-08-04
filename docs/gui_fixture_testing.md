@@ -45,13 +45,11 @@ shape later implementation work.
   record/block interpretation instead of overloading File Dump.
 - Deepen selected-file disk-map overlay accuracy. Studio now highlights selected
   file sectors for FAT12, CBM DOS, 1581, Amiga's current contiguous-file model,
-  and C64 CP/M 2.2 allocation blocks. Generic CP/M still needs per-format DPB
-  support before selected extents can be highlighted accurately, and Amiga
-  should move from contiguous block spans to full file-list block traversal.
+  and CP/M allocation blocks for modelled DPBs. Amiga should move from
+  contiguous block spans to full file-list block traversal.
   Follow-up items:
-  - Model CP/M disk parameter blocks per supported layout so selected-file
-    overlays can map extents/allocation blocks for C128 CP/M 3.0 and generic
-    CP/M disks instead of only C64 CP/M 2.2.
+  - Add more CP/M disk parameter blocks as formats are promoted from heuristic
+    directory listing to extraction/export support.
   - Replace the Amiga overlay's contiguous-sector assumption with real OFS/FFS
     file header, data block, extension block, checksum, and hash-chain traversal.
   - Manually verify selected-file highlighting in Studio across physical,

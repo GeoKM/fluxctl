@@ -107,6 +107,17 @@ def test_cpm_26_sector_studio_exports_multiple_selected_files(tmp_path: Path) ->
     assert (tmp_path / "LOAD.PLM").stat().st_size == 9600
 
 
+def test_cpm_26_sector_file_allocation_overlay_uses_dpb_skew() -> None:
+    filesystem = _mount_cpm_fixture(FIXTURE_CPM_SRC1)
+
+    addresses = filesystem.file_sector_addresses("/PIP.LIN")
+
+    assert len(addresses) == 80
+    assert (52, 0, 2) in addresses
+    assert (52, 0, 25) in addresses
+    assert (55, 0, 25) in addresses
+
+
 def test_osborne_cpm_extracts_file_contents() -> None:
     for fixture in (FIXTURE_OSBORNE_WSTR, FIXTURE_OSBORNE_WSTR_IMG, FIXTURE_OSBORNE_WSTR_SCP):
         filesystem = _mount_osborne_fixture(fixture)
@@ -135,6 +146,16 @@ def test_osborne_cpm_studio_exports_files(tmp_path: Path) -> None:
         assert (target / "SYSGEN.COM").stat().st_size == 1536
 
 
+def test_osborne_cpm_file_allocation_overlay_uses_1_based_sector_ids() -> None:
+    filesystem = _mount_osborne_fixture(FIXTURE_OSBORNE_WSTR_IMG)
+
+    assert filesystem.file_sector_addresses("/SAMPLE.TXT") == {
+        (19, 0, 2),
+        (19, 0, 3),
+        (19, 0, 4),
+    }
+
+
 def test_kaypro_cpm_extracts_file_contents() -> None:
     for fixture in (FIXTURE_KAYPRO_WSTR, FIXTURE_KAYPRO_WSTR_IMG, FIXTURE_KAYPRO_WSTR_SCP):
         filesystem = _mount_kaypro_fixture(fixture)
@@ -161,3 +182,27 @@ def test_kaypro_cpm_studio_exports_files(tmp_path: Path) -> None:
         assert result.bytes == 6272
         assert (target / "STAT.COM").stat().st_size == 5248
         assert (target / "SYSGEN.COM").stat().st_size == 1024
+
+
+def test_kaypro_cpm_file_allocation_overlay_uses_0_based_sector_ids() -> None:
+    filesystem = _mount_kaypro_fixture(FIXTURE_KAYPRO_WSTR_IMG)
+
+    addresses = filesystem.file_sector_addresses("/WS.COM")
+
+    assert len(addresses) == 36
+    assert (1, 0, 8) in addresses
+    assert (2, 0, 0) in addresses
+    assert (5, 0, 3) in addresses
+
+
+def test_studio_file_allocation_view_supports_modelled_cpm() -> None:
+    allocation = services.file_allocation_for_image(
+        FIXTURE_KAYPRO_WSTR_IMG,
+        "kaypro_mfm_ssdd_40_200k",
+        "mfm",
+        "/WS.COM",
+    )
+
+    assert allocation.path == "/WS.COM"
+    assert len(allocation.sectors) == 36
+    assert (2, 0, 0) in allocation.sectors
