@@ -474,13 +474,13 @@ def test_fat12_write_actions_enable_only_for_supported_flat_img() -> None:
     )
     window._update_filesystem_write_actions()
 
-    assert not window.file_replace_button.isEnabled()
-    assert not window.file_delete_button.isEnabled()
+    assert window.file_replace_button.isEnabled()
+    assert window.file_delete_button.isEnabled()
     assert window.file_import_button.isEnabled()
     assert not window.directory_import_button.isEnabled()
     assert not window.directory_create_button.isEnabled()
     assert "root-level PRG import" in window.file_import_button.toolTip()
-    assert "not implemented yet" in window.file_replace_button.toolTip()
+    assert "replace, and delete" in window.file_replace_button.toolTip()
 
     window.current_path = Path("/tmp/example.d81")
     window.current_summary = services.ImageSummary(
@@ -495,12 +495,12 @@ def test_fat12_write_actions_enable_only_for_supported_flat_img() -> None:
     )
     window._update_filesystem_write_actions()
 
-    assert not window.file_replace_button.isEnabled()
-    assert not window.file_delete_button.isEnabled()
+    assert window.file_replace_button.isEnabled()
+    assert window.file_delete_button.isEnabled()
     assert window.file_import_button.isEnabled()
-    assert not window.directory_import_button.isEnabled()
-    assert not window.directory_create_button.isEnabled()
-    assert "1581 .d81 root-level PRG import" in window.file_import_button.toolTip()
+    assert window.directory_import_button.isEnabled()
+    assert window.directory_create_button.isEnabled()
+    assert "1581 .d81 PRG import" in window.file_import_button.toolTip()
 
     window.current_path = Path("/tmp/example.adf")
     window.current_summary = services.ImageSummary(

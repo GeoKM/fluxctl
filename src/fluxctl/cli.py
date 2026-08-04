@@ -769,6 +769,7 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
     ".d81": ("commodore_mfm_1581_800k",),
     ".adf": ("amiga_mfm_880k",),
     ".imd": (
+        "osborne_mfm_ssdd_200k",
         "generic_mfm_8inch_500k",
         "ibm_displaywriter_fm_284k",
         "ibm_mfm_8inch_1200k",
@@ -780,6 +781,7 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
         "ibm_mfm_1440k",
     ),
     ".img": (
+        "osborne_mfm_ssdd_200k",
         "generic_mfm_8inch_500k",
         "generic_fm_8inch_cpm_256k",
         "dec_dec_rx02_rx02_250k",
@@ -964,8 +966,14 @@ def _flat_layout_filesystem_penalty(layout: LayoutDescriptor, filesystem_name: O
         return 2
     if filesystem_name == "c64_cpm_2_2":
         return 0 if layout.layout_id == "commodore_gcr_1541_cpm_170k" else 1
+    if filesystem_name == "c128_cpm_3_0":
+        return 0 if layout.layout_id.startswith("commodore_mfm_1571_cpm_") else 2
     if filesystem_name == "cpm":
-        return 0 if layout.layout_id == "generic_fm_8inch_cpm_256k" else 1
+        generic_cpm_layouts = {
+            "generic_fm_8inch_cpm_256k",
+            "osborne_mfm_ssdd_200k",
+        }
+        return 0 if layout.layout_id in generic_cpm_layouts else 1
     if filesystem_name == "cbm_dos" and layout.layout_id == "commodore_gcr_1541_cpm_170k":
         return 1
     return 0

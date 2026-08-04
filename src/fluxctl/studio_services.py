@@ -897,9 +897,9 @@ def replace_file_with_copy(
 ) -> ReplaceResult:
     """Replace one file in a new image copy without modifying the original.
 
-    The supported writer is intentionally narrow: FAT12 flat ``.img`` images.
-    Replacement may grow the selected file by allocating free FAT12 clusters,
-    but only in the new image copy.
+    Replacement writes only to a new image copy. FAT12 replacement may grow by
+    allocating free clusters; CBM DOS replacement allocates a new block chain
+    and keeps the existing directory entry name.
     """
 
     source = path.resolve()
@@ -908,16 +908,24 @@ def replace_file_with_copy(
         raise ValueError("Output image must be a new copy, not the original image")
     if output_path.exists():
         raise ValueError(f"Output image already exists: {output_path}")
-    if path.suffix.lower() != ".img":
-        raise ValueError("File replacement is currently supported only for flat FAT12 .img images")
 
     replacement = replacement_path.read_bytes()
+    suffix = path.suffix.lower()
     image_bytes = path.read_bytes()
-    filesystem = FAT12()
-    if not filesystem.probe(RawSectorImage(image_bytes)):
-        raise ValueError("File replacement is currently supported only for FAT12 images")
-
-    patched = filesystem.replace_file_allocating_clusters(image_bytes, fs_path, replacement)
+    if suffix == ".img":
+        filesystem = _probe_fat12_bytes(image_bytes)
+        patched = filesystem.replace_file_allocating_clusters(image_bytes, fs_path, replacement)
+        filesystem_name = "fat12"
+    elif suffix in {".d64", ".d71"}:
+        filesystem = _probe_cbm_dos_bytes(image_bytes)
+        patched = filesystem.replace_file(image_bytes, fs_path, replacement)
+        filesystem_name = "cbm_dos_1571" if suffix == ".d71" else "cbm_dos"
+    elif suffix == ".d81":
+        filesystem = _probe_cbm_dos_1581_bytes(image_bytes)
+        patched = filesystem.replace_file(image_bytes, fs_path, replacement)
+        filesystem_name = "cbm_dos_1581"
+    else:
+        raise ValueError("File replacement is currently supported only for FAT12 .img and CBM DOS .d64/.d71/.d81 images")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(prefix=f".{output_path.name}.", dir=output_path.parent, delete=False) as temp_file:
         temp_name = Path(temp_file.name)
@@ -927,7 +935,7 @@ def replace_file_with_copy(
         path=str(output_path),
         file_path=fs_path,
         bytes=len(replacement),
-        filesystem="fat12",
+        filesystem=filesystem_name,
     )
 
 
@@ -938,14 +946,35 @@ def delete_filesystem_entry_with_copy(
     fs_path: str,
     output_path: Path,
 ) -> MutationResult:
-    """Delete one FAT12 file or empty directory in a new image copy."""
+    """Delete one supported filesystem entry in a new image copy."""
 
-    image_bytes = _read_fat12_source_for_mutation(path, output_path)
-    filesystem = _probe_fat12_bytes(image_bytes)
-    entry = _find_entry(filesystem, fs_path)
-    patched = filesystem.delete_entry(image_bytes, fs_path)
+    suffix = path.suffix.lower()
+    image_bytes = _read_source_for_mutation(path, output_path)
+    if suffix == ".img":
+        filesystem = _probe_fat12_bytes(image_bytes)
+        entry = _find_entry(filesystem, fs_path)
+        patched = filesystem.delete_entry(image_bytes, fs_path)
+        filesystem_name = "fat12"
+    elif suffix in {".d64", ".d71"}:
+        filesystem = _probe_cbm_dos_bytes(image_bytes)
+        entries = filesystem.list_directory("/")
+        entry = next((item for item in entries if item.name.upper() == fs_path.lstrip("/").upper()), None)
+        if entry is None:
+            raise ValueError(f"File not found: {fs_path}")
+        patched = filesystem.delete_entry(image_bytes, fs_path)
+        filesystem_name = "cbm_dos_1571" if suffix == ".d71" else "cbm_dos"
+    elif suffix == ".d81":
+        filesystem = _probe_cbm_dos_1581_bytes(image_bytes)
+        entries = filesystem.list_directory("/")
+        entry = next((item for item in entries if item.name.upper() == fs_path.lstrip("/").upper()), None)
+        if entry is None:
+            raise ValueError(f"File not found: {fs_path}")
+        patched = filesystem.delete_entry(image_bytes, fs_path)
+        filesystem_name = "cbm_dos_1581"
+    else:
+        raise ValueError("Delete is currently supported only for FAT12 .img and CBM DOS .d64/.d71/.d81 images")
     _write_new_image_copy(output_path, patched)
-    return MutationResult(str(output_path), "delete", 1, entry.size, "fat12")
+    return MutationResult(str(output_path), "delete", 1, entry.size, filesystem_name)
 
 
 def create_directory_with_copy(
@@ -956,13 +985,23 @@ def create_directory_with_copy(
     name: str,
     output_path: Path,
 ) -> MutationResult:
-    """Create one empty FAT12 directory in a new image copy."""
+    """Create one empty supported filesystem directory in a new image copy."""
 
-    image_bytes = _read_fat12_source_for_mutation(path, output_path)
-    filesystem = _probe_fat12_bytes(image_bytes)
-    patched = filesystem.create_directory(image_bytes, parent, name)
+    suffix = path.suffix.lower()
+    if suffix == ".img":
+        image_bytes = _read_fat12_source_for_mutation(path, output_path)
+        filesystem = _probe_fat12_bytes(image_bytes)
+        patched = filesystem.create_directory(image_bytes, parent, name)
+        filesystem_name = "fat12"
+    elif suffix == ".d81":
+        image_bytes = _read_source_for_mutation(path, output_path)
+        filesystem = _probe_cbm_dos_1581_bytes(image_bytes)
+        patched = filesystem.create_directory(image_bytes, parent, name)
+        filesystem_name = "cbm_dos_1581"
+    else:
+        raise ValueError("Directory creation is currently supported only for FAT12 .img and CBM DOS 1581 .d81 images")
     _write_new_image_copy(output_path, patched)
-    return MutationResult(str(output_path), "create-directory", 1, 0, "fat12")
+    return MutationResult(str(output_path), "create-directory", 1, 0, filesystem_name)
 
 
 def import_file_with_copy(
@@ -1006,14 +1045,23 @@ def import_directory_with_copy(
     host_directory: Path,
     output_path: Path,
 ) -> MutationResult:
-    """Recursively import a host directory tree into FAT12 in a new image copy."""
+    """Recursively import a host directory tree into a supported image copy."""
 
     if not host_directory.is_dir():
         raise ValueError("Choose a host directory to import")
-    image_bytes = _read_fat12_source_for_mutation(path, output_path)
-    entries, byte_count, patched = _import_directory_tree(image_bytes, directory, host_directory)
+    suffix = path.suffix.lower()
+    if suffix == ".img":
+        image_bytes = _read_fat12_source_for_mutation(path, output_path)
+        entries, byte_count, patched = _import_directory_tree(image_bytes, directory, host_directory)
+        filesystem_name = "fat12"
+    elif suffix == ".d81":
+        image_bytes = _read_source_for_mutation(path, output_path)
+        entries, byte_count, patched = _import_1581_directory_tree(image_bytes, directory, host_directory)
+        filesystem_name = "cbm_dos_1581"
+    else:
+        raise ValueError("Directory import is currently supported only for FAT12 .img and CBM DOS 1581 .d81 images")
     _write_new_image_copy(output_path, patched)
-    return MutationResult(str(output_path), "import-directory", entries, byte_count, "fat12")
+    return MutationResult(str(output_path), "import-directory", entries, byte_count, filesystem_name)
 
 
 def _read_fat12_source_for_mutation(path: Path, output_path: Path) -> bytes:
@@ -1078,6 +1126,29 @@ def _import_directory_tree(image_bytes: bytes, directory: str, host_directory: P
         if child.is_file():
             data = child.read_bytes()
             filesystem = _probe_fat12_bytes(patched)
+            patched = filesystem.import_file(patched, target_directory, child.name, data)
+            entries += 1
+            byte_count += len(data)
+    return entries, byte_count, patched
+
+
+def _import_1581_directory_tree(image_bytes: bytes, directory: str, host_directory: Path) -> tuple[int, int, bytes]:
+    filesystem = _probe_cbm_dos_1581_bytes(image_bytes)
+    patched = filesystem.create_directory(image_bytes, directory, host_directory.name)
+    target_directory = _join_filesystem_path(directory, host_directory.name)
+    entries = 1
+    byte_count = 0
+    for child in sorted(host_directory.iterdir(), key=lambda item: item.name.upper()):
+        if child.name.startswith("."):
+            continue
+        if child.is_dir():
+            child_entries, child_bytes, patched = _import_1581_directory_tree(patched, target_directory, child)
+            entries += child_entries
+            byte_count += child_bytes
+            continue
+        if child.is_file():
+            filesystem = _probe_cbm_dos_1581_bytes(patched)
+            data = child.read_bytes()
             patched = filesystem.import_file(patched, target_directory, child.name, data)
             entries += 1
             byte_count += len(data)

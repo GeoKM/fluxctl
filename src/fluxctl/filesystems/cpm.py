@@ -187,6 +187,14 @@ class CPMFilesystem(Filesystem):
                 block_size=1024,
                 skew=STANDARD_26_SECTOR_SKEW,
             )
+        if layout_id == "osborne_mfm_ssdd_200k":
+            return CPMDiskParameters(
+                reserved_tracks=3,
+                sectors_per_track=5,
+                sector_size=1024,
+                block_size=1024,
+                skew=(0, 1, 2, 3, 4),
+            )
         return None
 
     def _is_c64_cpm_2_2(self) -> bool:

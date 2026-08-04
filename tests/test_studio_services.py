@@ -194,6 +194,57 @@ def test_studio_blank_cbm_dos_images_accept_file_import(tmp_path) -> None:
         assert dump.size == 512
 
 
+def test_studio_cbm_dos_images_replace_and_delete_files(tmp_path) -> None:
+    for preset_id, suffix, layout_id, filesystem_name, entry_name in [
+        ("cbm_dos_1541_d64", ".d64", "commodore_gcr_1541_170k", "cbm_dos", "HELLO64"),
+        ("cbm_dos_1571_d71", ".d71", "commodore_gcr_1571_341k", "cbm_dos_1571", "HELLO71"),
+    ]:
+        output = tmp_path / f"blank{suffix}"
+        imported_path = tmp_path / f"with-file{suffix}"
+        replaced_path = tmp_path / f"replaced{suffix}"
+        deleted_path = tmp_path / f"deleted{suffix}"
+        host_file = tmp_path / f"{entry_name}.PRG"
+        replacement = tmp_path / f"{entry_name}-replacement.bin"
+        host_file.write_bytes(b"A" * 512)
+        replacement.write_bytes(b"B" * 900)
+        services.create_blank_image(preset_id, output)
+        services.import_file_with_copy(output, layout_id, "gcr", "/", host_file, imported_path)
+
+        replaced = services.replace_file_with_copy(
+            imported_path,
+            layout_id,
+            "gcr",
+            "/" + entry_name,
+            replacement,
+            replaced_path,
+        )
+        entries = services.list_files(replaced_path, layout_id, "gcr")
+        dump = services.file_hex_dump(replaced_path, layout_id, "gcr", "/" + entry_name)
+        extracted = services.export_filesystem_entries(
+            replaced_path,
+            layout_id,
+            "gcr",
+            ["/" + entry_name],
+            tmp_path / f"exported{suffix}",
+        )
+
+        assert replaced.filesystem == filesystem_name
+        assert entries[0].name == entry_name
+        assert entries[0].size == 900
+        assert dump.size == 900
+        assert (Path(extracted.path) / entry_name).read_bytes() == b"B" * 900
+
+        deleted = services.delete_filesystem_entry_with_copy(
+            replaced_path,
+            layout_id,
+            "gcr",
+            "/" + entry_name,
+            deleted_path,
+        )
+        assert deleted.filesystem == filesystem_name
+        assert services.list_files(deleted_path, layout_id, "gcr") == []
+
+
 def test_studio_blank_1571_image_has_validated_side_bam(tmp_path) -> None:
     output = tmp_path / "blank.d71"
     services.create_blank_image("cbm_dos_1571_d71", output)
@@ -276,6 +327,136 @@ def test_studio_blank_1581_image_has_bam_and_accepts_file_import(tmp_path) -> No
     assert entries[0].size == len(host_file.read_bytes())
     assert dump.size == len(host_file.read_bytes())
     assert after_file_blocks >= 3
+
+
+def test_studio_1581_image_replaces_and_deletes_root_file(tmp_path) -> None:
+    output = tmp_path / "blank.d81"
+    imported_path = tmp_path / "with-file.d81"
+    replaced_path = tmp_path / "replaced.d81"
+    deleted_path = tmp_path / "deleted.d81"
+    host_file = tmp_path / "HELLO81.PRG"
+    replacement = tmp_path / "replacement.bin"
+    host_file.write_bytes(b"A" * 512)
+    replacement.write_bytes(b"C" * 1200)
+    services.create_blank_image("cbm_dos_1581_d81", output)
+    services.import_file_with_copy(output, "commodore_mfm_1581_800k", "mfm", "/", host_file, imported_path)
+
+    replaced = services.replace_file_with_copy(
+        imported_path,
+        "commodore_mfm_1581_800k",
+        "mfm",
+        "/HELLO81",
+        replacement,
+        replaced_path,
+    )
+    entries = services.list_files(replaced_path, "commodore_mfm_1581_800k", "mfm")
+    dump = services.file_hex_dump(replaced_path, "commodore_mfm_1581_800k", "mfm", "/HELLO81")
+    extracted = services.export_filesystem_entries(
+        replaced_path,
+        "commodore_mfm_1581_800k",
+        "mfm",
+        ["/HELLO81"],
+        tmp_path / "exported81",
+    )
+
+    assert replaced.filesystem == "cbm_dos_1581"
+    assert entries[0].name == "HELLO81"
+    assert entries[0].size == 1200
+    assert dump.size == 1200
+    assert (Path(extracted.path) / "HELLO81").read_bytes() == b"C" * 1200
+
+    deleted = services.delete_filesystem_entry_with_copy(
+        replaced_path,
+        "commodore_mfm_1581_800k",
+        "mfm",
+        "/HELLO81",
+        deleted_path,
+    )
+    assert deleted.filesystem == "cbm_dos_1581"
+    assert services.list_files(deleted_path, "commodore_mfm_1581_800k", "mfm") == []
+
+
+def test_studio_1581_image_creates_directory_and_imports_file_into_it(tmp_path) -> None:
+    output = tmp_path / "blank.d81"
+    directory_path = tmp_path / "with-dir.d81"
+    imported_path = tmp_path / "with-dir-file.d81"
+    host_file = tmp_path / "NOTE.PRG"
+    host_file.write_bytes(b"inside 1581 directory")
+    services.create_blank_image("cbm_dos_1581_d81", output)
+
+    created = services.create_directory_with_copy(
+        output,
+        "commodore_mfm_1581_800k",
+        "mfm",
+        "/",
+        "TOOLS",
+        directory_path,
+    )
+    root_entries = services.list_files(directory_path, "commodore_mfm_1581_800k", "mfm")
+
+    assert created.filesystem == "cbm_dos_1581"
+    assert any(entry.name == "TOOLS" and entry.is_dir for entry in root_entries)
+    assert services.list_files(directory_path, "commodore_mfm_1581_800k", "mfm", "/TOOLS") == []
+
+    imported = services.import_file_with_copy(
+        directory_path,
+        "commodore_mfm_1581_800k",
+        "mfm",
+        "/TOOLS",
+        host_file,
+        imported_path,
+    )
+    tool_entries = services.list_files(imported_path, "commodore_mfm_1581_800k", "mfm", "/TOOLS")
+    extracted = services.export_filesystem_entries(
+        imported_path,
+        "commodore_mfm_1581_800k",
+        "mfm",
+        ["/TOOLS/NOTE"],
+        tmp_path / "exported-tools",
+    )
+
+    assert imported.filesystem == "cbm_dos_1581"
+    assert [entry.name for entry in tool_entries] == ["NOTE"]
+    assert (Path(extracted.path) / "NOTE").read_bytes() == host_file.read_bytes()
+
+
+def test_studio_1581_image_imports_directory_tree(tmp_path) -> None:
+    output = tmp_path / "blank.d81"
+    imported_path = tmp_path / "imported-tree.d81"
+    host_root = tmp_path / "PROJECT"
+    host_bin = host_root / "BIN"
+    host_bin.mkdir(parents=True)
+    (host_root / "README.PRG").write_bytes(b"root note")
+    (host_bin / "RUN.PRG").write_bytes(b"nested note")
+    services.create_blank_image("cbm_dos_1581_d81", output)
+
+    imported = services.import_directory_with_copy(
+        output,
+        "commodore_mfm_1581_800k",
+        "mfm",
+        "/",
+        host_root,
+        imported_path,
+    )
+    root_entries = services.list_files(imported_path, "commodore_mfm_1581_800k", "mfm")
+    project_entries = services.list_files(imported_path, "commodore_mfm_1581_800k", "mfm", "/PROJECT")
+    bin_entries = services.list_files(imported_path, "commodore_mfm_1581_800k", "mfm", "/PROJECT/BIN")
+    exported = services.export_filesystem_entry(
+        imported_path,
+        "commodore_mfm_1581_800k",
+        "mfm",
+        "/PROJECT",
+        tmp_path / "exported-tree",
+    )
+
+    assert imported.filesystem == "cbm_dos_1581"
+    assert imported.entries == 4
+    assert imported.bytes == len(b"root note") + len(b"nested note")
+    assert any(entry.name == "PROJECT" and entry.is_dir for entry in root_entries)
+    assert {entry.name for entry in project_entries} == {"README", "BIN"}
+    assert [entry.name for entry in bin_entries] == ["RUN"]
+    assert (Path(exported.path) / "README").read_bytes() == b"root note"
+    assert (Path(exported.path) / "BIN" / "RUN").read_bytes() == b"nested note"
 
 
 def test_studio_map_preserves_commodore_gcr_zones() -> None:

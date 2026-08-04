@@ -1275,12 +1275,12 @@ class FluxctlStudio(QMainWindow):
             return {button: (True, reason) for button in self._filesystem_write_buttons()}
         if suffix in {".d64", ".d71"} and filesystem in {"cbm_dos", "cbm_dos_1571"}:
             unsupported = (
-                "This CBM DOS image currently supports root-level file import only. "
-                "Delete, replace, directory import, and directory creation are not implemented yet."
+                "This CBM DOS image supports root-level file import, replace, and delete in a new image copy. "
+                "Directory import and directory creation are not implemented yet."
             )
             return {
-                self.file_replace_button: (False, unsupported),
-                self.file_delete_button: (False, unsupported),
+                self.file_replace_button: (True, unsupported),
+                self.file_delete_button: (True, unsupported),
                 self.file_import_button: (
                     True,
                     "Available for CBM DOS .d64/.d71 root-level PRG import. The operation writes a new image copy.",
@@ -1289,19 +1289,16 @@ class FluxctlStudio(QMainWindow):
                 self.directory_create_button: (False, unsupported),
             }
         if suffix == ".d81" and filesystem == "cbm_dos_1581":
-            unsupported = (
-                "This CBM DOS 1581 image currently supports root-level file import only. "
-                "Delete, replace, directory import, and directory creation are not implemented yet."
-            )
+            reason = "Available for CBM DOS 1581 .d81 images. Operations write a new image copy."
             return {
-                self.file_replace_button: (False, unsupported),
-                self.file_delete_button: (False, unsupported),
+                self.file_replace_button: (True, reason),
+                self.file_delete_button: (True, reason),
                 self.file_import_button: (
                     True,
-                    "Available for CBM DOS 1581 .d81 root-level PRG import. The operation writes a new image copy.",
+                    "Available for CBM DOS 1581 .d81 PRG import. The operation writes a new image copy.",
                 ),
-                self.directory_import_button: (False, unsupported),
-                self.directory_create_button: (False, unsupported),
+                self.directory_import_button: (True, reason),
+                self.directory_create_button: (True, reason),
             }
         if suffix not in {".img", ".d64", ".d71", ".d81"}:
             reason = "Write actions currently support FAT12 .img and CBM DOS .d64/.d71/.d81 images only."
@@ -1574,7 +1571,7 @@ class FluxctlStudio(QMainWindow):
             self,
             "Save modified image copy",
             str(default_output),
-            "Disk images (*.img);;All files (*)",
+            f"Disk images (*{self.current_path.suffix});;All files (*)",
         )
         if not output_name:
             return
@@ -1675,7 +1672,7 @@ class FluxctlStudio(QMainWindow):
             f"Current filesystem directory:\n{self.file_browser_path}\n\n"
             f"Host file to import:\n{host_file}\n\n"
             f"New image copy:\n{output}\n\n"
-            "FAT12 import requires an 8.3-compatible file name. CBM DOS import writes root-level PRG files "
+            "FAT12 import requires an 8.3-compatible file name. CBM DOS import writes PRG files "
             "using names up to 16 ASCII characters. Existing entries are not overwritten. The original image "
             "will not be modified. Continue?"
         )
@@ -1714,8 +1711,9 @@ class FluxctlStudio(QMainWindow):
             f"Current filesystem directory:\n{self.file_browser_path}\n\n"
             f"Host directory to import:\n{host_directory}\n\n"
             f"New image copy:\n{output}\n\n"
-            "FAT12 import currently requires 8.3-compatible file and directory names and does not overwrite "
-            "existing entries. The original image will not be modified. Continue?"
+            "FAT12 import currently requires 8.3-compatible file and directory names. CBM DOS 1581 import "
+            "supports ASCII names up to 16 characters. Existing entries are not overwritten. The original image "
+            "will not be modified. Continue?"
         )
         if not self._confirm_mutation("Import directory into image copy", question):
             return
@@ -1750,8 +1748,9 @@ class FluxctlStudio(QMainWindow):
             f"Current filesystem directory:\n{self.file_browser_path}\n\n"
             f"New directory name:\n{name}\n\n"
             f"New image copy:\n{output}\n\n"
-            "FAT12 directory creation currently requires an 8.3-compatible name and does not overwrite existing "
-            "entries. The original image will not be modified. Continue?"
+            "FAT12 directory creation currently requires an 8.3-compatible name. CBM DOS 1581 directory creation "
+            "supports ASCII names up to 16 characters. Existing entries are not overwritten. The original image "
+            "will not be modified. Continue?"
         )
         if not self._confirm_mutation("Create directory in image copy", question):
             return

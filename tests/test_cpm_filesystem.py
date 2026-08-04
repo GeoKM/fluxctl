@@ -11,12 +11,25 @@ from fluxctl.layouts.loader import load_builtin_layouts
 
 FIXTURE_CPM_SRC1 = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC1-256K.img")
 FIXTURE_CPM_SRC2 = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC2-256K.img")
+FIXTURE_OSBORNE_CPM22 = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-CPM22-200K.imd")
+FIXTURE_OSBORNE_WSTR = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-WSTR-200K.imd")
+FIXTURE_OSBORNE_CPM22_IMG = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-CPM22-200K.img")
+FIXTURE_OSBORNE_WSTR_IMG = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-WSTR-200K.img")
 
 
 def _mount_cpm_fixture(path: Path):
     load_builtin_layouts()
     image = _prepare_image(path, "generic_fm_8inch_cpm_256k", "fm")
     detection = detect_filesystem(image, path_name=path.name)
+    assert detection.plugin is not None
+    return detection.plugin
+
+
+def _mount_osborne_fixture(path: Path):
+    load_builtin_layouts()
+    image = _prepare_image(path, "osborne_mfm_ssdd_200k", "mfm")
+    detection = detect_filesystem(image, path_name=path.name)
+    assert detection.primary == "cpm"
     assert detection.plugin is not None
     return detection.plugin
 
@@ -75,3 +88,31 @@ def test_cpm_26_sector_studio_exports_multiple_selected_files(tmp_path: Path) ->
     assert result.bytes == 11648
     assert (tmp_path / "LOAD.LIN").stat().st_size == 2048
     assert (tmp_path / "LOAD.PLM").stat().st_size == 9600
+
+
+def test_osborne_cpm_extracts_file_contents() -> None:
+    for fixture in (FIXTURE_OSBORNE_WSTR, FIXTURE_OSBORNE_WSTR_IMG):
+        filesystem = _mount_osborne_fixture(fixture)
+
+        data = filesystem.extract_file("/SAMPLE.TXT")
+
+        assert len(data) == 2432
+        assert b"WordStar" in data
+
+
+def test_osborne_cpm_studio_exports_files(tmp_path: Path) -> None:
+    for fixture in (FIXTURE_OSBORNE_CPM22, FIXTURE_OSBORNE_CPM22_IMG):
+        target = tmp_path / fixture.suffix.lstrip(".")
+        target.mkdir()
+        result = services.export_filesystem_entries(
+            fixture,
+            "osborne_mfm_ssdd_200k",
+            "mfm",
+            ["/STAT.COM", "/SYSGEN.COM"],
+            target,
+        )
+
+        assert result.files == 2
+        assert result.bytes == 6912
+        assert (target / "STAT.COM").stat().st_size == 5376
+        assert (target / "SYSGEN.COM").stat().st_size == 1536
