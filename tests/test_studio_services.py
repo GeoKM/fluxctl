@@ -147,7 +147,12 @@ def test_studio_blank_cpm_images_probe_as_selected_layout(tmp_path) -> None:
         assert entries == []
 
 
-def test_studio_blank_cpm_images_accept_file_import(tmp_path) -> None:
+def test_studio_blank_cpm_images_accept_file_import(tmp_path, monkeypatch) -> None:
+    def reject_fat12_probe(_image_bytes: bytes) -> None:
+        raise AssertionError("modelled CP/M .img mutation must not probe as FAT12 first")
+
+    monkeypatch.setattr(services, "_probe_fat12_bytes", reject_fat12_probe)
+
     for preset_id, layout_id, file_name in [
         ("cpm_osborne_200k_img", "osborne_mfm_ssdd_200k", "HELLOOSB.TXT"),
         ("cpm_kaypro_200k_img", "kaypro_mfm_ssdd_40_200k", "HELLOKAY.TXT"),
@@ -191,6 +196,9 @@ def test_studio_blank_cpm_images_accept_file_import(tmp_path) -> None:
         assert deleted.filesystem == "cpm"
         assert deleted.entries == 1
         assert services.list_files(deleted_path, layout_id, "mfm") == []
+        deleted_summary = services.summarize_image(deleted_path)
+        assert deleted_summary.layout_id == layout_id
+        assert deleted_summary.filesystem == "cpm"
 
 
 def test_studio_blank_image_overwrite_is_explicit(tmp_path) -> None:

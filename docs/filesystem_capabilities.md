@@ -12,7 +12,7 @@ format-specific code to safely extract or modify file data.
 | CBM DOS 1541/1571 | Yes | Yes | Yes | Root only | Root file import, replace, and scratch/delete for `.d64`/`.d71` | Directory import and directory creation are pending. File import writes PRG-style files into a new image copy and does not overwrite entries. |
 | CBM DOS 1581 | Yes | Yes | Yes | Yes | File and directory mutation for `.d81` | Real 1581 BAM allocation exists for file and directory writes. File import does not overwrite entries. |
 | Amiga OFS/FFS | Yes | Yes | Yes | Yes | No | Reader supports file/directory export. `.adf` mutation is pending because allocation bitmap, block checksums, file headers, and directory hash chains must be updated correctly. |
-| CP/M variants | Yes | Yes | Yes for modelled DPBs | Root file import and delete for modelled flat `.img` | No | CP/M 26-sector 256K FM, Osborne 1 SSDD 200K MFM, and Kaypro II SSDD 200K MFM extraction are supported. Other CP/M variants can list directory entries, but need their own disk parameter blocks before extraction is enabled. |
+| CP/M variants | Yes | Yes | Yes for modelled DPBs | Root only | Root file import and delete for modelled flat `.img` | CP/M 26-sector 256K FM, Osborne 1 SSDD 200K MFM, and Kaypro II SSDD 200K MFM extraction are supported. Other CP/M variants can list directory entries, but need their own disk parameter blocks before extraction is enabled. |
 | DisplayWriter | Yes | Label directory only | No | No | No | The reader lists IBM standard-label `HDR1` records from track 0. Actual DisplayWriter document extraction is not implemented. |
 | RT-11 | Yes | No | No | No | No | Probe and volume label metadata exist. Directory listing and extraction are not implemented. |
 | Raw sectors | Not a filesystem | N/A | Sector dump/export | N/A | Sector patch helpers only | Raw sector operations do not understand filesystem allocation or directory structures. |
@@ -33,7 +33,7 @@ opened and probed. Write/manipulation actions always create a new image copy.
 | CBM DOS 1581 decoded `.scp`/`.imd` | Yes | Yes when reconstruction is complete enough | Yes | Yes | Yes when file chain sectors decode | Files and directories when chains decode | No | No | No | No | No | No | 1581 logical block overlay | 1581 BAM block map from decoded sectors |
 | Amiga OFS/FFS `.adf` | Yes | Yes | Yes | Yes | Yes | Files and directories | No | No | No | No | No | Minimal OFS `.adf` | Current file block overlay is approximate | Filesystem logical map |
 | Amiga decoded `.scp`/`.imd` | Yes | Yes when reconstruction is complete enough | Yes | Yes | Yes when file blocks decode | Files and directories when blocks decode | No | No | No | No | No | No | Current file block overlay is approximate | Filesystem logical map |
-| CP/M variants | Yes | Yes | Root only | Yes | Yes for modelled CP/M DPBs | Files for modelled DPBs | No | Modelled flat `.img` only | Modelled flat `.img` only | No | No | Osborne 1 and Kaypro II 200K `.img` | C64 CP/M 2.2 only; more CP/M allocation overlays pending | Filesystem logical map |
+| CP/M variants | Yes | Yes | Root only | Yes | Yes for modelled CP/M DPBs | Files for modelled DPBs | No | Modelled flat `.img` only | Modelled flat `.img` only | No | No | Osborne 1 and Kaypro II 200K `.img` | Allocation-block overlay for modelled DPBs | Filesystem logical map |
 | DisplayWriter | Yes | Label entries only | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
 | RT-11 | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
 

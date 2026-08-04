@@ -992,16 +992,16 @@ def delete_filesystem_entry_with_copy(
     suffix = path.suffix.lower()
     image_bytes = _read_source_for_mutation(path, output_path)
     if suffix == ".img":
-        try:
-            filesystem = _probe_fat12_bytes(image_bytes)
-            entry = _find_entry(filesystem, fs_path)
-            patched = filesystem.delete_entry(image_bytes, fs_path)
-            filesystem_name = "fat12"
-        except ValueError:
+        if _is_modelled_cpm_layout(layout_id):
             filesystem = _probe_cpm_bytes(image_bytes, layout_id)
             entry = _find_entry(filesystem, fs_path)
             patched = filesystem.delete_entry(image_bytes, fs_path)
             filesystem_name = "cpm"
+        else:
+            filesystem = _probe_fat12_bytes(image_bytes)
+            entry = _find_entry(filesystem, fs_path)
+            patched = filesystem.delete_entry(image_bytes, fs_path)
+            filesystem_name = "fat12"
     elif suffix in {".d64", ".d71"}:
         filesystem = _probe_cbm_dos_bytes(image_bytes)
         entries = filesystem.list_directory("/")
@@ -1068,14 +1068,14 @@ def import_file_with_copy(
     suffix = path.suffix.lower()
     if suffix == ".img":
         image_bytes = _read_fat12_source_for_mutation(path, output_path)
-        try:
-            filesystem = _probe_fat12_bytes(image_bytes)
-            patched = filesystem.import_file(image_bytes, directory, host_file.name, data)
-            filesystem_name = "fat12"
-        except ValueError:
+        if _is_modelled_cpm_layout(layout_id):
             filesystem = _probe_cpm_bytes(image_bytes, layout_id)
             patched = filesystem.import_file(image_bytes, directory, host_file.name, data)
             filesystem_name = "cpm"
+        else:
+            filesystem = _probe_fat12_bytes(image_bytes)
+            patched = filesystem.import_file(image_bytes, directory, host_file.name, data)
+            filesystem_name = "fat12"
     elif suffix in {".d64", ".d71"}:
         image_bytes = _read_source_for_mutation(path, output_path)
         filesystem = _probe_cbm_dos_bytes(image_bytes)
@@ -1140,6 +1140,10 @@ def _probe_fat12_bytes(image_bytes: bytes) -> FAT12:
     if not filesystem.probe(RawSectorImage(image_bytes)):
         raise ValueError("FAT12 mutation is currently supported only for FAT12 images")
     return filesystem
+
+
+def _is_modelled_cpm_layout(layout_id: Optional[str]) -> bool:
+    return layout_id is not None and cpm_disk_parameters_for_layout(layout_id) is not None
 
 
 def _probe_cpm_bytes(image_bytes: bytes, layout_id: Optional[str]) -> CPMFilesystem:
