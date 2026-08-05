@@ -34,6 +34,7 @@ opened and probed. Write/manipulation actions always create a new image copy.
 | Amiga OFS/FFS `.adf` | Yes | Yes | Yes | Yes | Yes | Files and directories | No | No | No | No | No | Minimal OFS `.adf` | Current file block overlay is approximate | Filesystem logical map |
 | Amiga decoded `.scp`/`.imd` | Yes | Yes when reconstruction is complete enough | Yes | Yes | Yes when file blocks decode | Files and directories when blocks decode | No | No | No | No | No | No | Current file block overlay is approximate | Filesystem logical map |
 | CP/M variants | Yes | Yes | Root only | Yes | Yes for modelled CP/M DPBs | Files for modelled DPBs | No | Modelled flat `.img` only | Modelled flat `.img` only | No | No | Osborne 1 and Kaypro II 200K `.img` | Allocation-block overlay for modelled DPBs | Filesystem logical map |
+| Tandy/TRS-80 `.dsk`/`.dmk`/`.imd`/`.scp` | Yes | Model III TRSDOS 1.3, NEWDOS/80, and CP/M where probes pass; other Tandy DOS variants pending | Root only | Yes | TRSDOS 1.3 and NEWDOS/80 files; no for unmodelled Tandy CP/M DPBs | TRSDOS 1.3 and NEWDOS/80 files; no for unmodelled Tandy CP/M DPBs | No | No | No | No | No | No | No | Physical map; filesystem logical map where supported |
 | DisplayWriter | Yes | Label entries only | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
 | RT-11 | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
 
@@ -42,6 +43,12 @@ Notes:
 - `.scp` and `.imd` write/manipulation actions are disabled even when a
   filesystem can be listed, because Fluxctl does not yet have a preservation-safe
   way to rewrite those containers after filesystem metadata changes.
+- Tandy/TRS-80 JV3 and DMK containers can be opened and converted to IMD.
+  Model III TRSDOS 1.3 and NEWDOS/80 can list and extract root files. Other
+  Tandy DOS-family filesystems, including LDOS/TRSDOS 6 fixtures, remain
+  unsupported. Tandy CP/M can be listed when the directory probe passes, but
+  file extraction remains disabled until its exact allocation and skew rules are
+  modelled.
 - CBM DOS `.d64`/`.d71` import support currently creates root-level PRG
   entries only. CBM DOS 1581 `.d81` supports directory creation and recursive
   directory import. Existing names are not overwritten. Replace and

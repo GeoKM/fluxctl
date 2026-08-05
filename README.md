@@ -75,7 +75,7 @@ python3 scripts/install_fluxctl.py
 ## Supported operations
 - **info**: inspect SCP headers and inferred geometry.
 - **doctor**: check the local installation and optional helper integrations.
-- **probe**: detect encoding, layout, and filesystem (where detectable) for SCP and flat images.
+- **probe**: detect encoding, layout, and filesystem (where detectable) for SCP, IMD, TRS-80 `.dsk`/`.dmk`, and flat images.
 - **compare**: hash + byte diff two images; SCP inputs are decoded first.
 - **roundtrip**: convert through an intermediate format and verify decoded-sector
   hashes after each leg.
@@ -88,7 +88,7 @@ python3 scripts/install_fluxctl.py
 
 ## Encodings and filesystems
 - Encodings: MFM, FM, GCR (Commodore) via plugin registry.
-- Filesystems detected: FAT12, CBM DOS, CP/M (C64 CP/M 2.2, C128 CP/M 3.0), Amiga OFS/FFS, RT-11 (RX02), Displaywriter probe; raw sector dumps always supported.
+- Filesystems detected: FAT12, CBM DOS, CP/M (C64 CP/M 2.2, C128 CP/M 3.0, Osborne/Kaypro/Tandy variants), TRSDOS 1.3, NEWDOS/80, Amiga OFS/FFS, RT-11 (RX02), Displaywriter probe; raw sector dumps always supported.
 - Filesystem listing, extraction, export, and copy-only mutation support varies
   by format. See the
   [filesystem capability matrix](docs/filesystem_capabilities.md) for current
@@ -122,6 +122,8 @@ fluxctl visualize disk.scp --format ascii --out map.txt
 fluxctl convert disk.scp --to raw --out disk.img
 fluxctl convert disk.scp --to raw --out disk.img --layout ibm_mfm_720k
 fluxctl convert disk.img --to imd --out disk.imd --layout ibm_mfm_720k
+fluxctl convert trs80.dsk --to imd --out trs80.imd
+fluxctl convert trs80.dmk --to imd --out trs80.imd
 fluxctl convert c64.scp --to d64 --out disk.d64
 fluxctl convert c64.scp --to g64 --out disk.g64 --layout commodore_gcr_1541_170k
 fluxctl convert c128.scp --to d71 --out disk.d71 --layout commodore_gcr_1571_341k

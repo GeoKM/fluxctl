@@ -20,6 +20,7 @@ def test_filesystem_capabilities_documents_current_studio_media() -> None:
         "Amiga OFS/FFS `.adf`",
         "Amiga decoded `.scp`/`.imd`",
         "CP/M variants",
+        "Tandy/TRS-80 `.dsk`/`.dmk`/`.imd`/`.scp`",
         "DisplayWriter",
         "RT-11",
     ]

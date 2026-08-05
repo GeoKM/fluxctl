@@ -49,6 +49,27 @@ FIXTURE_KAYPRO_CPM22_IMG = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-M
 FIXTURE_KAYPRO_WSTR_IMG = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-WSTR-200K.img")
 FIXTURE_KAYPRO_CPM22_SCP = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-CPM22-200K.scp")
 FIXTURE_KAYPRO_WSTR_SCP = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-WSTR-200K.scp")
+FIXTURE_TANDY_MODEL3_TRSDOS_DSK = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model3-SSDD-MFM-TRSDOS13-180K.dsk")
+FIXTURE_TANDY_MODEL3_TRSDOS_IMD = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model3-SSDD-MFM-TRSDOS13-180K.imd")
+FIXTURE_TANDY_MODEL3_TRSDOS_SCP = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model3-SSDD-MFM-TRSDOS13-180K.scp")
+FIXTURE_TANDY_MODEL3_LDOS_DSK = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model3-SSDD-MFM-LDOS531-180K.dsk")
+FIXTURE_TANDY_MODEL3_LDOS_IMD = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model3-SSDD-MFM-LDOS531-180K.imd")
+FIXTURE_TANDY_MODEL3_LDOS_SCP = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model3-SSDD-MFM-LDOS531-180K.scp")
+FIXTURE_TANDY_MODEL3_NEWDOS80_DMK = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model3-SSDD-MFM-NEWDOS80-180K.dmk")
+FIXTURE_TANDY_MODEL3_NEWDOS80_IMD = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model3-SSDD-MFM-NEWDOS80-180K.imd")
+FIXTURE_TANDY_MODEL3_NEWDOS80_SCP = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model3-SSDD-MFM-NEWDOS80-180K.scp")
+FIXTURE_TANDY_MODEL4_TRSDOS_DSK = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-TRSDOS6-180K.dsk")
+FIXTURE_TANDY_MODEL4_TRSDOS_IMD = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-TRSDOS6-180K.imd")
+FIXTURE_TANDY_MODEL4_TRSDOS_SCP = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-TRSDOS6-180K.scp")
+FIXTURE_TANDY_MODEL4_LDOS_DSK = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-LDOS631-180K.dsk")
+FIXTURE_TANDY_MODEL4_LDOS_IMD = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-LDOS631-180K.imd")
+FIXTURE_TANDY_MODEL4_LDOS_SCP = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-LDOS631-180K.scp")
+FIXTURE_TANDY_CPM22_DSK = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-CPM22-180K.dsk")
+FIXTURE_TANDY_CPM22_IMD = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-CPM22-180K.imd")
+FIXTURE_TANDY_CPM22_SCP = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-CPM22-180K.scp")
+FIXTURE_TANDY_CPMPLUS_DSK = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-CPMPlus-156K.dsk")
+FIXTURE_TANDY_CPMPLUS_IMD = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-CPMPlus-156K.imd")
+FIXTURE_TANDY_CPMPLUS_SCP = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-CPMPlus-156K.scp")
 
 
 def test_probe_includes_gcr_candidates() -> None:
@@ -282,6 +303,53 @@ def test_probe_supports_kaypro_5inch_cpm_images() -> None:
         assert result.exit_code == 0
         payload = json.loads(result.stdout)
         assert payload[0]["layout_id"] == "kaypro_mfm_ssdd_40_200k"
+        assert payload[0]["encoding"] == "mfm"
+        assert payload[0]["filesystem"] == "cpm"
+
+
+def test_probe_supports_tandy_trsdos_images_without_false_filesystem() -> None:
+    runner = CliRunner()
+    expectations = {
+        FIXTURE_TANDY_MODEL3_TRSDOS_DSK: ("tandy_mfm_ssdd_180k", "trsdos_1_3"),
+        FIXTURE_TANDY_MODEL3_TRSDOS_IMD: ("tandy_mfm_ssdd_180k", "trsdos_1_3"),
+        FIXTURE_TANDY_MODEL3_TRSDOS_SCP: ("tandy_mfm_ssdd_180k", "trsdos_1_3"),
+        FIXTURE_TANDY_MODEL3_LDOS_DSK: ("tandy_mfm_ssdd_180k_s0", None),
+        FIXTURE_TANDY_MODEL3_LDOS_IMD: ("tandy_mfm_ssdd_180k_s0", None),
+        FIXTURE_TANDY_MODEL3_LDOS_SCP: ("tandy_mfm_ssdd_180k_s0", None),
+        FIXTURE_TANDY_MODEL3_NEWDOS80_DMK: ("tandy_mfm_ssdd_180k_s0", "newdos80"),
+        FIXTURE_TANDY_MODEL3_NEWDOS80_IMD: ("tandy_mfm_ssdd_180k_s0", "newdos80"),
+        FIXTURE_TANDY_MODEL3_NEWDOS80_SCP: ("tandy_mfm_ssdd_180k_s0", "newdos80"),
+        FIXTURE_TANDY_MODEL4_TRSDOS_DSK: ("tandy_mfm_ssdd_180k_s0", None),
+        FIXTURE_TANDY_MODEL4_TRSDOS_IMD: ("tandy_mfm_ssdd_180k_s0", None),
+        FIXTURE_TANDY_MODEL4_TRSDOS_SCP: ("tandy_mfm_ssdd_180k_s0", None),
+        FIXTURE_TANDY_MODEL4_LDOS_DSK: ("tandy_mfm_ssdd_180k_s0", None),
+        FIXTURE_TANDY_MODEL4_LDOS_IMD: ("tandy_mfm_ssdd_180k_s0", None),
+        FIXTURE_TANDY_MODEL4_LDOS_SCP: ("tandy_mfm_ssdd_180k_s0", None),
+    }
+    for fixture, (layout_id, filesystem) in expectations.items():
+        result = runner.invoke(cli.app, ["probe", str(fixture)])
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload[0]["layout_id"] == layout_id
+        assert payload[0]["encoding"] == "mfm"
+        assert payload[0]["filesystem"] == filesystem
+
+
+def test_probe_supports_tandy_cpm_images() -> None:
+    runner = CliRunner()
+    expectations = {
+        FIXTURE_TANDY_CPM22_DSK: "tandy_mfm_ssdd_180k",
+        FIXTURE_TANDY_CPM22_IMD: "tandy_mfm_ssdd_180k",
+        FIXTURE_TANDY_CPM22_SCP: "tandy_mfm_ssdd_180k",
+        FIXTURE_TANDY_CPMPLUS_DSK: "tandy_mfm_cpmplus_156k",
+        FIXTURE_TANDY_CPMPLUS_IMD: "tandy_mfm_cpmplus_hxc_360k",
+        FIXTURE_TANDY_CPMPLUS_SCP: "tandy_mfm_cpmplus_156k",
+    }
+    for fixture, layout_id in expectations.items():
+        result = runner.invoke(cli.app, ["probe", str(fixture)])
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload[0]["layout_id"] == layout_id
         assert payload[0]["encoding"] == "mfm"
         assert payload[0]["filesystem"] == "cpm"
 

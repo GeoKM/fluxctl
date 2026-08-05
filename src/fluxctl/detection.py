@@ -130,6 +130,8 @@ def _estimate_geometry(image: SCPImage, decoder: Decoder, sample_tracks: int = 6
 
     sector_counts: list[int] = []
     sector_sizes: list[int] = []
+    min_sector_ids: list[int] = []
+    max_sector_ids: list[int] = []
     track_samples = 0
     tracks_with_sectors = 0
     for track_flux in _tracks_with_flux(image):
@@ -156,6 +158,8 @@ def _estimate_geometry(image: SCPImage, decoder: Decoder, sample_tracks: int = 6
         if sector_ids:
             min_id = min(sector_ids)
             max_id = max(sector_ids)
+            min_sector_ids.append(min_id)
+            max_sector_ids.append(max_id)
             if min_id == 0:
                 sector_counts.append(max_id + 1)
             else:
@@ -171,6 +175,10 @@ def _estimate_geometry(image: SCPImage, decoder: Decoder, sample_tracks: int = 6
         geometry["sectors_per_track"] = Counter(sector_counts).most_common(1)[0][0]
     if sector_sizes:
         geometry["sector_size"] = Counter(sector_sizes).most_common(1)[0][0]
+    if min_sector_ids:
+        geometry["min_sector_id"] = Counter(min_sector_ids).most_common(1)[0][0]
+    if max_sector_ids:
+        geometry["max_sector_id"] = Counter(max_sector_ids).most_common(1)[0][0]
     if track_samples:
         geometry["track_samples"] = track_samples
         geometry["tracks_with_sectors"] = tracks_with_sectors
@@ -228,6 +236,37 @@ def _sectors_match(desc: LayoutDescriptor, observed: int) -> bool:
     if desc.track_sectors:
         return observed in desc.track_sectors
     return observed == desc.sectors_per_track
+
+
+def _sector_base_matches(desc: LayoutDescriptor, geometry: dict) -> bool:
+    observed = geometry.get("min_sector_id")
+    if observed is None:
+        return True
+    return int(desc.id_rules.get("sector_number_base", 1)) == observed
+
+
+def _apply_tandy_mfm_bonus(
+    desc: LayoutDescriptor,
+    geometry: dict,
+    logical_tracks: int,
+    heads_present: set[int],
+    evidence: list[str],
+) -> float:
+    if not desc.layout_id.startswith("tandy_"):
+        return 0.0
+    if logical_tracks != 40 or len(heads_present) != 1:
+        return 0.0
+    observed_sectors = geometry.get("sectors_per_track")
+    observed_size = geometry.get("sector_size")
+    if observed_sectors is None or observed_size is None:
+        return 0.0
+    if not _sectors_match(desc, observed_sectors) or observed_size != desc.sector_size:
+        return 0.0
+    if not _sector_base_matches(desc, geometry):
+        evidence.append("tandy_sector_base_mismatch=1")
+        return -0.2
+    evidence.append("tandy_mfm_geometry_bonus=1")
+    return 0.35
 
 
 def _estimate_bitstream_length(image: SCPImage, decoder: Decoder, sample_tracks: int = 4) -> Optional[float]:
@@ -338,6 +377,9 @@ def detect_layout(
             else:
                 score -= 0.1
                 evidence.append(f"sector_size_mismatch={observed_size}")
+
+        if desc.encoding == "mfm":
+            score += _apply_tandy_mfm_bonus(desc, geometry, logical_tracks, heads_present, evidence)
 
         if encoding == "gcr":
             if geometry.get("track_samples") and geometry.get("tracks_with_sectors") == 0:
@@ -591,6 +633,7 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
                 else:
                     score -= 0.1
                     evidence.append(f"sector_size_mismatch={observed_size}")
+            score += _apply_tandy_mfm_bonus(desc, geometry, logical_tracks, heads_present, evidence)
             if (
                 ("cpm" in desc.layout_id or _is_modelled_cpm_layout(desc))
                 and logical_tracks > desc.tracks
@@ -737,6 +780,15 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
         if desc.encoding == "fm" and fm_bits is not None:
             if logical_tracks > 77:
                 continue
+            if (
+                mfm_conf is not None
+                and mfm_conf >= 0.95
+                and mfm_geometry.get("tracks_with_sectors")
+                and fm_conf is not None
+                and fm_conf < 0.85
+            ):
+                score -= 0.45
+                evidence.append("fm_vs_strong_mfm_penalty=1")
             rate_factor = 0.5 if desc.sectors_per_track >= 15 else 1.0
             expected_bits = int(desc.sectors_per_track * desc.sector_size * 16 * rate_factor)
             diff = abs(expected_bits - fm_bits)
