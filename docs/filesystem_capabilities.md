@@ -12,7 +12,7 @@ format-specific code to safely extract or modify file data.
 | CBM DOS 1541/1571 | Yes | Yes | Yes | Root only | Root file import, replace, and scratch/delete for `.d64`/`.d71` | Directory import and directory creation are pending. File import writes PRG-style files into a new image copy and does not overwrite entries. |
 | CBM DOS 1581 | Yes | Yes | Yes | Yes | File and directory mutation for `.d81` | Real 1581 BAM allocation exists for file and directory writes. File import does not overwrite entries. |
 | Amiga OFS/FFS | Yes | Yes | Yes | Yes | No | Reader supports file/directory export. `.adf` mutation is pending because allocation bitmap, block checksums, file headers, and directory hash chains must be updated correctly. |
-| CP/M variants | Yes | Yes | Yes for modelled DPBs | Root only | Root file import and delete for modelled flat `.img` | CP/M 26-sector 256K FM, Osborne 1 SSDD 200K MFM, and Kaypro II SSDD 200K MFM extraction are supported. Other CP/M variants can list directory entries, but need their own disk parameter blocks before extraction is enabled. |
+| CP/M variants | Yes | Yes | Yes for modelled DPBs | Root only | Root file import and delete for modelled flat `.img` | CP/M 26-sector 256K FM, Osborne 1 SSDD 200K MFM, Kaypro II SSDD 200K MFM, Tandy Model 4 CP/M 2.2 180K MFM, and Tandy Model 4 CP/M Plus mixed-sector media are modelled for extraction. Mixed-sector CP/M Plus mutation is read-only until a safe writer exists. |
 | DisplayWriter | Yes | Label directory only | No | No | No | The reader lists IBM standard-label `HDR1` records from track 0. Actual DisplayWriter document extraction is not implemented. |
 | RT-11 | Yes | No | No | No | No | Probe and volume label metadata exist. Directory listing and extraction are not implemented. |
 | Raw sectors | Not a filesystem | N/A | Sector dump/export | N/A | Sector patch helpers only | Raw sector operations do not understand filesystem allocation or directory structures. |
@@ -33,8 +33,8 @@ opened and probed. Write/manipulation actions always create a new image copy.
 | CBM DOS 1581 decoded `.scp`/`.imd` | Yes | Yes when reconstruction is complete enough | Yes | Yes | Yes when file chain sectors decode | Files and directories when chains decode | No | No | No | No | No | No | 1581 logical block overlay | 1581 BAM block map from decoded sectors |
 | Amiga OFS/FFS `.adf` | Yes | Yes | Yes | Yes | Yes | Files and directories | No | No | No | No | No | Minimal OFS `.adf` | Current file block overlay is approximate | Filesystem logical map |
 | Amiga decoded `.scp`/`.imd` | Yes | Yes when reconstruction is complete enough | Yes | Yes | Yes when file blocks decode | Files and directories when blocks decode | No | No | No | No | No | No | Current file block overlay is approximate | Filesystem logical map |
-| CP/M variants | Yes | Yes | Root only | Yes | Yes for modelled CP/M DPBs | Files for modelled DPBs | No | Modelled flat `.img` only | Modelled flat `.img` only | No | No | Osborne 1 and Kaypro II 200K `.img` | Allocation-block overlay for modelled DPBs | Filesystem logical map |
-| Tandy/TRS-80 `.dsk`/`.dmk`/`.imd`/`.scp` | Yes | Model III TRSDOS 1.3, NEWDOS/80, and CP/M where probes pass; other Tandy DOS variants pending | Root only | Yes | TRSDOS 1.3 and NEWDOS/80 files; no for unmodelled Tandy CP/M DPBs | TRSDOS 1.3 and NEWDOS/80 files; no for unmodelled Tandy CP/M DPBs | No | No | No | No | No | No | No | Physical map; filesystem logical map where supported |
+| CP/M variants | Yes | Yes | Root only | Yes | Yes for modelled CP/M DPBs | Files for modelled DPBs | No | Modelled flat `.img` only | Modelled flat `.img` only | No | No | Osborne 1, Kaypro II, and Tandy Model 4 CP/M 2.2 `.img` | Allocation-block overlay for modelled DPBs | Filesystem logical map |
+| Tandy/TRS-80 `.dsk`/`.dmk`/`.imd`/`.scp` | Yes | Model III TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and CP/M where probes pass | Root only | Yes | TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and modelled Tandy CP/M files | TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and modelled Tandy CP/M files | No | No | No | No | No | No | Allocation-block/extent overlay where supported | Physical map; filesystem logical map where supported |
 | DisplayWriter | Yes | Label entries only | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
 | RT-11 | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
 
@@ -44,11 +44,9 @@ Notes:
   filesystem can be listed, because Fluxctl does not yet have a preservation-safe
   way to rewrite those containers after filesystem metadata changes.
 - Tandy/TRS-80 JV3 and DMK containers can be opened and converted to IMD.
-  Model III TRSDOS 1.3 and NEWDOS/80 can list and extract root files. Other
-  Tandy DOS-family filesystems, including LDOS/TRSDOS 6 fixtures, remain
-  unsupported. Tandy CP/M can be listed when the directory probe passes, but
-  file extraction remains disabled until its exact allocation and skew rules are
-  modelled.
+  Model III TRSDOS 1.3, NEWDOS/80, and LDOS/TRSDOS 6 can list and extract root
+  files. Tandy Model 4 CP/M 2.2 and CP/M Plus allocation maps are modelled for
+  extraction and selected-file overlays.
 - CBM DOS `.d64`/`.d71` import support currently creates root-level PRG
   entries only. CBM DOS 1581 `.d81` supports directory creation and recursive
   directory import. Existing names are not overwritten. Replace and
@@ -57,9 +55,10 @@ Notes:
   than FAT12 and CBM DOS until full OFS/FFS file header, extension block, and
   hash-chain traversal is implemented.
 - CP/M export is enabled only when Fluxctl has a modelled disk parameter block.
-  The CP/M 26-sector 256K FM, Osborne 1 SSDD 200K MFM, and Kaypro II SSDD
-  200K MFM DPBs are supported; C64/C128 and other generic CP/M layouts still
-  need their own allocation maps.
+  The CP/M 26-sector 256K FM, Osborne 1 SSDD 200K MFM, Kaypro II SSDD 200K MFM,
+  Tandy Model 4 CP/M 2.2 180K MFM, and Tandy Model 4 CP/M Plus mixed-sector DPBs
+  are supported; C64/C128 and other generic CP/M layouts still need their own
+  allocation maps.
 
 ## Export Behavior
 
@@ -96,7 +95,8 @@ Currently enabled copy-only mutation:
 
 Studio can also create new blank formatted images for FAT12 `.img`, CBM DOS
 `.d64`, CBM DOS `.d71`, CBM DOS 1581 `.d81`, minimal AmigaDOS OFS `.adf`,
-and modelled CP/M `.img` layouts for Osborne 1 and Kaypro II 200K media.
+and modelled CP/M `.img` layouts for Osborne 1, Kaypro II, and Tandy Model 4
+CP/M 2.2 media.
 
 Currently disabled mutation:
 

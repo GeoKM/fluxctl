@@ -796,6 +796,7 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
         "tandy_mfm_ssdd_180k_s0",
     ),
     ".img": (
+        "tandy_mfm_ssdd_180k",
         "kaypro_mfm_ssdd_40_200k",
         "osborne_mfm_ssdd_200k",
         "generic_mfm_8inch_500k",
@@ -984,6 +985,8 @@ def _flat_layout_filesystem_penalty(layout: LayoutDescriptor, filesystem_name: O
         "generic_fm_8inch_cpm_256k",
         "kaypro_mfm_ssdd_40_200k",
         "osborne_mfm_ssdd_200k",
+        "tandy_mfm_ssdd_180k",
+        "tandy_mfm_cpmplus_156k",
     }
     if layout.layout_id in modelled_cpm_layouts and filesystem_name != "cpm":
         return 3
@@ -1004,6 +1007,7 @@ def _cpm_layout_marker_score(data: bytes, layout_id: str) -> int:
     markers = {
         "kaypro_mfm_ssdd_40_200k": b"FLUXCTL CPM KAYPROII",
         "osborne_mfm_ssdd_200k": b"FLUXCTL CPM OSBORNE",
+        "tandy_mfm_ssdd_180k": b"FLUXCTL CPM TANDY4",
     }
     active_markers = [marker for marker in markers.values() if data.startswith(marker)]
     if not active_markers:

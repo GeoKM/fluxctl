@@ -68,4 +68,31 @@ def test_ldos_and_trsdos6_fixtures_are_not_misdetected_as_trsdos13() -> None:
         image = _prepare_image(fixture, layout_id, "mfm")
         detection = detect_filesystem(image, path_name=fixture.name)
 
-        assert detection.primary is None
+        assert detection.primary == "ldos_trsdos6"
+
+
+def test_ldos_trsdos6_lists_directory_entries() -> None:
+    load_builtin_layouts()
+    image = _prepare_image(FIXTURE_MODEL4_TRSDOS6, "tandy_mfm_ssdd_180k_s0", "mfm")
+    detection = detect_filesystem(image, path_name=FIXTURE_MODEL4_TRSDOS6.name)
+    assert detection.primary == "ldos_trsdos6"
+    assert detection.plugin is not None
+
+    entries = {entry.name: entry for entry in detection.plugin.list_directory()}
+
+    assert {"BASIC.CMD", "BOOT.SYS", "DIR.SYS", "SYS0.SYS"} <= set(entries)
+    assert entries["BASIC.CMD"].size == 21584
+    assert entries["BOOT.SYS"].size == 3572
+
+
+def test_ldos_trsdos6_extracts_file_contents() -> None:
+    load_builtin_layouts()
+    image = _prepare_image(FIXTURE_MODEL3_LDOS, "tandy_mfm_ssdd_180k_s0", "mfm")
+    detection = detect_filesystem(image, path_name=FIXTURE_MODEL3_LDOS.name)
+    assert detection.plugin is not None
+
+    data = detection.plugin.extract_file("BASIC.CMD")
+
+    assert len(data) == 5438
+    assert data.startswith(b"\x1f1Copyright 1991 MISOSYS")
+    assert b"All rights reserved" in data[:80]

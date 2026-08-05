@@ -214,12 +214,53 @@ def test_tandy_cpm_dsk_lists_files() -> None:
     assert {"ASM.COM", "PIP.COM", "STAT.COM"} <= names
 
 
+def test_tandy_cpm_dsk_extracts_file_contents() -> None:
+    filesystem = _mount_tandy_fixture(FIXTURE_TANDY_CPM22_DSK, "tandy_mfm_ssdd_180k")
+
+    data = filesystem.extract_file("/PIP.COM")
+
+    assert len(data) == 4096
+    assert data.startswith(bytes.fromhex("2a0100013300097e"))
+
+
+def test_tandy_cpm_file_allocation_overlay_uses_even_odd_skew() -> None:
+    filesystem = _mount_tandy_fixture(FIXTURE_TANDY_CPM22_DSK, "tandy_mfm_ssdd_180k")
+
+    addresses = filesystem.file_sector_addresses("/PIP.COM")
+
+    assert len(addresses) == 16
+    assert (16, 0, 8) in addresses
+    assert (16, 0, 18) in addresses
+    assert (17, 0, 1) in addresses
+
+
 def test_tandy_cpm_plus_dmk_lists_files() -> None:
     filesystem = _mount_tandy_fixture(FIXTURE_TANDY_CPMPLUS_DSK, "tandy_mfm_cpmplus_156k")
 
     names = {entry.name for entry in filesystem.list_directory()}
 
     assert {"CPM3.SYS", "PIP.COM", "SETDEF.COM"} <= names
+
+
+def test_tandy_cpm_plus_dmk_extracts_file_contents() -> None:
+    filesystem = _mount_tandy_fixture(FIXTURE_TANDY_CPMPLUS_DSK, "tandy_mfm_cpmplus_156k")
+
+    data = filesystem.extract_file("/PIP.COM")
+
+    assert len(data) == 8704
+    assert data.startswith(bytes.fromhex("31b722cde8050e00cd0500"))
+    assert b"CP/M Version 3.0" in data[:128]
+
+
+def test_tandy_cpm_plus_file_allocation_overlay_uses_mixed_track_geometry() -> None:
+    filesystem = _mount_tandy_fixture(FIXTURE_TANDY_CPMPLUS_DSK, "tandy_mfm_cpmplus_156k")
+
+    addresses = filesystem.file_sector_addresses("/PIP.COM")
+
+    assert len(addresses) == 18
+    assert (19, 0, 3) in addresses
+    assert (19, 0, 8) in addresses
+    assert (20, 0, 1) in addresses
 
 
 def test_studio_file_allocation_view_supports_modelled_cpm() -> None:
