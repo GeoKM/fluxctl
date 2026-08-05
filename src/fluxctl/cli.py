@@ -1124,7 +1124,8 @@ def _image_from_tracks(
     sector_ids = [sec.sector_id for ts in tracks for sec in ts.sectors]
     inferred_base = min(sector_ids) if sector_ids else 1
     sector_base = int(layout.id_rules.get("sector_number_base", inferred_base)) if layout else inferred_base
-    image.set_geometry(geom.spt or geom.tracks, geom.heads, sector_base)
+    sectors_per_track = layout.sectors_per_track if layout else (geom.spt or geom.tracks)
+    image.set_geometry(sectors_per_track, geom.heads, sector_base)
     if layout:
         image.layout = layout
     return image

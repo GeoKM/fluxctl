@@ -16,6 +16,15 @@
   writable but the current image container cannot preserve or rewrite the
   required sector format safely.
 
+## Hardware Workflows
+
+- Couple Fluxctl Studio to Greaseweazle for real-drive workflows. Add guided
+  GUI actions for reading physical floppy disks into flux/images and writing
+  supported images back to real disks, with drive selection, media type/layout
+  confirmation, index/side handling, write-protect detection, pre-write
+  warnings, post-read/post-write verification, and clear logs of the exact
+  Greaseweazle commands and captured artifacts.
+
 ## Filesystem Modelling
 
 - Extend Tandy CP/M write support beyond uniform CP/M 2.2 flat `.img` images.

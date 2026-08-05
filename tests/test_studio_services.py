@@ -13,6 +13,9 @@ FIXTURE_CPM_SCP = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GC
 FIXTURE_CPM_D64 = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64CPM-170K.d64")
 FIXTURE_1581_D81 = Path("tests/fixtures/3.5inch/Commodore/Commodore-1581-DSDD-MFM-C64-800K.d81")
 FIXTURE_ADF = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.adf")
+FIXTURE_NEWDOS80_DMK = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model3-SSDD-MFM-NEWDOS80-180K.dmk")
+FIXTURE_TRSDOS13_DSK = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model3-SSDD-MFM-TRSDOS13-180K.dsk")
+FIXTURE_TANDY_CPMPLUS_IMD = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-CPMPlus-156K.imd")
 
 
 def test_studio_doctor_report_matches_cli_shape() -> None:
@@ -100,6 +103,24 @@ def test_studio_reports_c64_cpm_file_allocation_for_map_overlay() -> None:
     assert len(allocation.sectors) == 32
     assert (9, 0, 5) in allocation.sectors
     assert (10, 0, 2) in allocation.sectors
+
+
+def test_studio_reports_tandy_file_allocations_for_map_overlay() -> None:
+    newdos80 = services.file_allocation_for_image(
+        FIXTURE_NEWDOS80_DMK,
+        "tandy_mfm_ssdd_180k_s0",
+        "mfm",
+        "/BASIC.CMD",
+    )
+    trsdos = services.file_allocation_for_image(
+        FIXTURE_TRSDOS13_DSK,
+        "tandy_mfm_ssdd_180k",
+        "mfm",
+        "/BASIC.CMD",
+    )
+
+    assert (1, 0, 17) in newdos80.sectors
+    assert (3, 0, 15) in trsdos.sectors
 
 
 def test_studio_creates_blank_image_presets(tmp_path) -> None:
@@ -602,6 +623,27 @@ def test_studio_scp_cpm_physical_map_recovers_all_sectors_as_weak() -> None:
     physical_counts = {state: sum(row.count(state) for row in physical.tracks) for state in {"bad", "unused", "weak"}}
     assert logical_counts == {"bad": 0, "unused": 431, "weak": 252}
     assert physical_counts == {"bad": 0, "unused": 0, "weak": 683}
+
+
+def test_studio_tandy_cpmplus_imd_map_preserves_mixed_geometry() -> None:
+    logical = services.build_disk_map_for_image(
+        FIXTURE_TANDY_CPMPLUS_IMD,
+        "tandy_mfm_cpmplus_156k",
+        "mfm",
+        map_view="logical",
+    )
+    physical = services.build_disk_map_for_image(
+        FIXTURE_TANDY_CPMPLUS_IMD,
+        "tandy_mfm_cpmplus_156k",
+        "mfm",
+        map_view="physical",
+    )
+
+    assert [len(row) for row in logical.tracks[:3]] == [18, 8, 8]
+    assert [len(row) for row in physical.tracks[:3]] == [18, 8, 8]
+    assert sum(row.count("good") for row in logical.tracks) == 330
+    assert sum(row.count("bad") for row in logical.tracks) == 0
+    assert sum(row.count("bad") for row in physical.tracks) == 0
 
 
 def test_studio_qc_treats_standard_d64_as_complete_flat_image() -> None:
