@@ -88,7 +88,7 @@ python3 scripts/install_fluxctl.py
 
 ## Encodings and filesystems
 - Encodings: MFM, FM, GCR (Commodore) via plugin registry.
-- Filesystems detected: FAT12, CBM DOS, CP/M (C64 CP/M 2.2, C128 CP/M 3.0, Osborne/Kaypro/Tandy variants), TRSDOS 1.3, NEWDOS/80, Amiga OFS/FFS, RT-11 (RX02), Displaywriter probe; raw sector dumps always supported.
+- Filesystems detected: FAT12, CBM DOS, CP/M (C64 CP/M 2.2, C128 CP/M 3.0, Osborne/Kaypro/Tandy variants), TRSDOS 1.3, LDOS/TRSDOS 6, NEWDOS/80, Amiga OFS/FFS, RT-11 (RX02), Displaywriter probe; raw sector dumps always supported.
 - Filesystem listing, extraction, export, and copy-only mutation support varies
   by format. See the
   [filesystem capability matrix](docs/filesystem_capabilities.md) for current

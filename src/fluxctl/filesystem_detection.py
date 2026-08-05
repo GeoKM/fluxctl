@@ -72,6 +72,21 @@ def detect_filesystem(image, *, path_name: str = "") -> FilesystemDetection:
                 regions=[FilesystemRegion("disk", "newdos80", ["Directory lump points to GAT/HIT and 32-byte FDEs"])],
                 plugin=newdos80.entry,
             )
+        ldos = registry.filesystem.get("ldos_trsdos6")
+        if ldos and ldos.entry.probe(image):
+            return FilesystemDetection(
+                primary=_metadata_name("ldos_trsdos6", ldos.entry),
+                confidence=0.88,
+                evidence=[f"layout={layout_id}", "tandy_layout=1", "ldos_trsdos6_directory_probe=1"],
+                regions=[
+                    FilesystemRegion(
+                        "disk",
+                        "ldos_trsdos6",
+                        ["GAT/HIT and 32-byte FDEs detected on directory track 20"],
+                    )
+                ],
+                plugin=ldos.entry,
+            )
         trsdos = registry.filesystem.get("trsdos")
         if trsdos and trsdos.entry.probe(image):
             return FilesystemDetection(

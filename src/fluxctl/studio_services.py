@@ -288,6 +288,15 @@ BLANK_IMAGE_PRESETS: tuple[BlankImagePreset, ...] = tuple(
         204800,
         "Formatted empty CP/M image for Kaypro II SSDD 40-track MFM disks.",
     ),
+    BlankImagePreset(
+        "cpm_tandy_model4_180k_img",
+        "Tandy Model 4 CP/M 2.2 SSDD 180K (.img)",
+        ".img",
+        "tandy_mfm_ssdd_180k",
+        "cpm",
+        184320,
+        "Formatted empty CP/M image for Tandy Model 4 40-track MFM disks.",
+    ),
 )
 
 
@@ -318,6 +327,8 @@ def create_blank_image(preset_id: str, output_path: Path, *, overwrite: bool = F
         payload = _build_blank_cpm_image("osborne_mfm_ssdd_200k")
     elif preset_id == "cpm_kaypro_200k_img":
         payload = _build_blank_cpm_image("kaypro_mfm_ssdd_40_200k")
+    elif preset_id == "cpm_tandy_model4_180k_img":
+        payload = _build_blank_cpm_image("tandy_mfm_ssdd_180k")
     else:  # pragma: no cover - guarded by _blank_preset_by_id
         raise ValueError(f"Unsupported blank image preset: {preset_id}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -498,6 +509,7 @@ def _build_blank_cpm_image(layout_id: str) -> bytes:
     markers = {
         "kaypro_mfm_ssdd_40_200k": b"FLUXCTL CPM KAYPROII",
         "osborne_mfm_ssdd_200k": b"FLUXCTL CPM OSBORNE",
+        "tandy_mfm_ssdd_180k": b"FLUXCTL CPM TANDY4",
     }
     marker = markers.get(layout_id, b"FLUXCTL CPM")
     image[: len(marker)] = marker

@@ -30,10 +30,15 @@ class CPMDiskParameters:
     skew: tuple[int, ...]
     allocation_width: int = 1
     directory_blocks: int = 2
+    reserved_sectors: int | None = None
 
     @property
     def sectors_per_block(self) -> int:
         return self.block_size // self.sector_size
+
+    @property
+    def first_directory_sector(self) -> int:
+        return self.reserved_sectors if self.reserved_sectors is not None else self.reserved_tracks * self.sectors_per_track
 
 
 STANDARD_26_SECTOR_SKEW = (
@@ -91,6 +96,23 @@ def cpm_disk_parameters_for_layout(layout_id: str) -> CPMDiskParameters | None:
             sector_size=1024,
             block_size=1024,
             skew=(0, 1, 2, 3, 4),
+        )
+    if layout_id == "tandy_mfm_ssdd_180k":
+        return CPMDiskParameters(
+            reserved_tracks=2,
+            sectors_per_track=18,
+            sector_size=256,
+            block_size=1024,
+            skew=(0, 2, 4, 6, 8, 10, 12, 14, 16, 1, 3, 5, 7, 9, 11, 13, 15, 17),
+        )
+    if layout_id == "tandy_mfm_cpmplus_156k":
+        return CPMDiskParameters(
+            reserved_tracks=1,
+            sectors_per_track=8,
+            sector_size=512,
+            block_size=1024,
+            skew=(0, 1, 2, 3, 4, 5, 6, 7),
+            reserved_sectors=18,
         )
     return None
 
@@ -151,7 +173,7 @@ def cpm_directory_score_for_layout(image: SectorImage, layout_id: str) -> int:
         return 0
     if params.sector_size != getattr(image, "bytes_per_sector", params.sector_size):
         return 0
-    first_sector = params.reserved_tracks * params.sectors_per_track
+    first_sector = params.first_directory_sector
     sectors_to_scan = max(1, min(8, params.directory_blocks * params.sectors_per_block))
     score = 0
     try:
@@ -234,7 +256,7 @@ class CPMFilesystem(Filesystem):
         self, image: SectorImage, params: CPMDiskParameters
     ) -> list[tuple[CPMDirectoryRecord, int]]:
         records: list[tuple[CPMDirectoryRecord, int]] = []
-        first_sector = params.reserved_tracks * params.sectors_per_track
+        first_sector = params.first_directory_sector
         sectors_to_scan = params.directory_blocks * params.sectors_per_block
         for sector_offset in range(sectors_to_scan):
             logical_sector = first_sector + sector_offset
@@ -274,10 +296,13 @@ class CPMFilesystem(Filesystem):
             return False
         if params.sector_size != getattr(image, "bytes_per_sector", params.sector_size):
             return False
-        first_sector = params.reserved_tracks * params.sectors_per_track
+        first_sector = params.first_directory_sector
         sectors_to_scan = params.directory_blocks * params.sectors_per_block
         try:
-            data = b"".join(image.read_sector(first_sector + offset) for offset in range(sectors_to_scan))
+            data = b"".join(
+                self._read_image_logical_sector(image, first_sector + offset, params)
+                for offset in range(sectors_to_scan)
+            )
         except Exception:
             return False
         for offset in range(0, len(data), 32):
@@ -378,9 +403,13 @@ class CPMFilesystem(Filesystem):
         sector_base = int(getattr(layout, "id_rules", {}).get("sector_number_base", 1))
         addresses = set()
         for block in self._allocation_blocks_for_file(path):
-            first_sector = params.reserved_tracks * params.sectors_per_track + block * params.sectors_per_block
+            first_sector = params.first_directory_sector + block * params.sectors_per_block
             for offset in range(params.sectors_per_block):
                 logical_sector = first_sector + offset
+                if getattr(layout, "layout_id", "") == "tandy_mfm_cpmplus_156k":
+                    track, sector = self._tandy_cpmplus_chs_for_logical_sector(logical_sector, params)
+                    addresses.add((track, 0, sector_base + sector))
+                    continue
                 physical_lba = self._physical_lba_for_logical_sector(logical_sector, params)
                 track = physical_lba // params.sectors_per_track
                 sector_id = (physical_lba % params.sectors_per_track) + sector_base
@@ -440,9 +469,21 @@ class CPMFilesystem(Filesystem):
     def _read_image_logical_sector(self, image: SectorImage, sector_index: int, params: CPMDiskParameters) -> bytes:
         if params.sector_size != getattr(image, "bytes_per_sector", params.sector_size):
             raise FilesystemError("CP/M disk parameter block does not match image sector size")
+        layout_id = getattr(getattr(image, "layout", None), "layout_id", "")
+        if layout_id == "tandy_mfm_cpmplus_156k" and hasattr(image, "_sector_lookup"):
+            track, sector = self._tandy_cpmplus_chs_for_logical_sector(sector_index, params)
+            sector_base = int(getattr(getattr(image, "layout", None), "id_rules", {}).get("sector_number_base", 1))
+            try:
+                return image._sector_lookup[(track, 0, sector_base + sector)]
+            except KeyError as exc:
+                raise FilesystemError(f"CP/M Plus sector {(track, 0, sector_base + sector)} not available") from exc
         return image.read_sector(self._physical_lba_for_logical_sector(sector_index, params))
 
     def _physical_lba_for_logical_sector(self, sector_index: int, params: CPMDiskParameters) -> int:
+        layout_id = getattr(getattr(self._image, "layout", None), "layout_id", "") if self._image is not None else ""
+        if layout_id == "tandy_mfm_cpmplus_156k":
+            track, sector = self._tandy_cpmplus_chs_for_logical_sector(sector_index, params)
+            return track * 18 + sector
         track = sector_index // params.sectors_per_track
         logical_sector = sector_index % params.sectors_per_track
         try:
@@ -451,8 +492,21 @@ class CPMFilesystem(Filesystem):
             raise FilesystemError("CP/M sector skew table does not match sectors per track") from exc
         return track * params.sectors_per_track + physical_sector
 
+    def _tandy_cpmplus_chs_for_logical_sector(
+        self, sector_index: int, params: CPMDiskParameters
+    ) -> tuple[int, int]:
+        if sector_index < params.first_directory_sector:
+            return 0, sector_index
+        data_sector = sector_index - params.first_directory_sector
+        track = 1 + data_sector // params.sectors_per_track
+        logical_sector = data_sector % params.sectors_per_track
+        try:
+            return track, params.skew[logical_sector]
+        except IndexError as exc:
+            raise FilesystemError("CP/M sector skew table does not match sectors per track") from exc
+
     def _read_allocation_block(self, block: int, params: CPMDiskParameters) -> bytes:
-        first_sector = params.reserved_tracks * params.sectors_per_track + block * params.sectors_per_block
+        first_sector = params.first_directory_sector + block * params.sectors_per_block
         return b"".join(
             self._read_logical_sector(first_sector + offset, params)
             for offset in range(params.sectors_per_block)
@@ -461,12 +515,15 @@ class CPMFilesystem(Filesystem):
     def _write_logical_sector(self, image: bytearray, sector_index: int, params: CPMDiskParameters, data: bytes) -> None:
         if len(data) != params.sector_size:
             raise FilesystemError("CP/M sector write size mismatch")
+        layout_id = getattr(getattr(self._image, "layout", None), "layout_id", "") if self._image is not None else ""
+        if layout_id == "tandy_mfm_cpmplus_156k":
+            raise FilesystemError("Tandy CP/M Plus mixed-sector images are read-only")
         physical_lba = self._physical_lba_for_logical_sector(sector_index, params)
         offset = physical_lba * params.sector_size
         image[offset : offset + params.sector_size] = data
 
     def _write_allocation_block(self, image: bytearray, block: int, params: CPMDiskParameters, data: bytes) -> None:
-        first_sector = params.reserved_tracks * params.sectors_per_track + block * params.sectors_per_block
+        first_sector = params.first_directory_sector + block * params.sectors_per_block
         padded = data.ljust(params.block_size, b"\x1A")[: params.block_size]
         for offset in range(params.sectors_per_block):
             start = offset * params.sector_size
@@ -478,7 +535,7 @@ class CPMFilesystem(Filesystem):
             )
 
     def _directory_offset(self, params: CPMDiskParameters) -> int:
-        return params.reserved_tracks * params.sectors_per_track * params.sector_size
+        return params.first_directory_sector * params.sector_size
 
     def _free_directory_slots(self, image_bytes: bytes, params: CPMDiskParameters) -> list[int]:
         directory_offset = self._directory_offset(params)
@@ -510,7 +567,7 @@ class CPMFilesystem(Filesystem):
         if any(record.name.upper() == display_name for record in self._records):
             raise FilesystemError(f"File already exists: {display_name}")
 
-        total_data_sectors = (len(image_bytes) // params.sector_size) - (params.reserved_tracks * params.sectors_per_track)
+        total_data_sectors = (len(image_bytes) // params.sector_size) - params.first_directory_sector
         total_blocks = total_data_sectors // params.sectors_per_block
         needed_blocks = max(1, (len(data) + params.block_size - 1) // params.block_size)
         used = self._used_allocation_blocks(params)

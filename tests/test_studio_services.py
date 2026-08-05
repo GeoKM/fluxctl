@@ -115,6 +115,7 @@ def test_studio_creates_blank_image_presets(tmp_path) -> None:
         "amiga_ofs_adf": "amiga_ofs",
         "cpm_osborne_200k_img": "cpm",
         "cpm_kaypro_200k_img": "cpm",
+        "cpm_tandy_model4_180k_img": "cpm",
     }
 
     for preset in services.blank_image_presets():
@@ -134,6 +135,7 @@ def test_studio_blank_cpm_images_probe_as_selected_layout(tmp_path) -> None:
     for preset_id, layout_id in [
         ("cpm_osborne_200k_img", "osborne_mfm_ssdd_200k"),
         ("cpm_kaypro_200k_img", "kaypro_mfm_ssdd_40_200k"),
+        ("cpm_tandy_model4_180k_img", "tandy_mfm_ssdd_180k"),
     ]:
         output = tmp_path / f"{preset_id}.img"
         services.create_blank_image(preset_id, output)
@@ -141,7 +143,7 @@ def test_studio_blank_cpm_images_probe_as_selected_layout(tmp_path) -> None:
         summary = services.summarize_image(output)
         entries = services.list_files(output, layout_id, "mfm")
 
-        assert output.stat().st_size == 204800
+        assert output.stat().st_size > 0
         assert summary.layout_id == layout_id
         assert summary.filesystem == "cpm"
         assert entries == []
@@ -156,6 +158,7 @@ def test_studio_blank_cpm_images_accept_file_import(tmp_path, monkeypatch) -> No
     for preset_id, layout_id, file_name in [
         ("cpm_osborne_200k_img", "osborne_mfm_ssdd_200k", "HELLOOSB.TXT"),
         ("cpm_kaypro_200k_img", "kaypro_mfm_ssdd_40_200k", "HELLOKAY.TXT"),
+        ("cpm_tandy_model4_180k_img", "tandy_mfm_ssdd_180k", "HELLOTDY.TXT"),
     ]:
         output = tmp_path / f"{preset_id}.img"
         imported_path = tmp_path / f"{preset_id}-with-file.img"

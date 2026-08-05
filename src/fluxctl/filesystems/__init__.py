@@ -146,6 +146,7 @@ def load_builtin_filesystems() -> List[PluginInfo]:
     from .displaywriter import DisplaywriterFS
     from .trsdos import TRSDOS13Filesystem
     from .newdos80 import NEWDOS80Filesystem
+    from .ldos import LDOSTRSDOS6Filesystem
 
     registry.register_filesystem(
         "fat12",
@@ -217,6 +218,15 @@ def load_builtin_filesystems() -> List[PluginInfo]:
             version="0.1",
             entry=NEWDOS80Filesystem(),
             description="TRS-80 NEWDOS/80 filesystem",
+        ),
+    )
+    registry.register_filesystem(
+        "ldos_trsdos6",
+        PluginInfo(
+            name="LDOS/TRSDOS 6 Filesystem",
+            version="0.1",
+            entry=LDOSTRSDOS6Filesystem(),
+            description="TRS-80 LDOS 5.x and TRSDOS/LS-DOS 6.x filesystem",
         ),
     )
     registry.register_filesystem(
