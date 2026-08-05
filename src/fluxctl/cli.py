@@ -42,6 +42,7 @@ from .sector.reconstruct_gcr import (
 )
 from .external.hxc import probe_hxcfe
 from .geohints import LayoutHint
+from .trs80 import load_trs80_image
 from .native import (
     is_native_available,
     native_candidate_paths,
@@ -424,7 +425,7 @@ def info(
     path: Path = typer.Argument(..., exists=True, readable=True),
     hxcfe: Optional[Path] = typer.Option(None, "--hxcfe", help="Path to an hxcfe binary for hints."),
 ) -> None:
-    """Print basic image information (SCP, IMG, ADF, D64, D71, D81, IMD)."""
+    """Print basic image information (SCP, IMG, ADF, D64, D71, D81, IMD, DSK/DMK)."""
 
     load_builtin_decoders()
     load_builtin_layouts()
@@ -706,7 +707,7 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
 
     # For flat images with a known layout, build TrackSectorImage directly from the blob
     # instead of trying to decode as SCP.
-    if layout_desc and ext not in {".scp", ".imd"}:
+    if layout_desc and ext not in {".scp", ".imd", ".dsk", ".dmk"}:
         data_bytes = path.read_bytes()
         track_data = _sectors_from_blob(
             layout_desc,
@@ -735,12 +736,10 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
         return image
     if ext == ".imd":
         tracks, geom, _meta = load_imd_image(path)
-        image = TrackSectorImage(tracks, bytes_per_sector=geom.sector_size)
-        sector_base = int(layout_desc.id_rules.get("sector_number_base", 1)) if layout_desc else 1
-        image.set_geometry(geom.spt or geom.tracks, geom.heads, sector_base)
-        if layout_desc:
-            image.layout = layout_desc
-        return image
+        return _image_from_tracks(tracks, geom, layout_desc)
+    if ext in {".dsk", ".dmk"}:
+        tracks, geom, _meta = load_trs80_image(path)
+        return _image_from_tracks(tracks, geom, layout_desc)
     if layout_desc:
         track_data = _decode_tracks(path, layout_id, encoding=encoding)
         image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
@@ -770,6 +769,10 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
     ".d81": ("commodore_mfm_1581_800k",),
     ".adf": ("amiga_mfm_880k",),
     ".imd": (
+        "tandy_mfm_cpmplus_156k",
+        "tandy_mfm_cpmplus_hxc_360k",
+        "tandy_mfm_ssdd_180k",
+        "tandy_mfm_ssdd_180k_s0",
         "kaypro_mfm_ssdd_40_200k",
         "osborne_mfm_ssdd_200k",
         "generic_mfm_8inch_500k",
@@ -781,6 +784,16 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
         "ibm_mfm_360k",
         "ibm_mfm_180k",
         "ibm_mfm_1440k",
+    ),
+    ".dsk": (
+        "tandy_mfm_cpmplus_156k",
+        "tandy_mfm_ssdd_180k",
+        "tandy_mfm_ssdd_180k_s0",
+    ),
+    ".dmk": (
+        "tandy_mfm_cpmplus_156k",
+        "tandy_mfm_ssdd_180k",
+        "tandy_mfm_ssdd_180k_s0",
     ),
     ".img": (
         "kaypro_mfm_ssdd_40_200k",
@@ -833,7 +846,7 @@ def _flat_layout_candidates(extension: str) -> list[LayoutDescriptor]:
             for layout in registry.layout.values()
             if layout.encoding in {"mfm", "fm", "gcr", "dec_rx02"} and layout.sector_size in {128, 256, 512, 1024}
         ]
-    elif extension == ".imd":
+    elif extension in {".imd", ".dsk", ".dmk"}:
         extras = [
             layout
             for layout in registry.layout.values()
@@ -851,7 +864,7 @@ def _flat_layout_candidates(extension: str) -> list[LayoutDescriptor]:
 def _default_bytes_per_sector(extension: str) -> int:
     if extension in {".d64", ".d71"}:
         return 256
-    if extension == ".imd":
+    if extension in {".imd", ".dsk", ".dmk"}:
         return 512
     return 512
 
@@ -932,13 +945,15 @@ def _expected_bytes_for_layout(layout: LayoutDescriptor) -> int:
         for cylinder, sectors in enumerate(sectors_per_cylinder):
             for head in range(layout.sides):
                 sector_size = layout.sector_size
+                sectors_this_track = sectors
                 for override in layout.track_overrides:
                     if _track_in_range(override.get("track_range", ""), cylinder) and (
                         override.get("head") is None or override.get("head") == head
                     ):
                         sector_size = override.get("sector_size", sector_size)
+                        sectors_this_track = override.get("sectors_per_track", sectors_this_track)
                         break
-                total_bytes += sectors * sector_size
+                total_bytes += int(sectors_this_track) * int(sector_size)
         return total_bytes
     total_sectors = sum(sectors_per_cylinder) * layout.sides
     return total_sectors * layout.sector_size
@@ -1013,14 +1028,12 @@ def _sectors_from_blob(
     sectors_per_cylinder = list(layout.track_sectors) if layout.track_sectors else [layout.sectors_per_track] * layout.tracks
     if len(sectors_per_cylinder) < layout.tracks:
         sectors_per_cylinder.extend([layout.sectors_per_track] * (layout.tracks - len(sectors_per_cylinder)))
-    total_sectors = sum(sectors_per_cylinder) * layout.sides
-    expected_bytes = total_sectors * layout.sector_size
+    expected_bytes = _expected_bytes_for_layout(layout)
     if len(data) < expected_bytes:
         prefix_tracks = _prefix_track_count_for_size(layout, len(data)) if allow_prefix else None
         if prefix_tracks is not None:
             sectors_per_cylinder = sectors_per_cylinder[:prefix_tracks]
-            total_sectors = sum(sectors_per_cylinder) * layout.sides
-            expected_bytes = total_sectors * layout.sector_size
+            expected_bytes = sum(sectors_per_cylinder) * layout.sides * layout.sector_size
         elif not allow_pad:
             return None
         else:
@@ -1050,6 +1063,7 @@ def _sectors_from_blob(
                     override.get("head") is None or override.get("head") == head
                 ):
                     sector_size = override.get("sector_size", sector_size)
+                    sectors_on_track = override.get("sectors_per_track", sectors_on_track)
                     break
         size_code = SECTOR_SIZE_TO_CODE.get(sector_size)
         if size_code is None:
@@ -1097,6 +1111,93 @@ def _filesystem_evidence_for_image(image, path: Optional[Path] = None) -> tuple[
     return layout_hint, evidence
 
 
+def _image_from_tracks(
+    tracks: list[TrackSectors],
+    geom,
+    layout: Optional[LayoutDescriptor] = None,
+) -> TrackSectorImage:
+    image = TrackSectorImage(tracks, bytes_per_sector=getattr(geom, "sector_size", None))
+    sector_ids = [sec.sector_id for ts in tracks for sec in ts.sectors]
+    inferred_base = min(sector_ids) if sector_ids else 1
+    sector_base = int(layout.id_rules.get("sector_number_base", inferred_base)) if layout else inferred_base
+    image.set_geometry(geom.spt or geom.tracks, geom.heads, sector_base)
+    if layout:
+        image.layout = layout
+    return image
+
+
+def _flatten_track_container(tracks: list[TrackSectors], geom, sector_base: int) -> bytes:
+    data = bytearray(geom.tracks * geom.heads * geom.spt * geom.sector_size)
+    for ts in tracks:
+        for sec in ts.sectors:
+            sector_offset = sec.sector_id - sector_base
+            if sector_offset < 0 or sector_offset >= geom.spt:
+                continue
+            off = ((ts.track * geom.heads + ts.head) * geom.spt + sector_offset) * geom.sector_size
+            payload = (sec.data + b"\x00" * geom.sector_size)[: geom.sector_size]
+            data[off : off + geom.sector_size] = payload
+    return bytes(data)
+
+
+def _track_sector_profile(tracks: list[TrackSectors]) -> tuple[dict[int, int], dict[int, int], int]:
+    counts: dict[int, int] = {}
+    sizes: dict[int, int] = {}
+    min_sector_id = 1
+    sector_ids = [sec.sector_id for ts in tracks for sec in ts.sectors]
+    if sector_ids:
+        min_sector_id = min(sector_ids)
+    for ts in tracks:
+        if ts.head != 0:
+            continue
+        counts[ts.track] = len(ts.sectors)
+        track_sizes = {len(sec.data) for sec in ts.sectors if sec.data}
+        if track_sizes:
+            sizes[ts.track] = max(track_sizes)
+    return counts, sizes, min_sector_id
+
+
+def _tandy_candidate_for_tracks(
+    path: Path,
+    tracks: list[TrackSectors],
+    geom,
+    evidence: list[str],
+) -> Optional[CandidateFormat]:
+    counts, sizes, min_sector_id = _track_sector_profile(tracks)
+    if geom.tracks != 40 or geom.heads != 1:
+        return None
+
+    layout_id: Optional[str] = None
+    if counts.get(0) == 18 and sizes.get(0) == 256:
+        data_track_counts = {counts.get(track) for track in range(1, 40) if track in counts}
+        data_track_sizes = {sizes.get(track) for track in range(1, 40) if track in sizes}
+        if data_track_counts == {8} and data_track_sizes == {512}:
+            layout_id = "tandy_mfm_cpmplus_156k"
+        elif data_track_counts == {18} and data_track_sizes == {512}:
+            layout_id = "tandy_mfm_cpmplus_hxc_360k"
+    if layout_id is None and geom.spt == 18 and geom.sector_size == 256:
+        layout_id = "tandy_mfm_ssdd_180k_s0" if min_sector_id == 0 else "tandy_mfm_ssdd_180k"
+    if layout_id is None:
+        return None
+
+    layout = registry.layout.get(layout_id)
+    if layout is None:
+        return None
+    image_obj = _image_from_tracks(tracks, geom, layout)
+    fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+    layout_evidence = evidence + [f"layout={layout_id}"]
+    if fs_name:
+        layout_evidence.append(f"filesystem={fs_name}")
+    layout_evidence.extend(fs_evidence)
+    return CandidateFormat(
+        candidate_id=layout_id,
+        encoding=layout.encoding,
+        layout_id=layout_id,
+        filesystem=fs_name,
+        score=1.0,
+        evidence=layout_evidence,
+    )
+
+
 def _probe_flat_image(path: Path) -> list[CandidateFormat]:
     ext = path.suffix.lower()
     imd_tracks = None
@@ -1129,6 +1230,22 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
         ]
         imd_filesystem_name = _filesystem_name_for_image(imd_image, path) if imd_image else None
         data_bytes = bytes(data)
+    elif ext in {".dsk", ".dmk"}:
+        imd_tracks, imd_geom, imd_meta = load_trs80_image(path)
+        sector_ids = [sec.sector_id for ts in imd_tracks for sec in ts.sectors]
+        sector_base = min(sector_ids) if sector_ids else 1
+        imd_image = _image_from_tracks(imd_tracks, imd_geom)
+        imd_total_bytes = sum(len(sec.data) for ts in imd_tracks for sec in ts.sectors)
+        evidence = [
+            f"format={imd_meta.get('format', ext.lstrip('.'))}",
+            f"size={imd_total_bytes}",
+            f"geom={imd_geom.tracks}x{imd_geom.heads}x{imd_geom.spt}x{imd_geom.sector_size}",
+        ]
+        tandy_candidate = _tandy_candidate_for_tracks(path, imd_tracks, imd_geom, evidence)
+        if tandy_candidate:
+            return [tandy_candidate]
+        imd_filesystem_name = _filesystem_name_for_image(imd_image, path) if imd_image else None
+        data_bytes = _flatten_track_container(imd_tracks, imd_geom, sector_base)
     else:
         data_bytes = path.read_bytes()
         size = len(data_bytes)
@@ -1149,8 +1266,11 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
             )
         ]
 
-    ext_for_layouts = ".imd" if ext == ".imd" else ext
+    ext_for_layouts = ext
     if ext == ".imd" and imd_geom:
+        tandy_candidate = _tandy_candidate_for_tracks(path, imd_tracks or [], imd_geom, evidence)
+        if tandy_candidate:
+            return [tandy_candidate]
         if imd_filesystem_name == "displaywriter":
             lid = "ibm_displaywriter_fm_284k"
             layout = registry.layout.get(lid)
@@ -1356,11 +1476,10 @@ def _prepare_convert_payload(path: Path, to: str, layout: Optional[str], encodin
             image_obj.set_geometry(geometry_sectors or layout_desc.sectors_per_track, layout_desc.sides)
     elif path.suffix.lower() == ".imd":
         track_data, imd_geom, _meta = load_imd_image(path)
-        image_obj = TrackSectorImage(track_data, bytes_per_sector=imd_geom.sector_size)
-        sector_base = int(layout_desc.id_rules.get("sector_number_base", 1)) if layout_desc else 1
-        image_obj.set_geometry(imd_geom.spt or imd_geom.tracks, imd_geom.heads, sector_base)
-        if layout_desc:
-            image_obj.layout = layout_desc
+        image_obj = _image_from_tracks(track_data, imd_geom, layout_desc)
+    elif path.suffix.lower() in {".dsk", ".dmk"}:
+        track_data, trs_geom, _meta = load_trs80_image(path)
+        image_obj = _image_from_tracks(track_data, trs_geom, layout_desc)
     elif layout_desc:
         image_obj = _prepare_image(path, layout_desc.layout_id, decoder_used)
         if isinstance(image_obj, TrackSectorImage):
@@ -1394,7 +1513,7 @@ def _exporter_suffix(exporter: str) -> str:
 
 def _infer_roundtrip_back_exporter(path: Path) -> str:
     suffix = path.suffix.lower()
-    if suffix in {".img", ".ima", ".raw", ".scp", ".imd"}:
+    if suffix in {".img", ".ima", ".raw", ".scp", ".imd", ".dsk", ".dmk"}:
         return "raw"
     if suffix in {".adf", ".d64", ".d71", ".g64"}:
         return suffix.lstrip(".")
@@ -1774,7 +1893,7 @@ def convert(
     encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding for SCP sources"),
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar output"),
 ):
-    """Convert SCP, IMD, or flat sector images to a supported output format.
+    """Convert SCP, IMD, TRS-80 DSK/DMK, or flat sector images to a supported output format.
 
     Examples:
     fluxctl convert disk.scp --layout ibm_mfm_720k --to raw --out disk.img

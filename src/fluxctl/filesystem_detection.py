@@ -54,6 +54,39 @@ def detect_filesystem(image, *, path_name: str = "") -> FilesystemDetection:
         return _detect_commodore(image, layout_id)
 
     cpm = registry.filesystem.get("cpm")
+    if layout_id.startswith("tandy_"):
+        if cpm and cpm.entry.probe(image):
+            return FilesystemDetection(
+                primary=_metadata_name("cpm", cpm.entry),
+                confidence=0.70,
+                evidence=[f"layout={layout_id}", "tandy_layout=1", "cpm_directory_probe=1"],
+                regions=[FilesystemRegion("disk", "cpm", ["TRS-80/Tandy CP/M directory entries detected"])],
+                plugin=cpm.entry,
+            )
+        newdos80 = registry.filesystem.get("newdos80")
+        if newdos80 and newdos80.entry.probe(image):
+            return FilesystemDetection(
+                primary=_metadata_name("newdos80", newdos80.entry),
+                confidence=0.88,
+                evidence=[f"layout={layout_id}", "tandy_layout=1", "newdos80_directory_probe=1"],
+                regions=[FilesystemRegion("disk", "newdos80", ["Directory lump points to GAT/HIT and 32-byte FDEs"])],
+                plugin=newdos80.entry,
+            )
+        trsdos = registry.filesystem.get("trsdos")
+        if trsdos and trsdos.entry.probe(image):
+            return FilesystemDetection(
+                primary=_metadata_name("trsdos", trsdos.entry),
+                confidence=0.88,
+                evidence=[f"layout={layout_id}", "tandy_layout=1", "trsdos_directory_probe=1"],
+                regions=[FilesystemRegion("disk", "trsdos_1_3", ["GAT/HIT and directory entries on track 17"])],
+                plugin=trsdos.entry,
+            )
+        return FilesystemDetection(
+            primary=None,
+            confidence=0.0,
+            evidence=[f"layout={layout_id}", "tandy_layout=1", "no_supported_tandy_filesystem_probe"],
+        )
+
     if cpm_disk_parameters_for_layout(layout_id) is not None and cpm and cpm.entry.probe(image):
         return FilesystemDetection(
             primary=_metadata_name("cpm", cpm.entry),

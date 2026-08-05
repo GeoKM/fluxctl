@@ -23,6 +23,8 @@ FIXTURE_KAYPRO_CPM22_IMG = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-M
 FIXTURE_KAYPRO_WSTR_IMG = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-WSTR-200K.img")
 FIXTURE_KAYPRO_CPM22_SCP = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-CPM22-200K.scp")
 FIXTURE_KAYPRO_WSTR_SCP = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-WSTR-200K.scp")
+FIXTURE_TANDY_CPM22_DSK = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-CPM22-180K.dsk")
+FIXTURE_TANDY_CPMPLUS_DSK = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-CPMPlus-156K.dsk")
 
 
 def _mount_cpm_fixture(path: Path):
@@ -45,6 +47,15 @@ def _mount_osborne_fixture(path: Path):
 def _mount_kaypro_fixture(path: Path):
     load_builtin_layouts()
     image = _prepare_image(path, "kaypro_mfm_ssdd_40_200k", "mfm")
+    detection = detect_filesystem(image, path_name=path.name)
+    assert detection.primary == "cpm"
+    assert detection.plugin is not None
+    return detection.plugin
+
+
+def _mount_tandy_fixture(path: Path, layout_id: str):
+    load_builtin_layouts()
+    image = _prepare_image(path, layout_id, "mfm")
     detection = detect_filesystem(image, path_name=path.name)
     assert detection.primary == "cpm"
     assert detection.plugin is not None
@@ -193,6 +204,22 @@ def test_kaypro_cpm_file_allocation_overlay_uses_0_based_sector_ids() -> None:
     assert (1, 0, 8) in addresses
     assert (2, 0, 0) in addresses
     assert (5, 0, 3) in addresses
+
+
+def test_tandy_cpm_dsk_lists_files() -> None:
+    filesystem = _mount_tandy_fixture(FIXTURE_TANDY_CPM22_DSK, "tandy_mfm_ssdd_180k")
+
+    names = {entry.name for entry in filesystem.list_directory()}
+
+    assert {"ASM.COM", "PIP.COM", "STAT.COM"} <= names
+
+
+def test_tandy_cpm_plus_dmk_lists_files() -> None:
+    filesystem = _mount_tandy_fixture(FIXTURE_TANDY_CPMPLUS_DSK, "tandy_mfm_cpmplus_156k")
+
+    names = {entry.name for entry in filesystem.list_directory()}
+
+    assert {"CPM3.SYS", "PIP.COM", "SETDEF.COM"} <= names
 
 
 def test_studio_file_allocation_view_supports_modelled_cpm() -> None:

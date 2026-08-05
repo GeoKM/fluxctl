@@ -902,7 +902,7 @@ class FluxctlStudio(QMainWindow):
             self,
             "Open disk image",
             "",
-            "Disk images (*.scp *.img *.imd *.d64 *.d71 *.d81 *.adf);;All files (*)",
+            "Disk images (*.scp *.img *.imd *.dsk *.dmk *.d64 *.d71 *.d81 *.adf);;All files (*)",
         )
         if filename:
             self.current_path = Path(filename)
@@ -2170,7 +2170,7 @@ class FluxctlStudio(QMainWindow):
     def compare_dialog(self) -> None:
         if not self._require_image():
             return
-        other, _ = QFileDialog.getOpenFileName(self, "Compare with image", "", "Disk images (*.scp *.img *.imd *.d64 *.d71 *.d81 *.adf);;All files (*)")
+        other, _ = QFileDialog.getOpenFileName(self, "Compare with image", "", "Disk images (*.scp *.img *.imd *.dsk *.dmk *.d64 *.d71 *.d81 *.adf);;All files (*)")
         if not other:
             return
         self._run_cli(["compare", str(self.current_path), other])

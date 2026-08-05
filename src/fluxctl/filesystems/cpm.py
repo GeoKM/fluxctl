@@ -287,6 +287,10 @@ class CPMFilesystem(Filesystem):
         return bool(data)
 
     def _detect_variant(self, image: SectorImage) -> str:
+        layout_id = getattr(getattr(image, "layout", None), "layout_id", "")
+        if layout_id.startswith("tandy_"):
+            return "cpm"
+
         names = {record.name.upper() for record in self._records}
         cpm3_markers = {
             "BOOTV3",
@@ -302,7 +306,6 @@ class CPMFilesystem(Filesystem):
         if cpm3_markers & names:
             return "c128_cpm_3_0"
 
-        layout_id = getattr(getattr(image, "layout", None), "layout_id", "")
         if layout_id == "commodore_gcr_1541_cpm_170k":
             return "c64_cpm_2_2"
         if layout_id.startswith("commodore_mfm_1571_cpm_"):

@@ -144,7 +144,8 @@ def load_builtin_filesystems() -> List[PluginInfo]:
     from .cpm import CPMFilesystem
     from .rt11 import RT11Filesystem
     from .displaywriter import DisplaywriterFS
-    from .rt11 import RT11Filesystem
+    from .trsdos import TRSDOS13Filesystem
+    from .newdos80 import NEWDOS80Filesystem
 
     registry.register_filesystem(
         "fat12",
@@ -201,21 +202,30 @@ def load_builtin_filesystems() -> List[PluginInfo]:
         ),
     )
     registry.register_filesystem(
+        "trsdos",
+        PluginInfo(
+            name="TRSDOS 1.3 Filesystem",
+            version="0.1",
+            entry=TRSDOS13Filesystem(),
+            description="TRS-80 Model III/4 TRSDOS 1.3 filesystem",
+        ),
+    )
+    registry.register_filesystem(
+        "newdos80",
+        PluginInfo(
+            name="NEWDOS/80 Filesystem",
+            version="0.1",
+            entry=NEWDOS80Filesystem(),
+            description="TRS-80 NEWDOS/80 filesystem",
+        ),
+    )
+    registry.register_filesystem(
         "cpm",
         PluginInfo(
             name="CP/M Filesystem",
             version="0.1",
             entry=CPMFilesystem(),
             description="CP/M filesystem probe",
-        ),
-    )
-    registry.register_filesystem(
-        "rt11",
-        PluginInfo(
-            name="RT-11 Filesystem",
-            version="0.1",
-            entry=RT11Filesystem(),
-            description="DEC RT-11 filesystem probe",
         ),
     )
     return list(registry.filesystem.values())
