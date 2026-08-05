@@ -4,6 +4,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from fluxctl import cli
+from fluxctl.imd import load_imd_image
 
 FIXTURE = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64-170K.scp")
 FIXTURE_720K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.scp")
@@ -342,7 +343,7 @@ def test_probe_supports_tandy_cpm_images() -> None:
         FIXTURE_TANDY_CPM22_IMD: "tandy_mfm_ssdd_180k",
         FIXTURE_TANDY_CPM22_SCP: "tandy_mfm_ssdd_180k",
         FIXTURE_TANDY_CPMPLUS_DSK: "tandy_mfm_cpmplus_156k",
-        FIXTURE_TANDY_CPMPLUS_IMD: "tandy_mfm_cpmplus_hxc_360k",
+        FIXTURE_TANDY_CPMPLUS_IMD: "tandy_mfm_cpmplus_156k",
         FIXTURE_TANDY_CPMPLUS_SCP: "tandy_mfm_cpmplus_156k",
     }
     for fixture, layout_id in expectations.items():
@@ -352,6 +353,15 @@ def test_probe_supports_tandy_cpm_images() -> None:
         assert payload[0]["layout_id"] == layout_id
         assert payload[0]["encoding"] == "mfm"
         assert payload[0]["filesystem"] == "cpm"
+
+
+def test_tandy_cpm_plus_imd_preserves_mixed_track_sector_counts() -> None:
+    tracks, geometry, _meta = load_imd_image(FIXTURE_TANDY_CPMPLUS_IMD)
+
+    assert geometry.tracks == 40
+    assert [len(track.sectors) for track in tracks[:3]] == [18, 8, 8]
+    assert sum(len(track.sectors) for track in tracks) == 330
+    assert sum(track.missing for track in tracks) == 0
 
 
 def test_probe_supports_displaywriter_img() -> None:

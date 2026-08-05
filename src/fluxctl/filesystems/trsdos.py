@@ -185,6 +185,25 @@ class TRSDOS13Filesystem(Filesystem):
                     data.extend(self._read_chs(self._image, extent.track, self._sector_base, sector_id))
         return bytes(data[: self._entry_size(entry)])
 
+    def file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
+        """Return physical sector addresses occupied by a selected file."""
+
+        normalized = path.strip("/").upper().replace("/", ".")
+        entry = next((item for item in self._entries if item.name.upper() == normalized), None)
+        if entry is None:
+            raise FilesystemError(f"TRSDOS file not found: {path}")
+
+        addresses: set[tuple[int, int, int]] = set()
+        for extent in entry.extents:
+            for granule_offset in range(extent.granules):
+                first_sector = (extent.start_granule + granule_offset) * TRSDOS_GRANULE_SECTORS
+                for sector_offset in range(TRSDOS_GRANULE_SECTORS):
+                    lba = extent.track * TRSDOS_SECTORS_PER_TRACK + first_sector + sector_offset
+                    track = lba // TRSDOS_SECTORS_PER_TRACK
+                    sector_id = self._sector_base + (lba % TRSDOS_SECTORS_PER_TRACK)
+                    addresses.add((track, 0, sector_id))
+        return addresses
+
     def metadata(self) -> Dict[str, Any]:
         return {
             "filesystem": "trsdos_1_3",

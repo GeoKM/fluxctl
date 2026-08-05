@@ -52,3 +52,14 @@ def test_newdos80_extracts_file_contents(tmp_path: Path) -> None:
     data = out.read_bytes()
     assert len(data) == 4608
     assert data[:4] == bytes.fromhex("010f0057")
+
+
+def test_newdos80_reports_file_sector_addresses_for_map_overlay() -> None:
+    filesystem = _mount_newdos80()
+
+    addresses = filesystem.file_sector_addresses("/BASIC.CMD")
+
+    assert len(addresses) == 20
+    assert (1, 0, 17) in addresses
+    assert (2, 0, 0) in addresses
+    assert (3, 0, 0) in addresses

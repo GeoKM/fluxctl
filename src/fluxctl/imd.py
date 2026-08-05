@@ -2,9 +2,8 @@
 
 These utilities read IMD headers and sector records into :class:`TrackSectors`
 structures so the rest of the tooling can treat IMD inputs like any other
-decoded image. Geometry is inferred from the file contents; missing sectors are
-filled with a caller-provided byte (default ``0x00``) so downstream exporters
-receive contiguous data.
+decoded image. Geometry is inferred from the file contents; IMD records marked
+as unavailable are filled with a caller-provided byte (default ``0x00``).
 """
 
 from __future__ import annotations
@@ -145,7 +144,7 @@ def load_imd_image(path: Path, *, fill: int = IMD_FILL_DEFAULT) -> Tuple[List[Tr
     tracks_data: defaultdict[Tuple[int, int], List[Sector]] = defaultdict(list)
     cylinders = set()
     heads = set()
-    sectors_per_track: Dict[Tuple[int, int], int] = {}
+    sectors_per_track = Counter()
     sector_sizes = Counter()
     modes_seen = Counter()
     header_line = ""
@@ -212,7 +211,7 @@ def load_imd_image(path: Path, *, fill: int = IMD_FILL_DEFAULT) -> Tuple[List[Tr
                 cylinders.add(C)
                 heads.add(H)
                 sector_sizes[this_size] += 1
-                sectors_per_track[(C, H)] = max(sectors_per_track.get((C, H), 0), nsec)
+                sectors_per_track[(C, H)] = max(sectors_per_track[(C, H)], nsec)
 
                 data = b""
                 if rec_type == 0x00:
@@ -251,27 +250,9 @@ def load_imd_image(path: Path, *, fill: int = IMD_FILL_DEFAULT) -> Tuple[List[Tr
     sector_size = sector_sizes.most_common(1)[0][0] if sector_sizes else 512
 
     tracks: List[TrackSectors] = []
-    fill_bytes = bytes([fill]) * sector_size
     for cyl in range(tracks_count):
         for head in range(heads_count):
             sectors = tracks_data.get((cyl, head), [])
-            present_ids = {s.sector_id for s in sectors}
-            # Fill missing logical sector IDs so geometry is contiguous.
-            sector_base = 0 if 0 in present_ids else 1
-            for sid in range(sector_base, sector_base + spt):
-                if sid in present_ids:
-                    continue
-                sectors.append(
-                    Sector(
-                        cylinder=cyl,
-                        head=head,
-                        sector_id=sid,
-                        size_code=_size_code_for(sector_size),
-                        data=fill_bytes,
-                        crc_ok=False,
-                        confidence=0.0,
-                    )
-                )
             sectors.sort(key=lambda s: s.sector_id)
             missing = sum(1 for s in sectors if not s.crc_ok)
             tracks.append(TrackSectors(track=cyl, head=head, sectors=sectors, missing=missing))

@@ -189,6 +189,25 @@ class NEWDOS80Filesystem(Filesystem):
                 data.extend(self._image.read_sector(start_lba + sector_offset))
         return bytes(data[: self._entry_size(entry)])
 
+    def file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
+        """Return physical sector addresses occupied by a selected file."""
+
+        normalized = path.strip("/").upper().replace("/", ".")
+        entry = next((item for item in self._entries if item.name.upper() == normalized), None)
+        if entry is None:
+            raise FilesystemError(f"NEWDOS/80 file not found: {path}")
+
+        addresses: set[tuple[int, int, int]] = set()
+        for extent in entry.extents:
+            start_lba = (
+                extent.lump * NEWDOS80_SECTORS_PER_LUMP
+                + extent.start_granule * NEWDOS80_SECTORS_PER_GRANULE
+            )
+            for sector_offset in range(extent.granules * NEWDOS80_SECTORS_PER_GRANULE):
+                lba = start_lba + sector_offset
+                addresses.add((lba // NEWDOS80_SECTORS_PER_TRACK, 0, lba % NEWDOS80_SECTORS_PER_TRACK))
+        return addresses
+
     def metadata(self) -> Dict[str, Any]:
         return {
             "filesystem": "newdos80",

@@ -57,6 +57,17 @@ def test_model3_trsdos_extracts_file_contents(tmp_path: Path) -> None:
     assert data[:4] == bytes.fromhex("01955241")
 
 
+def test_model3_trsdos_reports_file_sector_addresses_for_map_overlay() -> None:
+    filesystem = _mount_model3_trsdos()
+
+    addresses = filesystem.file_sector_addresses("/BASIC.CMD")
+
+    assert len(addresses) == 21
+    assert (2, 0, 13) in addresses
+    assert (2, 0, 18) in addresses
+    assert (3, 0, 15) in addresses
+
+
 def test_ldos_and_trsdos6_fixtures_are_not_misdetected_as_trsdos13() -> None:
     load_builtin_layouts()
     fixtures = [
