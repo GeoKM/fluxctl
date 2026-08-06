@@ -229,8 +229,8 @@ numbers: the 1541/1571 BAM is entered as track 18, head 0, sector 0.
 
 ## License
 
-Fluxctl is licensed under the Apache License, Version 2.0. See
-[LICENSE](LICENSE) for the full license text.
+Fluxctl is licensed under the GNU General Public License v3.0 or later
+(`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full license text.
 
 ## Optional integrations
 
