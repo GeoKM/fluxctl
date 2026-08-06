@@ -446,8 +446,11 @@ class FluxctlStudio(QMainWindow):
         self._loading_advanced_file_paths = False
         self.layout_options = services.load_layout_options()
         self.blank_image_presets = services.blank_image_presets()
+        self.greaseweazle_status = services.greaseweazle_status()
+        self.greaseweazle_formats = services.greaseweazle_formats()
         self._build_ui()
         self._apply_style()
+        self._update_hardware_controls()
         self._update_filesystem_write_actions()
         self._update_advanced_context()
         self.run_doctor()
@@ -505,6 +508,7 @@ class FluxctlStudio(QMainWindow):
         self.blank_image_combo.currentIndexChanged.connect(self._update_blank_image_tooltip)
         self.create_blank_button = QPushButton("Create Blank...")
         self.create_blank_button.clicked.connect(self.create_blank_image_dialog)
+        hardware_section = self._build_hardware_section()
         sidebar_layout.addWidget(self.title)
         sidebar_layout.addWidget(self.file_label)
         sidebar_layout.addLayout(self.summary_grid)
@@ -513,6 +517,7 @@ class FluxctlStudio(QMainWindow):
         sidebar_layout.addWidget(self.open_button)
         sidebar_layout.addWidget(self.blank_image_combo)
         sidebar_layout.addWidget(self.create_blank_button)
+        sidebar_layout.addWidget(hardware_section)
         sidebar_layout.addWidget(self.doctor_button)
         sidebar_layout.addStretch(1)
         self._update_blank_image_tooltip()
@@ -526,6 +531,49 @@ class FluxctlStudio(QMainWindow):
         root_layout.addWidget(self.sidebar, 0)
         root_layout.addWidget(self.stack, 1)
         self.setCentralWidget(root)
+
+    def _build_hardware_section(self) -> QWidget:
+        section = QFrame()
+        section.setObjectName("sidebarSection")
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 8, 0, 0)
+
+        title = QLabel("Hardware")
+        title.setObjectName("sectionTitle")
+        self.greaseweazle_status_label = QLabel("Greaseweazle: checking")
+        self.greaseweazle_status_label.setWordWrap(True)
+        self.greaseweazle_drive_combo = QComboBox()
+        for drive in ["A", "B", "0", "1", "2", "3"]:
+            self.greaseweazle_drive_combo.addItem(f"Drive {drive}", drive)
+        self.greaseweazle_image_combo = QComboBox()
+        self.greaseweazle_image_combo.addItem("Raw flux SCP (.scp)", "scp")
+        self.greaseweazle_format_combo = QComboBox()
+        self.greaseweazle_format_combo.addItem("Auto / no format", "")
+        for gw_format in self.greaseweazle_formats:
+            self.greaseweazle_format_combo.addItem(gw_format.label, gw_format.format_id)
+        self.greaseweazle_format_combo.setEditable(True)
+        self.greaseweazle_tracks_input = QLineEdit()
+        self.greaseweazle_tracks_input.setPlaceholderText("Track override, e.g. c=0-79:h=0-1")
+        self.greaseweazle_revs_input = QLineEdit()
+        self.greaseweazle_revs_input.setPlaceholderText("Revs, default")
+        self.greaseweazle_read_button = QPushButton("Read Disk...")
+        self.greaseweazle_read_button.clicked.connect(self.read_disk_with_greaseweazle_dialog)
+        self.greaseweazle_write_button = QPushButton("Write Disk...")
+        self.greaseweazle_write_button.setEnabled(False)
+        self.greaseweazle_write_button.setToolTip(
+            "Write-to-disk is not enabled yet. It needs destructive confirmation and read-back verification."
+        )
+
+        layout.addWidget(title)
+        layout.addWidget(self.greaseweazle_status_label)
+        layout.addWidget(self.greaseweazle_drive_combo)
+        layout.addWidget(self.greaseweazle_image_combo)
+        layout.addWidget(self.greaseweazle_format_combo)
+        layout.addWidget(self.greaseweazle_tracks_input)
+        layout.addWidget(self.greaseweazle_revs_input)
+        layout.addWidget(self.greaseweazle_read_button)
+        layout.addWidget(self.greaseweazle_write_button)
+        return section
 
     def _build_simple_mode(self) -> QWidget:
         page = QWidget()
@@ -749,7 +797,9 @@ class FluxctlStudio(QMainWindow):
             """
             QMainWindow, QWidget { background: #111722; color: #e7edf7; font-size: 13px; }
             #sidebar { background: #090d14; min-width: 340px; max-width: 420px; border-right: 1px solid #263241; }
+            #sidebarSection { border-top: 1px solid #263241; margin-top: 8px; }
             #title { font-size: 24px; font-weight: 700; margin-bottom: 10px; }
+            #sectionTitle { font-size: 16px; font-weight: 700; color: #dce7f7; }
             QLabel#metricName { color: #c9d4e5; font-weight: 600; padding: 3px 6px 3px 0; }
             QLabel#metric { color: #9ee6b8; font-weight: 600; }
             QLabel#activity { background: #172233; border: 1px solid #2f4158; border-radius: 6px; padding: 8px; color: #dce7f7; }
@@ -973,6 +1023,130 @@ class FluxctlStudio(QMainWindow):
     def _default_blank_image_output_path(self, preset_id: str, suffix: str) -> Path:
         return self._blank_image_default_directory() / f"blank-{preset_id}{suffix}"
 
+    def _hardware_default_directory(self) -> Path:
+        documents = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
+        base = Path(documents) if documents else Path.home()
+        return base / "Fluxctl Captures"
+
+    def _update_hardware_controls(self) -> None:
+        status = self.greaseweazle_status
+        label = "Greaseweazle: available" if status.available else "Greaseweazle: missing"
+        if status.available and status.executable:
+            label += f"\n{status.executable}"
+        self.greaseweazle_status_label.setText(label)
+        tooltip = status.detail if status.available else f"{status.detail}\n{status.suggestion}".strip()
+        for widget in [
+            self.greaseweazle_status_label,
+            self.greaseweazle_drive_combo,
+            self.greaseweazle_image_combo,
+            self.greaseweazle_format_combo,
+            self.greaseweazle_tracks_input,
+            self.greaseweazle_revs_input,
+            self.greaseweazle_read_button,
+        ]:
+            widget.setToolTip(tooltip)
+            if widget is not self.greaseweazle_status_label:
+                widget.setEnabled(status.available)
+        self.greaseweazle_write_button.setEnabled(False)
+        self.greaseweazle_write_button.setToolTip(
+            "Write-to-disk is not enabled yet. It needs destructive confirmation and read-back verification."
+        )
+
+    def _refresh_greaseweazle_format_combo(self) -> None:
+        current_text = self.greaseweazle_format_combo.currentText().strip()
+        current_data = self.greaseweazle_format_combo.currentData()
+        current_format = str(current_data or current_text).strip()
+        self.greaseweazle_format_combo.blockSignals(True)
+        self.greaseweazle_format_combo.clear()
+        self.greaseweazle_format_combo.addItem("Auto / no format", "")
+        for gw_format in self.greaseweazle_formats:
+            self.greaseweazle_format_combo.addItem(gw_format.label, gw_format.format_id)
+        if current_format:
+            index = self.greaseweazle_format_combo.findData(current_format)
+            if index >= 0:
+                self.greaseweazle_format_combo.setCurrentIndex(index)
+            else:
+                self.greaseweazle_format_combo.setEditText(current_format)
+        self.greaseweazle_format_combo.blockSignals(False)
+
+    def _selected_greaseweazle_revs(self) -> Optional[int]:
+        text = self.greaseweazle_revs_input.text().strip()
+        if not text:
+            return None
+        try:
+            revs = int(text)
+        except ValueError as exc:
+            raise ValueError("Greaseweazle revolutions must be a whole number") from exc
+        if revs < 1:
+            raise ValueError("Greaseweazle revolutions must be 1 or greater")
+        return revs
+
+    def read_disk_with_greaseweazle_dialog(self) -> None:
+        if not self.greaseweazle_status.available:
+            self._warn(self.greaseweazle_status.detail)
+            return
+        default_name = self._hardware_default_directory() / "capture.scp"
+        output_name, _ = QFileDialog.getSaveFileName(
+            self,
+            "Read disk to SCP",
+            str(default_name),
+            "SuperCard Pro flux (*.scp);;All files (*)",
+        )
+        if not output_name:
+            return
+        output = Path(output_name)
+        if output.suffix == "":
+            output = output.with_suffix(".scp")
+        if not output.is_absolute():
+            output = self._hardware_default_directory() / output
+        overwrite = output.exists()
+        if overwrite and not self._confirm_overwrite_output(output):
+            return
+        try:
+            revs = self._selected_greaseweazle_revs()
+        except ValueError as exc:
+            self._warn(str(exc))
+            return
+        drive = str(self.greaseweazle_drive_combo.currentData() or "A")
+        gw_format = self.greaseweazle_format_combo.currentText().strip()
+        selected_data = self.greaseweazle_format_combo.currentData()
+        selected_index = self.greaseweazle_format_combo.currentIndex()
+        if (
+            selected_data
+            and selected_index >= 0
+            and gw_format == self.greaseweazle_format_combo.itemText(selected_index)
+        ):
+            gw_format = str(selected_data).strip()
+        elif gw_format == "Auto / no format":
+            gw_format = ""
+        tracks = self.greaseweazle_tracks_input.text().strip()
+        self._run_job(
+            f"greaseweazle read {drive}",
+            lambda: services.read_disk_with_greaseweazle(
+                output,
+                drive=drive,
+                gw_format=gw_format,
+                tracks=tracks,
+                revs=revs,
+                overwrite=overwrite,
+            ),
+            self._show_greaseweazle_read_result,
+        )
+
+    def _show_greaseweazle_read_result(self, result: object) -> None:
+        output = Path(result.path)
+        self.current_path = output
+        self.file_label.setText(str(output))
+        self._clear_image_results()
+        self.activity_label.setText(f"Read disk to {output}.")
+        self._append_log(f"$ {result.command_display}")
+        if result.stdout:
+            self._append_log(result.stdout.strip())
+        if result.stderr:
+            self._append_log(result.stderr.strip())
+        self.lower_tabs.setCurrentWidget(self.log)
+        self.run_probe()
+
     def _show_blank_image_result(self, result: object) -> None:
         self.current_path = Path(result.path)
         self.file_label.setText(str(self.current_path))
@@ -1010,6 +1184,10 @@ class FluxctlStudio(QMainWindow):
         self.summary_labels["status"].setText(str(report.get("overall", "unknown")) if isinstance(report, dict) else "unknown")
         summary = self._doctor_summary_text(report) if isinstance(report, dict) else str(report)
         self.log.append(json.dumps(report, indent=2))
+        self.greaseweazle_status = services.greaseweazle_status()
+        self.greaseweazle_formats = services.greaseweazle_formats()
+        self._refresh_greaseweazle_format_combo()
+        self._update_hardware_controls()
         if self.current_path is None:
             self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
             self.advanced_output.setPlainText(summary)

@@ -205,6 +205,27 @@ def test_modern_small_timebase_matches_greaseweazle_default() -> None:
     assert len(image.tracks) == 156
 
 
+def test_version_zero_nonstandard_timebase_matches_greaseweazle_default(tmp_path: Path) -> None:
+    track_block = _build_trk_block(0, [[1, 2, 3]])
+
+    image_path = tmp_path / "version0_35ns.scp"
+    image_path.write_bytes(
+        _build_scp_image(
+            version=0,
+            raw_timebase=35,
+            revolutions_per_track=1,
+            start_track=0,
+            end_track=0,
+            track_blocks={0: track_block},
+        )
+    )
+
+    image = parse_scp(image_path)
+
+    assert image.timebase_ns == 25.0
+    assert [list(rev.interval_ns) for rev in image.tracks[0].revolutions] == [[25, 50, 75]]
+
+
 def test_zeroed_modern_revolution_headers_use_25ns_salvage_timebase(tmp_path: Path) -> None:
     track_block = _build_zeroed_trk_block(0, [1, 1, 1, 1, 1, 1], revolutions=3)
 
