@@ -109,52 +109,77 @@ def reconstruct_ibm_greaseweazle(
     except Exception:
         return None
 
-    if timebase_ns <= 0:
-        timebase_ns = 25.0
-    sample_freq = 1_000_000_000.0 / timebase_ns
-    config = IBMTrack_ScanDef("ibm.scan")
-    config.rate = 250 if encoding == "fm" else 500
-    config.rpm = 360
+    flux = _greaseweazle_flux_from_revolutions(Flux, revolutions, timebase_ns)
+    if flux is None:
+        return None
+
+    rates = [250] if encoding == "fm" else [250, 500]
+    candidates: list[TrackSectors] = []
+    for rate in rates:
+        for rpm in (300, 360):
+            candidate_track = _decode_ibm_greaseweazle_flux(
+                IBMTrack_ScanDef,
+                flux,
+                track=track,
+                head=head,
+                rate=rate,
+                rpm=rpm,
+                expected_sectors=expected_sectors,
+                source_revolutions=[rev.index for rev in revolutions if getattr(rev, "interval_ns", None)],
+            )
+            if candidate_track is None:
+                continue
+            candidates.append(candidate_track)
+            if _has_complete_valid_sectors(candidate_track, expected_sectors):
+                return candidate_track
+
+    if not candidates:
+        return None
+
+    return max(candidates, key=_track_quality_key)
+
+
+def _decode_ibm_greaseweazle_flux(
+    scan_def_cls,
+    flux,
+    track: int,
+    head: int,
+    rate: int,
+    rpm: int,
+    expected_sectors: Optional[int],
+    source_revolutions: list[int],
+) -> Optional[TrackSectors]:
+    config = scan_def_cls("ibm.scan")
+    config.rate = rate
+    config.rpm = rpm
+    codec = config.mk_track(track, head)
+    try:
+        codec.decode_flux(flux)
+    except Exception:
+        return None
 
     merged: dict[int, Sector] = {}
-    for rev in revolutions:
-        if not getattr(rev, "interval_ns", None):
+    for area in getattr(codec.track, "sectors", []):
+        idam = area.idam
+        dam = area.dam
+        data = bytes(dam.data or b"")
+        if not data:
             continue
-        ticks = [max(1, int(round(ns / timebase_ns))) for ns in rev.interval_ns]
-        if not ticks:
-            continue
-        flux = Flux(index_list=[sum(ticks)], flux_list=ticks, sample_freq=sample_freq, index_cued=True)
-        codec = config.mk_track(track, head)
-        try:
-            codec.decode_flux(flux)
-        except Exception:
-            continue
-
-        for area in getattr(codec.track, "sectors", []):
-            idam = area.idam
-            dam = area.dam
-            data = bytes(dam.data or b"")
-            if not data:
-                continue
-            size_code = int(idam.n)
-            candidate = Sector(
-                cylinder=int(idam.c),
-                head=int(idam.h),
-                sector_id=int(idam.r),
-                size_code=size_code,
-                data=data,
-                crc_ok=area.crc == 0,
-                confidence=1.0,
-                deleted=dam.mark == 0xF8,
-                source_revolutions=[rev.index],
-            )
-            existing = merged.get(candidate.sector_id)
-            if existing is None or _sector_quality_key(candidate) > _sector_quality_key(existing):
-                merged[candidate.sector_id] = candidate
-
-        good_ids = {sid for sid, sector in merged.items() if sector.crc_ok and sector.data}
-        if expected_sectors is not None and len(good_ids) >= expected_sectors:
-            break
+        size_code = int(idam.n)
+        candidate = Sector(
+            cylinder=int(idam.c),
+            head=int(idam.h),
+            sector_id=int(idam.r),
+            size_code=size_code,
+            data=data,
+            crc_ok=area.crc == 0,
+            confidence=1.0,
+            deleted=getattr(dam, "mark", 0xFB) == 0xF8,
+            source_revolutions=source_revolutions,
+        )
+        existing = merged.get(candidate.sector_id)
+        if existing is None or _sector_quality_key(candidate) > _sector_quality_key(existing):
+            merged[candidate.sector_id] = candidate
 
     if not merged:
         return None
@@ -163,6 +188,38 @@ def reconstruct_ibm_greaseweazle(
     weak = sum(1 for sector in sectors if sector.data and not sector.crc_ok)
     missing = max((expected_sectors or len(sectors)) - len({s.sector_id for s in sectors if s.data}), 0)
     return TrackSectors(track=track, head=head, sectors=sectors, weak=weak, missing=missing)
+
+
+def _greaseweazle_flux_from_revolutions(
+    flux_cls,
+    revolutions: Sequence[RevolutionFlux],
+    timebase_ns: float,
+):
+    """Build one index-cued Greaseweazle Flux object from all revolutions."""
+
+    if timebase_ns <= 0:
+        timebase_ns = 25.0
+    sample_freq = 1_000_000_000.0 / timebase_ns
+
+    flux_list: list[int] = []
+    index_list: list[int] = []
+    for rev in revolutions:
+        if not getattr(rev, "interval_ns", None):
+            continue
+        ticks = [max(1, int(round(ns / timebase_ns))) for ns in rev.interval_ns]
+        if not ticks:
+            continue
+        flux_list.extend(ticks)
+        if rev.index_time_ns is not None:
+            index_ticks = max(1, int(round(rev.index_time_ns / timebase_ns)))
+        else:
+            index_ticks = sum(ticks)
+        index_list.append(index_ticks)
+
+    if not flux_list:
+        return None
+
+    return flux_cls(index_list=index_list, flux_list=flux_list, sample_freq=sample_freq, index_cued=True)
 
 
 def reconstruct_mfm_greaseweazle(

@@ -3,8 +3,11 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from fluxctl import cli
+from fluxctl import cli, detection
+from fluxctl.decoding import load_builtin_decoders
 from fluxctl.imd import load_imd_image
+from fluxctl.layouts.loader import load_builtin_layouts
+from fluxctl.models import SCPImage, TrackFlux
 
 FIXTURE = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64-170K.scp")
 FIXTURE_720K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.scp")
@@ -94,6 +97,27 @@ def test_probe_prefers_1440k_layout() -> None:
     result = runner.invoke(cli.app, ["probe", str(FIXTURE_1440K)])
     assert result.exit_code == 0
     assert "ibm_mfm_1440k" in result.stdout
+
+
+def test_probe_prefers_1440k_for_raw_hd_capture_without_sector_decode(monkeypatch) -> None:
+    load_builtin_layouts()
+    load_builtin_decoders()
+    image = SCPImage(Path("capture.scp"), version=0, revolutions_per_track=0, timebase_ns=25.0, tracks=[])
+    tracks = [TrackFlux(track=track, side=head) for track in range(81) for head in range(2)]
+    monkeypatch.setattr(detection, "_tracks_with_flux", lambda _image: tracks)
+    monkeypatch.setattr(detection, "_geometry_tracks_for_encoding", lambda _image, _encoding: tracks)
+    monkeypatch.setattr(detection, "_estimate_bitstream_length", lambda *_args, **_kwargs: 124_726)
+    monkeypatch.setattr(
+        detection,
+        "_estimate_geometry",
+        lambda *_args, **_kwargs: {"track_samples": 6, "tracks_with_sectors": 0},
+    )
+    monkeypatch.setattr(detection, "_average_confidence", lambda *_args, **_kwargs: None)
+
+    candidate = detection.detect_layout_any(image, Path("capture.scp"))
+
+    assert candidate is not None
+    assert candidate.layout.layout_id == "ibm_mfm_1440k"
 
 
 def test_probe_prefers_1200k_layout() -> None:

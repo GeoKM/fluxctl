@@ -269,6 +269,29 @@ def _apply_tandy_mfm_bonus(
     return 0.35
 
 
+def _apply_mfm_raw_density_bonus(
+    desc: LayoutDescriptor,
+    geometry: dict,
+    logical_tracks: int,
+    heads_present: set[int],
+    bitstream_len: float,
+    evidence: list[str],
+) -> float:
+    """Tie-break raw 3.5-inch HD captures when no sector headers decode."""
+
+    if geometry.get("sectors_per_track") is not None:
+        return 0.0
+    if not (79 <= logical_tracks <= 82 and len(heads_present) == 2 and bitstream_len >= 100_000):
+        return 0.0
+    if desc.layout_id == "ibm_mfm_1440k":
+        evidence.append("mfm_raw_pc_hd_bonus=1")
+        return 0.25
+    if desc.sector_size < 512 and desc.sectors_per_track >= 20:
+        evidence.append("mfm_raw_small_sector_penalty=1")
+        return -0.08
+    return 0.0
+
+
 def _estimate_bitstream_length(image: SCPImage, decoder: Decoder, sample_tracks: int = 4) -> Optional[float]:
     """Estimate average bitstream length from decoded revolutions."""
 
@@ -417,16 +440,14 @@ def detect_layout(
                 if best is None or candidate.score > best.score:
                     best = candidate
                 continue
-            rate_factor = 1.0
-            if desc.sectors_per_track >= 15 and not desc.layout_id.startswith("amiga_"):
-                rate_factor = 0.5
-            expected_bits = int(desc.sectors_per_track * desc.sector_size * 16 * rate_factor)
+            expected_bits = int(desc.sectors_per_track * desc.sector_size * 16)
             diff = abs(expected_bits - bitstream_len)
             score += 0.15 * (1.0 - (diff / max(expected_bits, bitstream_len, 1)))
             evidence.append(f"bitstream_len={bitstream_len:.0f}")
             evidence.append(f"expected_bits={expected_bits}")
-            if rate_factor != 1.0:
-                evidence.append(f"rate_factor={rate_factor}")
+            score += _apply_mfm_raw_density_bonus(
+                desc, geometry, logical_tracks, heads_present, bitstream_len, evidence
+            )
             apply_bitstream_bonus = geometry.get("sectors_per_track") is None and not desc.layout_id.startswith("amiga_")
             if apply_bitstream_bonus:
                 if bitstream_len >= 100_000:
@@ -668,14 +689,14 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
                 if best is None or candidate.score > best.score:
                     best = candidate
                 continue
-            rate_factor = 1.0
-            if desc.sectors_per_track >= 15 and not desc.layout_id.startswith("amiga_"):
-                rate_factor = 0.5
-            expected_bits = int(desc.sectors_per_track * desc.sector_size * 16 * rate_factor)
+            expected_bits = int(desc.sectors_per_track * desc.sector_size * 16)
             diff = abs(expected_bits - mfm_bits)
             score += 0.15 * (1.0 - (diff / max(expected_bits, mfm_bits, 1)))
             evidence.append(f"bitstream_len={mfm_bits:.0f}")
             evidence.append(f"expected_bits={expected_bits}")
+            score += _apply_mfm_raw_density_bonus(
+                desc, mfm_geometry, logical_tracks, heads_present, mfm_bits, evidence
+            )
             apply_bitstream_bonus = mfm_geometry.get("sectors_per_track") is None and not desc.layout_id.startswith("amiga_")
             if apply_bitstream_bonus:
                 if 60_000 <= mfm_bits <= 80_000:

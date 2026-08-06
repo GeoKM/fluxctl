@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -410,6 +411,71 @@ def test_left_panel_confirms_blank_image_overwrite(monkeypatch, tmp_path) -> Non
     assert output.read_bytes() != b"existing"
     assert captured["probed"] is True
     assert "create blank" in str(captured["label"])
+    window.close()
+
+
+def test_left_panel_disables_greaseweazle_read_when_missing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        services,
+        "greaseweazle_status",
+        lambda: services.GreaseweazleStatus(False, "", "gw missing", "install greaseweazle"),
+    )
+    window = FluxctlStudio()
+
+    assert not window.greaseweazle_read_button.isEnabled()
+    assert "missing" in window.greaseweazle_status_label.text().lower()
+
+    window.close()
+
+
+def test_left_panel_runs_greaseweazle_read_to_scp(monkeypatch, tmp_path) -> None:
+    captured = {}
+    monkeypatch.setattr(
+        services,
+        "greaseweazle_status",
+        lambda: services.GreaseweazleStatus(True, str(tmp_path / "gw"), "gw available"),
+    )
+    monkeypatch.setattr(
+        services,
+        "greaseweazle_formats",
+        lambda: [services.GreaseweazleFormat("ibm.1440", "ibm.1440")],
+    )
+    window = FluxctlStudio()
+    window.greaseweazle_format_combo.setCurrentIndex(window.greaseweazle_format_combo.findData("ibm.1440"))
+    window.greaseweazle_revs_input.setText("2")
+    window.greaseweazle_tracks_input.setText("c=0-39:h=0-1")
+
+    def run_immediate(label, fn, done):
+        captured["label"] = label
+        done(fn())
+
+    def fake_read(output, **kwargs):
+        captured["output"] = output
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(
+            path=str(output),
+            command=["gw", "read", "--raw", str(output)],
+            command_display=f"gw read --raw {output}",
+            stdout="read ok",
+            stderr="",
+        )
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_args, **_kwargs: (str(tmp_path / "capture.scp"), ""))
+    monkeypatch.setattr(services, "read_disk_with_greaseweazle", fake_read)
+    monkeypatch.setattr(window, "_run_job", run_immediate)
+    monkeypatch.setattr(window, "run_probe", lambda: captured.setdefault("probed", True))
+
+    window.read_disk_with_greaseweazle_dialog()
+
+    assert captured["label"] == "greaseweazle read A"
+    assert captured["output"] == tmp_path / "capture.scp"
+    assert captured["kwargs"]["drive"] == "A"
+    assert captured["kwargs"]["gw_format"] == "ibm.1440"
+    assert captured["kwargs"]["tracks"] == "c=0-39:h=0-1"
+    assert captured["kwargs"]["revs"] == 2
+    assert captured["probed"] is True
+    assert window.current_path == tmp_path / "capture.scp"
+
     window.close()
 
 
