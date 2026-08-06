@@ -36,14 +36,15 @@ def _decode_timebase(version: int, raw_timebase: int) -> float:
     clock frequency in kHz.
     """
 
-    # Preserve legacy behaviour for very old captures (version 0/1) and
-    # explicit high-resolution settings; clamp suspiciously small values only
-    # on newer versions.
+    # Greaseweazle's SCP reader treats version-0 images as fixed 40MHz
+    # captures. Some writers still populate the timebase field, but using it
+    # literally can stretch flux timings enough to create false CRC errors.
     if version == 0:
-        if 0 < raw_timebase <= 1000:
-            return float(raw_timebase)
         return DEFAULT_TIMEBASE_NS
 
+    # Preserve legacy behaviour for old-but-not-v0 captures and explicit
+    # high-resolution settings; clamp suspiciously small values only on newer
+    # versions.
     if version <= 1 and 0 < raw_timebase <= 1000:
         return float(raw_timebase)
 

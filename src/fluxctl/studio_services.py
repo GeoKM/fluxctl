@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -45,6 +46,35 @@ class CommandResult:
 
     args: list[str]
     returncode: int
+    stdout: str
+    stderr: str
+
+
+@dataclass(frozen=True)
+class GreaseweazleStatus:
+    """Greaseweazle command availability for Studio hardware workflows."""
+
+    available: bool
+    executable: str
+    detail: str
+    suggestion: str = ""
+
+
+@dataclass(frozen=True)
+class GreaseweazleFormat:
+    """Greaseweazle disk format option discovered from the installed CLI."""
+
+    format_id: str
+    label: str
+
+
+@dataclass(frozen=True)
+class HardwareReadResult:
+    """Result of a Greaseweazle read operation."""
+
+    path: str
+    command: list[str]
+    command_display: str
     stdout: str
     stderr: str
 
@@ -531,6 +561,138 @@ def run_fluxctl_command(args: list[str], cwd: Optional[Path] = None) -> CommandR
         check=False,
     )
     return CommandResult(args=args, returncode=completed.returncode, stdout=completed.stdout, stderr=completed.stderr)
+
+
+def _greaseweazle_executable() -> Optional[Path]:
+    exe_name = "gw.exe" if sys.platform.startswith("win") else "gw"
+    venv_candidate = Path(sys.executable).parent / exe_name
+    if venv_candidate.exists():
+        return venv_candidate
+    found = shutil.which("gw")
+    return Path(found) if found else None
+
+
+def greaseweazle_status() -> GreaseweazleStatus:
+    """Return whether the Greaseweazle CLI is callable from Studio."""
+
+    executable = _greaseweazle_executable()
+    if executable is None:
+        return GreaseweazleStatus(
+            available=False,
+            executable="",
+            detail="Greaseweazle command `gw` was not found.",
+            suggestion="Install with the Fluxctl installer Greaseweazle options, then run fluxctl doctor.",
+        )
+    return GreaseweazleStatus(
+        available=True,
+        executable=str(executable),
+        detail=f"Greaseweazle command available at {executable}",
+    )
+
+
+def _parse_greaseweazle_formats(help_text: str) -> list[GreaseweazleFormat]:
+    """Parse Greaseweazle format ids from `gw read --help` output."""
+
+    formats: set[str] = set()
+    in_formats = False
+    for line in help_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("FORMAT options:"):
+            in_formats = True
+            continue
+        if not in_formats:
+            continue
+        if not stripped or stripped.startswith("Supported file suffixes:"):
+            break
+        for token in stripped.split():
+            if "." not in token:
+                continue
+            if token.startswith("."):
+                continue
+            if all(char.isalnum() or char in "._-" for char in token):
+                formats.add(token)
+    return [GreaseweazleFormat(format_id=format_id, label=format_id) for format_id in sorted(formats)]
+
+
+def greaseweazle_formats() -> list[GreaseweazleFormat]:
+    """Return Greaseweazle disk formats supported by the installed CLI."""
+
+    executable = _greaseweazle_executable()
+    if executable is None:
+        return []
+    completed = subprocess.run(
+        [str(executable), "read", "--help"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return _parse_greaseweazle_formats(f"{completed.stdout}\n{completed.stderr}")
+
+
+def _command_display(args: list[str]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in args)
+
+
+def build_greaseweazle_read_command(
+    output: Path,
+    *,
+    drive: str = "A",
+    gw_format: str = "",
+    tracks: str = "",
+    revs: Optional[int] = None,
+) -> list[str]:
+    """Build a raw-flux Greaseweazle read command for SCP capture."""
+
+    executable = _greaseweazle_executable()
+    if executable is None:
+        raise RuntimeError("Greaseweazle command `gw` is not available")
+    args = [str(executable), "read", "--drive", drive, "--raw"]
+    if gw_format:
+        args.extend(["--format", gw_format])
+    if tracks:
+        args.extend(["--tracks", tracks])
+    if revs is not None:
+        if revs < 1:
+            raise ValueError("Greaseweazle read revolutions must be 1 or greater")
+        args.extend(["--revs", str(revs)])
+    args.append(str(output))
+    return args
+
+
+def read_disk_with_greaseweazle(
+    output: Path,
+    *,
+    drive: str = "A",
+    gw_format: str = "",
+    tracks: str = "",
+    revs: Optional[int] = None,
+    overwrite: bool = False,
+) -> HardwareReadResult:
+    """Read a physical disk via Greaseweazle into a raw SCP image."""
+
+    if output.suffix.lower() != ".scp":
+        output = output.with_suffix(".scp")
+    if output.exists() and not overwrite:
+        raise FileExistsError(f"Output image already exists: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    args = build_greaseweazle_read_command(
+        output,
+        drive=drive,
+        gw_format=gw_format,
+        tracks=tracks,
+        revs=revs,
+    )
+    completed = subprocess.run(args, text=True, capture_output=True, check=False)
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or f"exit status {completed.returncode}"
+        raise RuntimeError(f"Greaseweazle read failed: {detail}")
+    return HardwareReadResult(
+        path=str(output),
+        command=args,
+        command_display=_command_display(args),
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+    )
 
 
 def doctor_report(hxcfe: Optional[Path] = None) -> dict:
