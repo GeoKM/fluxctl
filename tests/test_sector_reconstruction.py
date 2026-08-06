@@ -12,6 +12,7 @@ from fluxctl.sector.reconstruct import (
     SYNC_WORD,
     build_track_sectors_from_revolutions,
     build_track_sectors,
+    _greaseweazle_flux_from_revolutions,
     reconstruct_track,
 )
 
@@ -146,6 +147,24 @@ def test_multi_revolution_reconstruction_recovers_later_good_sector() -> None:
     assert track.sectors[0].data == data_bytes
     assert track.sectors[0].crc_ok is True
     assert track.sectors[0].source_revolutions == [1]
+
+
+def test_greaseweazle_flux_uses_all_revolutions_and_header_index_timing() -> None:
+    pytest.importorskip("greaseweazle")
+    from greaseweazle.flux import Flux
+
+    revolutions = [
+        RevolutionFlux(index=0, interval_ns=[25, 50, 75], index_time_ns=200),
+        RevolutionFlux(index=1, interval_ns=[100, 125], index_time_ns=250),
+    ]
+
+    flux = _greaseweazle_flux_from_revolutions(Flux, revolutions, timebase_ns=25.0)
+
+    assert flux is not None
+    assert flux.list == [1, 2, 3, 4, 5]
+    assert flux.index_list == [8, 10]
+    assert flux.sample_freq == 40_000_000
+    assert flux.index_cued is True
 
 
 def test_multi_revolution_reconstruction_stops_after_complete_good_track() -> None:

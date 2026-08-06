@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from fluxctl import studio_services as services
 from fluxctl.exporters.d64 import DEFAULT_SECTORS_PER_TRACK, SECTOR_SIZE
@@ -24,6 +25,101 @@ def test_studio_doctor_report_matches_cli_shape() -> None:
     assert report["tool"] == "fluxctl"
     assert "checks" in report
     assert any(check["name"] == "layouts" for check in report["checks"])
+
+
+def test_studio_detects_greaseweazle_command_from_venv(monkeypatch, tmp_path) -> None:
+    executable = tmp_path / ("gw.exe" if services.sys.platform.startswith("win") else "gw")
+    executable.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(services.sys, "executable", str(tmp_path / "python"))
+    monkeypatch.setattr(services.shutil, "which", lambda _name: None)
+
+    status = services.greaseweazle_status()
+
+    assert status.available is True
+    assert status.executable == str(executable)
+
+
+def test_studio_parses_greaseweazle_formats_from_help() -> None:
+    help_text = """
+FORMAT options:
+ibm.720                  ibm.1440                 commodore.1581
+mm1.os9.80dshd_32        raw.250
+
+Supported file suffixes:
+.scp .img
+"""
+
+    formats = services._parse_greaseweazle_formats(help_text)
+
+    assert [item.format_id for item in formats] == [
+        "commodore.1581",
+        "ibm.1440",
+        "ibm.720",
+        "mm1.os9.80dshd_32",
+        "raw.250",
+    ]
+
+
+def test_studio_builds_raw_scp_greaseweazle_read_command(monkeypatch, tmp_path) -> None:
+    executable = tmp_path / "gw"
+    executable.write_text("")
+    monkeypatch.setattr(services, "_greaseweazle_executable", lambda: executable)
+
+    command = services.build_greaseweazle_read_command(
+        tmp_path / "capture.scp",
+        drive="B",
+        gw_format="ibm.1440",
+        tracks="c=0-39:h=0-1",
+        revs=3,
+    )
+
+    assert command == [
+        str(executable),
+        "read",
+        "--drive",
+        "B",
+        "--raw",
+        "--format",
+        "ibm.1440",
+        "--tracks",
+        "c=0-39:h=0-1",
+        "--revs",
+        "3",
+        str(tmp_path / "capture.scp"),
+    ]
+
+
+def test_studio_runs_greaseweazle_read_without_hardware_in_tests(monkeypatch, tmp_path) -> None:
+    executable = tmp_path / "gw"
+    executable.write_text("")
+    captured = {}
+    monkeypatch.setattr(services, "_greaseweazle_executable", lambda: executable)
+
+    def fake_run(args, **_kwargs):
+        captured["args"] = args
+        return SimpleNamespace(returncode=0, stdout="read ok", stderr="")
+
+    monkeypatch.setattr(services.subprocess, "run", fake_run)
+
+    result = services.read_disk_with_greaseweazle(tmp_path / "capture", drive="A", revs=2)
+
+    assert result.path == str(tmp_path / "capture.scp")
+    assert captured["args"][-1] == str(tmp_path / "capture.scp")
+    assert "--raw" in captured["args"]
+    assert result.stdout == "read ok"
+
+
+def test_studio_greaseweazle_read_refuses_existing_output(monkeypatch, tmp_path) -> None:
+    output = tmp_path / "capture.scp"
+    output.write_text("existing")
+    monkeypatch.setattr(services, "_greaseweazle_executable", lambda: tmp_path / "gw")
+
+    try:
+        services.read_disk_with_greaseweazle(output)
+    except FileExistsError as exc:
+        assert "already exists" in str(exc)
+    else:
+        raise AssertionError("expected FileExistsError")
 
 
 def test_studio_loads_layout_options() -> None:
