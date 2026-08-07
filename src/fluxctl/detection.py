@@ -281,7 +281,12 @@ def _apply_mfm_raw_density_bonus(
 
     if geometry.get("sectors_per_track") is not None:
         return 0.0
-    if not (79 <= logical_tracks <= 82 and len(heads_present) == 2 and bitstream_len >= 100_000):
+    if not (79 <= logical_tracks <= 82 and len(heads_present) == 2):
+        return 0.0
+    if desc.layout_id == "amiga_mfm_880k" and 90_000 <= bitstream_len <= 115_000:
+        evidence.append("amiga_raw_dd_bonus=1")
+        return 0.45
+    if bitstream_len < 120_000:
         return 0.0
     if desc.layout_id == "ibm_mfm_1440k":
         evidence.append("mfm_raw_pc_hd_bonus=1")
@@ -697,6 +702,9 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
             score += _apply_mfm_raw_density_bonus(
                 desc, mfm_geometry, logical_tracks, heads_present, mfm_bits, evidence
             )
+            if desc.layout_id.startswith("amiga_") and mfm_bits >= 90_000 and logical_tracks >= 79:
+                score += 0.2
+                evidence.append("amiga_bitstream_bonus=1")
             apply_bitstream_bonus = mfm_geometry.get("sectors_per_track") is None and not desc.layout_id.startswith("amiga_")
             if apply_bitstream_bonus:
                 if 60_000 <= mfm_bits <= 80_000:
@@ -709,9 +717,6 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
                 if mfm_bits <= 50_000 and desc.sectors_per_track == 9:
                     score += 0.1
                     evidence.append("bitstream_spt_bonus_9=1")
-                if desc.layout_id.startswith("amiga_") and mfm_bits >= 90_000 and logical_tracks >= 79:
-                    score += 0.2
-                    evidence.append("amiga_bitstream_bonus=1")
                 if (
                     desc.sector_size == 128
                     and desc.sectors_per_track == 26

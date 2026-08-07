@@ -205,10 +205,77 @@ def reconstruct_amiga_greaseweazle(revolutions, track: int, head: int, timebase_
     revs = revolutions if isinstance(revolutions, list) else [revolutions]
     codec_cls = AmigaDOS_HD if track >= 160 else AmigaDOS_DD
 
+    flux = _greaseweazle_flux_from_revolutions(Flux, revs, timebase_ns)
+    if flux is None:
+        return None
+
     merged: dict[int, Sector] = {}
-    for rev in revs:
+    source_revs = [rev.index for rev in revs if getattr(rev, "interval_ns", None)]
+    codec = codec_cls(track, head)
+    codec.decode_flux(flux)
+    for sec_id, sector in enumerate(codec.sector):
+        if sector is None:
+            continue
+        _, data = sector
+        candidate = Sector(
+            cylinder=track,
+            head=head,
+            sector_id=sec_id,
+            size_code=2,
+            data=data,
+            crc_ok=True,
+            confidence=1.0,
+            deleted=False,
+            source_revolutions=source_revs,
+        )
+        existing = merged.get(sec_id)
+        if existing is None or (not existing.crc_ok and candidate.crc_ok):
+            merged[sec_id] = candidate
+
+    missing = max(11 - len(merged), 0)
+    return TrackSectors(track=track, head=head, sectors=sorted(merged.values(), key=lambda s: s.sector_id), weak=0, missing=missing)
+
+
+def _greaseweazle_flux_from_revolutions(flux_cls, revolutions, timebase_ns: float):
+    """Build one index-cued Greaseweazle Flux object from all revolutions."""
+
+    if timebase_ns <= 0:
+        timebase_ns = 25.0
+    sample_freq = 1_000_000_000.0 / timebase_ns
+    flux_list: list[int] = []
+    index_list: list[int] = []
+    for rev in revolutions:
+        if not getattr(rev, "interval_ns", None):
+            continue
         ticks = [max(1, int(round(ns / timebase_ns))) for ns in rev.interval_ns]
-        flux = Flux(index_list=[sum(ticks)], flux_list=ticks, sample_freq=40_000_000, index_cued=True)
+        if not ticks:
+            continue
+        flux_list.extend(ticks)
+        if rev.index_time_ns is not None:
+            index_ticks = max(1, int(round(rev.index_time_ns / timebase_ns)))
+        else:
+            index_ticks = sum(ticks)
+        index_list.append(index_ticks)
+    if not flux_list:
+        return None
+    return flux_cls(index_list=index_list, flux_list=flux_list, sample_freq=sample_freq, index_cued=True)
+
+
+def reconstruct_amiga_with_pll(revolutions, track: int, head: int, timebase_ns: float = 25.0) -> TrackSectors:
+    """Decode using Greaseweazle if available, otherwise merge internal MFM results."""
+
+    revs = list(revolutions) if isinstance(revolutions, (list, tuple)) else [revolutions]
+
+    try:
+        from greaseweazle.codec.amiga.amigados import AmigaDOS_DD, AmigaDOS_HD
+        from greaseweazle.flux import Flux
+
+        codec_cls = AmigaDOS_HD if track >= 160 else AmigaDOS_DD
+        merged: dict[int, Sector] = {}
+        flux = _greaseweazle_flux_from_revolutions(Flux, revs, timebase_ns)
+        if flux is None:
+            raise ValueError("No flux intervals")
+        source_revs = [rev.index for rev in revs if getattr(rev, "interval_ns", None)]
         codec = codec_cls(track, head)
         codec.decode_flux(flux)
         for sec_id, sector in enumerate(codec.sector):
@@ -224,54 +291,11 @@ def reconstruct_amiga_greaseweazle(revolutions, track: int, head: int, timebase_
                 crc_ok=True,
                 confidence=1.0,
                 deleted=False,
-                source_revolutions=[rev.index],
+                source_revolutions=source_revs,
             )
             existing = merged.get(sec_id)
             if existing is None or (not existing.crc_ok and candidate.crc_ok):
                 merged[sec_id] = candidate
-        if len(merged) >= 11:
-            break
-
-    missing = max(11 - len(merged), 0)
-    return TrackSectors(track=track, head=head, sectors=sorted(merged.values(), key=lambda s: s.sector_id), weak=0, missing=missing)
-
-
-def reconstruct_amiga_with_pll(revolutions, track: int, head: int, timebase_ns: float = 25.0) -> TrackSectors:
-    """Decode using Greaseweazle if available, otherwise merge internal MFM results."""
-
-    revs = list(revolutions) if isinstance(revolutions, (list, tuple)) else [revolutions]
-
-    try:
-        from greaseweazle.codec.amiga.amigados import AmigaDOS_DD, AmigaDOS_HD
-        from greaseweazle.flux import Flux
-
-        codec_cls = AmigaDOS_HD if track >= 160 else AmigaDOS_DD
-        merged: dict[int, Sector] = {}
-        for rev in revs:
-            ticks = [max(1, int(round(ns / 25.0))) for ns in rev.interval_ns]
-            flux = Flux(index_list=[sum(ticks)], flux_list=ticks, sample_freq=40_000_000, index_cued=True)
-            codec = codec_cls(track, head)
-            codec.decode_flux(flux)
-            for sec_id, sector in enumerate(codec.sector):
-                if sector is None:
-                    continue
-                _, data = sector
-                candidate = Sector(
-                    cylinder=track,
-                    head=head,
-                    sector_id=sec_id,
-                    size_code=2,
-                    data=data,
-                    crc_ok=True,
-                    confidence=1.0,
-                    deleted=False,
-                    source_revolutions=[rev.index],
-                )
-                existing = merged.get(sec_id)
-                if existing is None or (not existing.crc_ok and candidate.crc_ok):
-                    merged[sec_id] = candidate
-            if len(merged) >= 11:
-                break
         missing = max(11 - len(merged), 0)
         return TrackSectors(track=track, head=head, sectors=sorted(merged.values(), key=lambda s: s.sector_id), weak=0, missing=missing)
     except Exception:
