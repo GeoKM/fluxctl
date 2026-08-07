@@ -144,7 +144,10 @@ class AmigaOFS(Filesystem):
             else:
                 directory = self.directory
                 volume_label = self.volume_label
-            self._parse_kickstart_image()
+            try:
+                self._parse_kickstart_image()
+            except FilesystemError:
+                return False
             if directory:
                 self.filesystem = "amiga_kickstart_dos"
                 self.volume_label = volume_label or self.volume_label

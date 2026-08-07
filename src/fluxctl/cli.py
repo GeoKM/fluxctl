@@ -1356,9 +1356,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
             continue
         image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
         image_obj.layout = layout
-        sector_base = int(layout.id_rules.get("sector_number_base", 1))
-        if not layout.track_sectors and sector_base == 1:
-            image_obj.set_geometry(layout.sectors_per_track, layout.sides)
+        _apply_layout_geometry(image_obj, layout)
         filesystem_name, filesystem_evidence = _filesystem_evidence_for_image(image_obj, path)
         layout_evidence = evidence + [f"layout={layout.layout_id}"]
         if filesystem_name:
