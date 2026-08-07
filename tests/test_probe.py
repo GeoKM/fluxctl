@@ -12,6 +12,7 @@ from fluxctl.models import SCPImage, TrackFlux
 FIXTURE = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64-170K.scp")
 FIXTURE_720K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.scp")
 FIXTURE_1440K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSHD-MFM-IBMPC-1440K.scp")
+FIXTURE_XDF = Path("tests/fixtures/3.5inch/IBM/IBM-XDF-DSHD-MFM-OS2-1890K.scp")
 FIXTURE_1200K = Path("tests/fixtures/5.25inch/IBM/IBM-Generic-DSHD-MFM-IBMPC-1200K.scp")
 FIXTURE_CPM_340K = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C128CPM-340K.scp")
 FIXTURE_CPM_170K = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-SSDD-GCR-C128CPM-170K.scp")
@@ -97,6 +98,15 @@ def test_probe_prefers_1440k_layout() -> None:
     result = runner.invoke(cli.app, ["probe", str(FIXTURE_1440K)])
     assert result.exit_code == 0
     assert "ibm_mfm_1440k" in result.stdout
+
+
+def test_probe_prefers_ibm_xdf_layout() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_XDF)])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "ibm_xdf_1890k"
+    assert "xdf_mixed_sector_geometry_bonus=1" in payload[0]["evidence"]
 
 
 def test_probe_prefers_1440k_for_raw_hd_capture_without_sector_decode(monkeypatch) -> None:

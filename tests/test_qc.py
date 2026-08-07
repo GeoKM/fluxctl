@@ -19,6 +19,7 @@ class BrokenDecoder:
 FIXTURE_GOOD = Path("tests/fixtures/5.25inch/IBM/IBM-Generic-SSDD-MFM-IBMPC-180K.scp")
 FIXTURE_8IN_1200K_FAT = Path("tests/fixtures/8inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-1200K-B.scp")
 FIXTURE_DISPLAYWRITER = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWriter-284K.scp")
+FIXTURE_XDF = Path("tests/fixtures/3.5inch/IBM/IBM-XDF-DSHD-MFM-OS2-1890K.scp")
 
 
 def test_qc_report_counts_good_disk() -> None:
@@ -60,6 +61,20 @@ def test_qc_uses_fm_pll_fallback_for_displaywriter() -> None:
     assert report.total_missing_sectors == 11
     assert report.total_bad_sectors == 0
     assert report.status == "suspect"
+
+
+def test_qc_handles_ibm_xdf_mixed_sector_tracks() -> None:
+    image = parse_scp(FIXTURE_XDF)
+    layout = ensure_layout_loaded("ibm_xdf_1890k")
+    report = build_qc_report(image, mfm_decoder, layout)
+
+    assert len(report.tracks) == 160
+    assert report.total_sectors == 670
+    assert report.total_good_sectors == 670
+    assert report.suspect_sectors == 0
+    assert report.status == "good"
+    assert report.tracks[0].total_sectors == 19
+    assert report.tracks[2].total_sectors == 4
 
 
 def test_qc_json_roundtrip_and_failure_detection() -> None:

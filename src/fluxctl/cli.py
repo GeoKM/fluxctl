@@ -952,23 +952,31 @@ def _expected_bytes_for_layout(layout: LayoutDescriptor) -> int:
     sectors_per_cylinder = list(layout.track_sectors) if layout.track_sectors else [layout.sectors_per_track] * layout.tracks
     if len(sectors_per_cylinder) < layout.tracks:
         sectors_per_cylinder.extend([layout.sectors_per_track] * (layout.tracks - len(sectors_per_cylinder)))
-    if layout.track_overrides:
-        total_bytes = 0
-        for cylinder, sectors in enumerate(sectors_per_cylinder):
-            for head in range(layout.sides):
-                sector_size = layout.sector_size
-                sectors_this_track = sectors
-                for override in layout.track_overrides:
-                    if _track_in_range(override.get("track_range", ""), cylinder) and (
-                        override.get("head") is None or override.get("head") == head
-                    ):
-                        sector_size = override.get("sector_size", sector_size)
-                        sectors_this_track = override.get("sectors_per_track", sectors_this_track)
-                        break
-                total_bytes += int(sectors_this_track) * int(sector_size)
-        return total_bytes
-    total_sectors = sum(sectors_per_cylinder) * layout.sides
-    return total_sectors * layout.sector_size
+
+    def track_head_bytes(cylinder: int, head: int, sectors: int) -> int:
+        override = None
+        if layout.track_overrides:
+            for candidate in layout.track_overrides:
+                if _track_in_range(candidate.get("track_range", ""), cylinder) and (
+                    candidate.get("head") is None or candidate.get("head") == head
+                ):
+                    override = candidate
+                    break
+        if override and "sector_sizes" in override:
+            return sum(int(size) for size in override["sector_sizes"])
+        if override:
+            sector_size = int(override.get("sector_size", layout.sector_size))
+            sector_count = int(override.get("sectors_per_track", sectors))
+            return sector_count * sector_size
+        if layout.sector_sizes:
+            return sum(int(size) for size in layout.sector_sizes)
+        return int(sectors) * int(layout.sector_size)
+
+    return sum(
+        track_head_bytes(cylinder, head, sectors)
+        for cylinder, sectors in enumerate(sectors_per_cylinder)
+        for head in range(layout.sides)
+    )
 
 
 def _prefix_track_count_for_size(layout: LayoutDescriptor, data_len: int) -> Optional[int]:
@@ -1072,6 +1080,7 @@ def _sectors_from_blob(
     for cylinder, head in order:
         sectors_on_track = sectors_per_cylinder[cylinder]
         sector_size = layout.sector_size
+        sector_sizes = list(layout.sector_sizes) if layout.sector_sizes else None
         if layout.track_overrides:
             for override in layout.track_overrides:
                 if _track_in_range(override.get("track_range", ""), cylinder) and (
@@ -1079,15 +1088,17 @@ def _sectors_from_blob(
                 ):
                     sector_size = override.get("sector_size", sector_size)
                     sectors_on_track = override.get("sectors_per_track", sectors_on_track)
+                    sector_sizes = list(override.get("sector_sizes", [])) or None
                     break
-        size_code = SECTOR_SIZE_TO_CODE.get(sector_size)
-        if size_code is None:
-            return None
         sectors: list[Sector] = []
         sector_base = int(layout.id_rules.get("sector_number_base", 1))
-        for sector_offset in range(sectors_on_track):
-            chunk = data[offset : offset + sector_size]
-            if len(chunk) < sector_size:
+        sizes_this_track = sector_sizes or [int(sector_size)] * int(sectors_on_track)
+        for sector_offset, sector_size_this in enumerate(sizes_this_track):
+            size_code = SECTOR_SIZE_TO_CODE.get(int(sector_size_this))
+            if size_code is None:
+                return None
+            chunk = data[offset : offset + int(sector_size_this)]
+            if len(chunk) < int(sector_size_this):
                 return None
             sectors.append(
                 Sector(
@@ -1101,7 +1112,7 @@ def _sectors_from_blob(
                     deleted=False,
                 )
             )
-            offset += sector_size
+            offset += int(sector_size_this)
         tracks.append(TrackSectors(track=cylinder, head=head, sectors=sectors))
     return tracks
 

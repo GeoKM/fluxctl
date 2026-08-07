@@ -9,6 +9,8 @@ future iterations.
 """
 from __future__ import annotations
 
+import contextlib
+import io
 from typing import Iterable, List, Optional, Sequence
 
 from ..decoding import Decoder
@@ -154,7 +156,8 @@ def _decode_ibm_greaseweazle_flux(
     config.rpm = rpm
     codec = config.mk_track(track, head)
     try:
-        codec.decode_flux(flux)
+        with contextlib.redirect_stdout(io.StringIO()):
+            codec.decode_flux(flux)
     except Exception:
         return None
 

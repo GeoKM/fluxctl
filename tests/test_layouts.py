@@ -34,3 +34,13 @@ def test_kaypro_cpm_5inch_mfm_layout_loads():
     assert desc.tracks == 40
     assert desc.sectors_per_track == 10
     assert desc.sector_size == 512
+
+
+def test_ibm_xdf_layout_loads_mixed_sector_geometry():
+    desc = ensure_layout_loaded("ibm_xdf_1890k")
+    assert desc.encoding == "mfm"
+    assert desc.sides == 2
+    assert desc.tracks == 80
+    assert desc.expected_sectors_for_track(0, 0) == 19
+    assert desc.expected_sectors_for_track(1, 0) == 4
+    assert desc.expected_sector_sizes_for_track(1, 0) == [512, 1024, 2048, 8192]
