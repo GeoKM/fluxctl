@@ -22,9 +22,8 @@ shape later implementation work.
   root directory contains no entries.
 - `IBM-6580-SSDD-FM-DisplayWriter-284K.scp` probes as
   `ibm_displaywriter_fm_284k`, single-sided FM. Track 0 has 26 128-byte
-  sectors; tracks 1-76 have 15 256-byte sectors each. HxC reports 2 bad
-  sectors on the SCP capture; fluxctl currently decodes 1,155/1,166 sectors
-  and reports 11 missing sectors, so the fixture should be treated as suspect.
+  sectors; tracks 1-76 have 15 256-byte sectors each. The current replacement
+  fixture decodes all 1,166 sectors cleanly and should report good QC.
   The Files panel lists IBM standard-label `HDR1` entries such as `WPE`.
   Document extraction is not implemented yet because only the label directory
   is decoded.

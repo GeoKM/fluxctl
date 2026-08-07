@@ -2120,7 +2120,7 @@ def extract(
 ):
     """Detect filesystem, list directories, or extract a file."""
 
-    if file_path and out is None:
+    if file_path and out is None and not list_only:
         raise typer.BadParameter("--out must be provided when --path is used")
 
     selected_layout = layout
