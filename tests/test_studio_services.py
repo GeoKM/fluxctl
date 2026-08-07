@@ -178,13 +178,13 @@ def test_studio_reports_amiga_file_allocation_for_map_overlay() -> None:
     allocation = services.file_allocation_for_image(FIXTURE_ADF, "amiga_mfm_880k", "mfm", "/C/Assign")
 
     assert allocation.sectors == {
+        (32, 1, 4),
         (32, 1, 5),
         (32, 1, 6),
         (32, 1, 7),
         (32, 1, 8),
         (32, 1, 9),
         (32, 1, 10),
-        (32, 1, 11),
     }
 
 
