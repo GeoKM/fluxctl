@@ -244,6 +244,34 @@ def test_probe_supports_flat_adf_images() -> None:
     assert payload[0]["filesystem"] is not None
 
 
+def test_probe_supports_flat_adf_kickstart_with_directory(tmp_path) -> None:
+    sectors = [b"\x00" * 512 for _ in range(1760)]
+    sectors[0] = b"KICK".ljust(512, b"\x00")
+    root = bytearray(512)
+    root[3] = 2
+    root[24:28] = (881).to_bytes(4, "big")
+    root[432] = 9
+    root[433:442] = b"KickDisk1"
+    sectors[880] = bytes(root)
+    entry = bytearray(512)
+    entry[3] = 2
+    entry[324:328] = (1).to_bytes(4, "big")
+    entry[432] = 7
+    entry[433:440] = b"VERSION"
+    entry[508:512] = (-3).to_bytes(4, "big", signed=True)
+    sectors[881] = bytes(entry)
+    image_path = tmp_path / "kickstart.adf"
+    image_path.write_bytes(b"".join(sectors))
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(image_path)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "amiga_mfm_880k"
+    assert payload[0]["filesystem"] == "amiga_kickstart_dos"
+
+
 def test_probe_supports_imd_rx02() -> None:
     runner = CliRunner()
     result = runner.invoke(cli.app, ["probe", str(FIXTURE_IMD_RX02)])
