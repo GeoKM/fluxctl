@@ -56,9 +56,10 @@ def test_qc_uses_fm_pll_fallback_for_displaywriter() -> None:
 
     assert len(report.tracks) == 77
     assert report.total_sectors == 1166
-    assert report.total_good_sectors == 1166
+    assert report.total_good_sectors == 1155
+    assert report.total_missing_sectors == 11
     assert report.total_bad_sectors == 0
-    assert report.status == "good"
+    assert report.status == "suspect"
 
 
 def test_qc_json_roundtrip_and_failure_detection() -> None:
