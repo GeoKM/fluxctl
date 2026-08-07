@@ -718,6 +718,7 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
         if track_data:
             image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
             image.layout = layout_desc
+            _apply_layout_geometry(image, layout_desc)
             return image
         # Fall through to raw sector handling if reconstruction failed.
 
@@ -728,11 +729,13 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
             track_data = _decode_amiga_tracks(path, layout_desc)
             image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
             image.layout = layout_desc
+            _apply_layout_geometry(image, layout_desc)
             return image
         track_data = _decode_tracks(path, layout_id, encoding=encoding)
         image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size if layout_desc else None)
         if layout_desc:
             image.layout = layout_desc
+            _apply_layout_geometry(image, layout_desc)
         return image
     if ext == ".imd":
         tracks, geom, _meta = load_imd_image(path)
@@ -746,6 +749,14 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
         image.layout = layout_desc
         return image
     return RawSectorImage(path.read_bytes())
+
+
+def _apply_layout_geometry(image: TrackSectorImage, layout: LayoutDescriptor) -> None:
+    image.set_geometry(
+        layout.sectors_per_track,
+        layout.sides,
+        int(layout.id_rules.get("sector_number_base", 1)),
+    )
 
 
 def _decode_amiga_tracks(path: Path, layout: LayoutDescriptor) -> list[TrackSectors]:
@@ -1478,7 +1489,11 @@ def _prepare_convert_payload(path: Path, to: str, layout: Optional[str], encodin
                     geometry_sectors = layout_desc.expected_sectors_for_track(track_data[0].track, track_data[0].head)
                 except Exception:
                     geometry_sectors = layout_desc.sectors_per_track
-            image_obj.set_geometry(geometry_sectors or layout_desc.sectors_per_track, layout_desc.sides)
+            image_obj.set_geometry(
+                geometry_sectors or layout_desc.sectors_per_track,
+                layout_desc.sides,
+                int(layout_desc.id_rules.get("sector_number_base", 1)),
+            )
     elif path.suffix.lower() == ".imd":
         track_data, imd_geom, _meta = load_imd_image(path)
         image_obj = _image_from_tracks(track_data, imd_geom, layout_desc)
@@ -2233,7 +2248,7 @@ def patch(
         raise ExportError("Raw exporter not available")
     exporter = exporter_info.entry
     image_obj = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
-    image_obj.set_geometry(layout_desc.sectors_per_track, layout_desc.sides)
+    _apply_layout_geometry(image_obj, layout_desc)
     exported = exporter.export(image_obj)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(exported)

@@ -1,8 +1,7 @@
 from fluxctl.exporters.adf import ADFExporter, ADF_SIZE
+from fluxctl.filesystems import RawSectorImage, TrackSectorImage
 from fluxctl.filesystems.amiga import AmigaOFS
-from fluxctl.exporters.adf import ADFExporter, ADF_SIZE
-from fluxctl.filesystems import RawSectorImage
-from fluxctl.filesystems.amiga import AmigaOFS
+from fluxctl.sector.models import Sector, TrackSectors
 
 
 def _build_mock_adf() -> RawSectorImage:
@@ -36,3 +35,26 @@ def test_adf_exporter_size():
     assert exporter.supports(image)
     payload = exporter.export(image)
     assert len(payload) == ADF_SIZE
+
+
+def test_amiga_track_image_geometry_prevents_lba_shift_when_early_sector_missing():
+    root = b"\x00\x00\x00\x02ROOT".ljust(512, b"\x00")
+    image = TrackSectorImage(
+        [
+            TrackSectors(
+                track=0,
+                head=0,
+                sectors=[Sector(0, 0, 0, 2, b"boot".ljust(512, b"\x00"), True, 1.0)],
+            ),
+            TrackSectors(
+                track=40,
+                head=0,
+                sectors=[Sector(40, 0, 0, 2, root, True, 1.0)],
+            ),
+        ],
+        bytes_per_sector=512,
+    )
+
+    image.set_geometry(11, 2, 0)
+
+    assert image.read_sector(880) == root
