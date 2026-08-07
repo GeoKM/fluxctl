@@ -57,10 +57,10 @@ def test_qc_uses_fm_pll_fallback_for_displaywriter() -> None:
 
     assert len(report.tracks) == 77
     assert report.total_sectors == 1166
-    assert report.total_good_sectors == 1155
-    assert report.total_missing_sectors == 11
+    assert report.total_good_sectors == 1166
+    assert report.total_missing_sectors == 0
     assert report.total_bad_sectors == 0
-    assert report.status == "suspect"
+    assert report.status == "good"
 
 
 def test_qc_handles_ibm_xdf_mixed_sector_tracks() -> None:

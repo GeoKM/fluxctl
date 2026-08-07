@@ -156,6 +156,13 @@ def _decode_ibm_greaseweazle_flux(
     config.rpm = rpm
     codec = config.mk_track(track, head)
     try:
+        # IBMTrack_Scan caches the previous timing/mode guess globally. That is
+        # useful while reading a real disk sequentially, but here we evaluate
+        # several independent candidate rate/RPM combinations for one track.
+        # A partial first candidate can otherwise short-circuit a later, better
+        # candidate as "complete" in Greaseweazle's own terms.
+        if hasattr(codec.__class__, "BEST_GUESS"):
+            codec.__class__.BEST_GUESS = None
         with contextlib.redirect_stdout(io.StringIO()):
             codec.decode_flux(flux)
     except Exception:
