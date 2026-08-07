@@ -15,6 +15,11 @@
   decoded `.scp` workflows, including clear GUI gating when a filesystem is
   writable but the current image container cannot preserve or rewrite the
   required sector format safely.
+- Improve IBM DisplayWriter FM recovery/QC. HxC reports 2 bad sectors on
+  `IBM-6580-SSDD-FM-DisplayWriter-284K.scp`, while fluxctl currently decodes
+  1,155/1,166 sectors and reports 11 missing sectors. Keep the fixture marked
+  suspect, but improve the FM PLL/sector recovery so fluxctl gets closer to
+  HxC's result.
 
 ## Hardware Workflows
 
