@@ -88,6 +88,9 @@ python3 scripts/install_fluxctl.py
 
 ## Encodings and filesystems
 - Encodings: MFM, FM, GCR (Commodore) via plugin registry.
+- Physical layouts include IBM PC FAT geometries, IBM XDF OS/2 media,
+  Commodore/Amiga formats, CP/M machine formats, Tandy TRS-80 formats, RT-11
+  RX02, and IBM DisplayWriter mixed-sector media.
 - Filesystems detected: FAT12, CBM DOS, CP/M (C64 CP/M 2.2, C128 CP/M 3.0, Osborne/Kaypro/Tandy variants), TRSDOS 1.3, LDOS/TRSDOS 6, NEWDOS/80, Amiga OFS/FFS, RT-11 (RX02), Displaywriter probe; raw sector dumps always supported.
 - Filesystem listing, extraction, export, and copy-only mutation support varies
   by format. See the

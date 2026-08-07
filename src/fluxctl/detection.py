@@ -129,6 +129,7 @@ def _estimate_geometry(image: SCPImage, decoder: Decoder, sample_tracks: int = 6
     """Estimate geometry hints from a small set of reconstructed tracks."""
 
     sector_counts: list[int] = []
+    decoded_sector_counts: list[int] = []
     sector_sizes: list[int] = []
     min_sector_ids: list[int] = []
     max_sector_ids: list[int] = []
@@ -154,6 +155,7 @@ def _estimate_geometry(image: SCPImage, decoder: Decoder, sample_tracks: int = 6
         if not track_sectors.sectors:
             continue
         tracks_with_sectors += 1
+        decoded_sector_counts.append(len(track_sectors.sectors))
         sector_ids = [sector.sector_id for sector in track_sectors.sectors if sector.sector_id is not None]
         if sector_ids:
             min_id = min(sector_ids)
@@ -173,8 +175,11 @@ def _estimate_geometry(image: SCPImage, decoder: Decoder, sample_tracks: int = 6
     geometry: dict = {}
     if sector_counts:
         geometry["sectors_per_track"] = Counter(sector_counts).most_common(1)[0][0]
+    if decoded_sector_counts:
+        geometry["decoded_sectors_per_track"] = Counter(decoded_sector_counts).most_common(1)[0][0]
     if sector_sizes:
         geometry["sector_size"] = Counter(sector_sizes).most_common(1)[0][0]
+        geometry["sector_size_set"] = sorted(set(sector_sizes))
     if min_sector_ids:
         geometry["min_sector_id"] = Counter(min_sector_ids).most_common(1)[0][0]
     if max_sector_ids:
@@ -267,6 +272,35 @@ def _apply_tandy_mfm_bonus(
         return -0.2
     evidence.append("tandy_mfm_geometry_bonus=1")
     return 0.35
+
+
+def _apply_xdf_mfm_bonus(
+    desc: LayoutDescriptor,
+    geometry: dict,
+    logical_tracks: int,
+    heads_present: set[int],
+    evidence: list[str],
+) -> float:
+    if desc.layout_id != "ibm_xdf_1890k":
+        return 0.0
+    if not (79 <= logical_tracks <= 82 and len(heads_present) == 2):
+        return 0.0
+    if geometry.get("decoded_sectors_per_track") != 4:
+        return 0.0
+    if geometry.get("sector_size_set") != [512, 1024, 2048, 8192]:
+        return 0.0
+    if geometry.get("min_sector_id") != 130 or geometry.get("max_sector_id") != 134:
+        return 0.0
+    evidence.append("xdf_mixed_sector_geometry_bonus=1")
+    return 0.8
+
+
+def _expected_track_payload_bytes(desc: LayoutDescriptor) -> int:
+    """Return typical payload bytes per track/head for bitstream scoring."""
+
+    if desc.sector_sizes:
+        return sum(int(size) for size in desc.sector_sizes)
+    return int(desc.sectors_per_track) * int(desc.sector_size)
 
 
 def _apply_mfm_raw_density_bonus(
@@ -408,6 +442,7 @@ def detect_layout(
 
         if desc.encoding == "mfm":
             score += _apply_tandy_mfm_bonus(desc, geometry, logical_tracks, heads_present, evidence)
+            score += _apply_xdf_mfm_bonus(desc, geometry, logical_tracks, heads_present, evidence)
 
         if encoding == "gcr":
             if geometry.get("track_samples") and geometry.get("tracks_with_sectors") == 0:
@@ -445,7 +480,7 @@ def detect_layout(
                 if best is None or candidate.score > best.score:
                     best = candidate
                 continue
-            expected_bits = int(desc.sectors_per_track * desc.sector_size * 16)
+            expected_bits = int(_expected_track_payload_bytes(desc) * 16)
             diff = abs(expected_bits - bitstream_len)
             score += 0.15 * (1.0 - (diff / max(expected_bits, bitstream_len, 1)))
             evidence.append(f"bitstream_len={bitstream_len:.0f}")
@@ -694,11 +729,12 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
                 if best is None or candidate.score > best.score:
                     best = candidate
                 continue
-            expected_bits = int(desc.sectors_per_track * desc.sector_size * 16)
+            expected_bits = int(_expected_track_payload_bytes(desc) * 16)
             diff = abs(expected_bits - mfm_bits)
             score += 0.15 * (1.0 - (diff / max(expected_bits, mfm_bits, 1)))
             evidence.append(f"bitstream_len={mfm_bits:.0f}")
             evidence.append(f"expected_bits={expected_bits}")
+            score += _apply_xdf_mfm_bonus(desc, mfm_geometry, logical_tracks, heads_present, evidence)
             score += _apply_mfm_raw_density_bonus(
                 desc, mfm_geometry, logical_tracks, heads_present, mfm_bits, evidence
             )

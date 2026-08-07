@@ -20,6 +20,12 @@
   1,155/1,166 sectors and reports 11 missing sectors. Keep the fixture marked
   suspect, but improve the FM PLL/sector recovery so fluxctl gets closer to
   HxC's result.
+- Add logical IBM XDF unpacking/export/filesystem support. Fluxctl now
+  recognises the physical XDF track layout used by OS/2 media, including the
+  mixed 512/1024/2048/8192-byte data-track sectors. A follow-up should unpack
+  those physical sectors into the logical 23x512-sector view expected by OS/2
+  tooling, then enable FAT-style filesystem listing/export if the logical image
+  contains a compatible filesystem.
 
 ## Hardware Workflows
 
