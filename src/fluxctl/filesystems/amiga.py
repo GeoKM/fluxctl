@@ -46,6 +46,42 @@ class AmigaOFS(Filesystem):
             except ValueError:
                 continue
 
+    def _contiguous_readable_sector_count(self, start_sector: int = 0) -> int:
+        assert self.image is not None
+        total_sectors = getattr(self.image, "total_sectors", None)
+        if total_sectors is None:
+            geometry = getattr(self.image, "_geometry", None)
+            tracks = getattr(self.image, "tracks", None)
+            if geometry is not None and tracks:
+                sectors_per_track, heads, _sector_base = geometry
+                total_sectors = (max(track.track for track in tracks) + 1) * heads * sectors_per_track
+            else:
+                total_sectors = 0
+
+        count = 0
+        for lba in range(start_sector, int(total_sectors)):
+            try:
+                self.image.read_sector(lba)
+            except FilesystemError:
+                break
+            count += 1
+        return count
+
+    def _parse_kickstart_image(self) -> None:
+        assert self.image is not None
+        sector_count = self._contiguous_readable_sector_count(0)
+        if sector_count <= 0:
+            raise FilesystemError("Kickstart image has no readable sectors")
+        self.filesystem = "amiga_kickstart"
+        self.volume_label = "Amiga Kickstart"
+        self.directory = [
+            _AmigaDirEntry(
+                name="Kickstart.rom",
+                start_sector=0,
+                length=sector_count * self.image.bytes_per_sector,
+            )
+        ]
+
     def _directory_entries_from_block(self, block_number: int) -> list[_AmigaDirEntry]:
         assert self.image is not None
         entries: list[_AmigaDirEntry] = []
@@ -98,6 +134,24 @@ class AmigaOFS(Filesystem):
             boot = image.read_sector(0)
         except FilesystemError:
             return False
+        if boot.startswith(b"KICK"):
+            directory: list[_AmigaDirEntry] = []
+            volume_label = ""
+            try:
+                self._parse_real_directory()
+            except FilesystemError:
+                pass
+            else:
+                directory = self.directory
+                volume_label = self.volume_label
+            self._parse_kickstart_image()
+            if directory:
+                self.filesystem = "amiga_kickstart_dos"
+                self.volume_label = volume_label or self.volume_label
+                self.directory.extend(
+                    entry for entry in directory if entry.name.lower() != "kickstart.rom"
+                )
+            return True
         if not boot.startswith(b"DOS") or len(boot) < 4:
             try:
                 marker = image.read_sector(880)
@@ -164,13 +218,17 @@ class AmigaOFS(Filesystem):
         target = self._entry_for_file(path)
         sectors_per_track = 11
         heads = 2
+        sector_base = 0
+        geometry = getattr(self.image, "_geometry", None)
+        if geometry is not None:
+            sectors_per_track, heads, sector_base = geometry
         count = (target.length + self.image.bytes_per_sector - 1) // self.image.bytes_per_sector
         addresses: set[tuple[int, int, int]] = set()
         for lba in range(target.start_sector, target.start_sector + count):
             track = lba // (sectors_per_track * heads)
             rem = lba % (sectors_per_track * heads)
             head = rem // sectors_per_track
-            sector_id = (rem % sectors_per_track) + 1
+            sector_id = (rem % sectors_per_track) + sector_base
             addresses.add((track, head, sector_id))
         return addresses
 
