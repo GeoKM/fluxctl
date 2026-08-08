@@ -60,10 +60,9 @@
 
 ## GUI And Manual Testing
 
-- Find or create IBM DOS/FAT12 fixtures that contain real subdirectories, then
-  manually verify Studio directory drill-down, multi-file export, recursive
+- Manually verify Studio directory drill-down, multi-file export, recursive
   directory export, file hex viewing, and map-click sector hex viewing against
-  those images.
+  the IBMPCDIR FAT12 fixtures in the 3.5-inch and 5.25-inch IBM fixture sets.
 - Find or create known-good 1.15 MB IBM DOS 8-inch floppy images for fixtures.
   Use them to verify 8-inch FAT12 geometry, filesystem detection, sector counts,
   QC, directory listing, and file export against media known to be valid outside

@@ -546,9 +546,13 @@ def probe(
         filesystem: Optional[str]
         filesystem_evidence: list[str] = []
         try:
-            image_obj = _prepare_image(path, layout_candidate.layout.layout_id, encoding_candidate.encoding)
-            detection = _filesystem_detection_for_image(image_obj, path)
-            filesystem, filesystem_evidence = _filesystem_probe_payload(detection)
+            fast_result = _fast_scp_filesystem_probe(path, layout_candidate.layout, encoding_candidate.encoding)
+            if fast_result is not None:
+                filesystem, filesystem_evidence = fast_result
+            else:
+                image_obj = _prepare_image(path, layout_candidate.layout.layout_id, encoding_candidate.encoding)
+                detection = _filesystem_detection_for_image(image_obj, path)
+                filesystem, filesystem_evidence = _filesystem_probe_payload(detection)
         except Exception:
             filesystem = None
             filesystem_evidence = ["filesystem_probe_failed=1"]
@@ -575,6 +579,36 @@ def probe(
         )
 
     typer.echo(json.dumps([c.__dict__ for c in candidates], indent=2))
+
+
+def _fast_scp_filesystem_probe(
+    path: Path, layout: LayoutDescriptor, encoding: str
+) -> Optional[tuple[Optional[str], list[str]]]:
+    """Probe SCP filesystems from the smallest useful prefix where safe.
+
+    IBM FAT12 boot metadata, FATs, and root directory fit within the first
+    cylinder for the supported floppy layouts. Decoding only that cylinder
+    keeps `fluxctl probe` responsive on large synthetic SCP captures while
+    still using the real FAT12 plugin rather than a filename/layout guess.
+    """
+
+    if layout.layout_id not in FAST_SCP_FAT12_LAYOUTS:
+        return None
+    if encoding != layout.encoding:
+        return None
+
+    track_limit = max(1, layout.sides)
+    tracks = _decode_tracks(path, layout.layout_id, limit_tracks=track_limit, encoding=encoding)
+    if not tracks:
+        return None
+    image_obj = TrackSectorImage(tracks, bytes_per_sector=layout.sector_size)
+    image_obj.layout = layout
+    _apply_layout_geometry(image_obj, layout)
+    detection = _filesystem_detection_for_image(image_obj, path)
+    filesystem, evidence = _filesystem_probe_payload(detection)
+    if filesystem:
+        evidence = [*evidence, "filesystem_probe_scope=first_cylinder"]
+    return filesystem, evidence
 
 
 def _select_best_gcr_nibbles(bitstreams: list[Bitstream], track: int, head: int) -> Optional[TrackNibbles]:
@@ -836,6 +870,16 @@ LAYOUT_FILESYSTEM_HINTS: dict[str, str] = {
     "commodore_gcr_1571_341k": "cbm_dos",
     "commodore_mfm_1581_800k": "cbm_dos",
     "amiga_mfm_880k": "amiga",
+}
+
+FAST_SCP_FAT12_LAYOUTS = {
+    "ibm_mfm_180k",
+    "ibm_mfm_360k",
+    "ibm_mfm_720k",
+    "ibm_mfm_1200k",
+    "ibm_mfm_1440k",
+    "ibm_mfm_2880k",
+    "ibm_mfm_8inch_1200k",
 }
 
 
