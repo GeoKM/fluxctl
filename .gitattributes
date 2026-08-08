@@ -1,0 +1,2 @@
+tests/fixtures/3.5inch/IBM/*IBMPCDIR*.scp filter=lfs diff=lfs merge=lfs -text
+tests/fixtures/5.25inch/IBM/*IBMPCDIR*.scp filter=lfs diff=lfs merge=lfs -text

@@ -650,8 +650,19 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
     mfm_geometry = _estimate_geometry(image, mfm_decoder) if mfm_decoder else {}
     fm_bits = _estimate_bitstream_length(image, fm_decoder) if fm_decoder else None
     fm_conf = _average_confidence(fm_decoder, image) if fm_decoder else None
-    fm_geometry = _estimate_geometry(image, fm_decoder) if fm_decoder else {}
-    gcr_geometry = _estimate_geometry(image, gcr_decoder) if gcr_decoder else {}
+    strong_mfm_geometry = (
+        mfm_conf is not None
+        and mfm_conf >= 0.9
+        and int(mfm_geometry.get("tracks_with_sectors") or 0) >= 2
+    )
+    # FM/GCR reconstruction is wasted work on large synthetic IBM MFM SCPs once
+    # MFM has already produced coherent sectors on sampled tracks. Genuine FM
+    # or GCR media will not satisfy this strong-MFM condition.
+    fm_geometry = {} if strong_mfm_geometry else (_estimate_geometry(image, fm_decoder) if fm_decoder else {})
+    # GCR reconstruction is deliberately more exhaustive than IBM FM/MFM
+    # scanning and is especially expensive on high-density synthetic captures.
+    skip_gcr_geometry = strong_mfm_geometry
+    gcr_geometry = {} if skip_gcr_geometry else (_estimate_geometry(image, gcr_decoder) if gcr_decoder else {})
     fm_ratio = None
     if fm_bits is not None and mfm_bits is not None and mfm_bits > 0:
         fm_ratio = fm_bits / mfm_bits
@@ -713,6 +724,9 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
                     evidence.append("cpm_layout_directory_miss=1")
         if desc.encoding == "gcr":
             geometry = gcr_geometry
+            if strong_mfm_geometry:
+                score -= 1.0
+                evidence.append("gcr_vs_strong_mfm_geometry_penalty=1")
             if geometry.get("track_samples") and geometry.get("tracks_with_sectors") == 0:
                 score -= 0.4
                 evidence.append("gcr_no_sectors_penalty=1")
@@ -764,6 +778,9 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
             # Flux median can be misleading across controllers; omit it for MFM scoring.
         if desc.encoding == "gcr":
             geometry = gcr_geometry if (gcr_conf is None or gcr_conf >= 0.6) else {}
+            if strong_mfm_geometry:
+                score -= 1.0
+                evidence.append("gcr_vs_strong_mfm_geometry_penalty=1")
             if geometry.get("sectors_per_track") is not None:
                 observed_sectors = geometry["sectors_per_track"]
                 if _sectors_match(desc, observed_sectors):

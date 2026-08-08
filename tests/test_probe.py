@@ -14,6 +14,9 @@ FIXTURE_720K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.
 FIXTURE_1440K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSHD-MFM-IBMPC-1440K.scp")
 FIXTURE_XDF = Path("tests/fixtures/3.5inch/IBM/IBM-XDF-DSHD-MFM-OS2-1890K.scp")
 FIXTURE_1200K = Path("tests/fixtures/5.25inch/IBM/IBM-Generic-DSHD-MFM-IBMPC-1200K.scp")
+FIXTURE_DIR_720K_SCP = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPCDIR-720K.scp")
+FIXTURE_DIR_2880K_IMG = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSED-MFM-IBMPCDIR-2880K.img")
+FIXTURE_DIR_2880K_IMD = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSED-MFM-IBMPCDIR-2880K.imd")
 FIXTURE_CPM_340K = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C128CPM-340K.scp")
 FIXTURE_CPM_170K = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-SSDD-GCR-C128CPM-170K.scp")
 FIXTURE_8IN_500K = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM-RT11-500K.scp")
@@ -151,11 +154,57 @@ def test_probe_prefers_amiga_for_raw_dd_capture_without_ibm_sector_decode(monkey
     assert candidate.layout.layout_id == "amiga_mfm_880k"
 
 
+def test_probe_skips_competing_geometry_when_mfm_sectors_are_strong(monkeypatch) -> None:
+    load_builtin_layouts()
+    load_builtin_decoders()
+    image = SCPImage(Path("capture.scp"), version=0, revolutions_per_track=0, timebase_ns=25.0, tracks=[])
+    tracks = [TrackFlux(track=track, side=head) for track in range(80) for head in range(2)]
+
+    def decoder_name(decoder) -> str:
+        return decoder.__class__.__name__.lower()
+
+    def fake_geometry(_image, decoder, *_args, **_kwargs):
+        if "mfm" not in decoder_name(decoder):
+            raise AssertionError(f"unexpected competing geometry probe for {decoder_name(decoder)}")
+        return {
+            "sectors_per_track": 18,
+            "decoded_sectors_per_track": 18,
+            "sector_size": 512,
+            "track_samples": 6,
+            "tracks_with_sectors": 6,
+        }
+
+    def fake_confidence(decoder, _image, *_args, **_kwargs):
+        return 1.0 if "mfm" in decoder_name(decoder) else None
+
+    monkeypatch.setattr(detection, "_tracks_with_flux", lambda _image: tracks)
+    monkeypatch.setattr(detection, "_geometry_tracks_for_encoding", lambda _image, _encoding: tracks)
+    monkeypatch.setattr(detection, "_estimate_bitstream_length", lambda *_args, **_kwargs: 287_000)
+    monkeypatch.setattr(detection, "_estimate_geometry", fake_geometry)
+    monkeypatch.setattr(detection, "_average_confidence", fake_confidence)
+
+    candidate = detection.detect_layout_any(image, Path("capture.scp"))
+
+    assert candidate is not None
+    assert candidate.layout.layout_id == "ibm_mfm_1440k"
+
+
 def test_probe_prefers_1200k_layout() -> None:
     runner = CliRunner()
     result = runner.invoke(cli.app, ["probe", str(FIXTURE_1200K)])
     assert result.exit_code == 0
     assert "ibm_mfm_1200k" in result.stdout
+
+
+def test_probe_supports_directory_fat12_scp_with_fast_probe() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_DIR_720K_SCP)])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "ibm_mfm_720k"
+    assert payload[0]["filesystem"] == "fat12"
+    assert "filesystem_probe_scope=first_cylinder" in payload[0]["evidence"]
 
 
 def test_probe_prefers_commodore_cpm_layout() -> None:
@@ -242,6 +291,16 @@ def test_probe_supports_flat_img_images() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload[0]["layout_id"] == "ibm_mfm_720k"
+
+
+def test_probe_supports_2880k_fat12_directory_images() -> None:
+    runner = CliRunner()
+    for fixture in (FIXTURE_DIR_2880K_IMG, FIXTURE_DIR_2880K_IMD):
+        result = runner.invoke(cli.app, ["probe", str(fixture)])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload[0]["layout_id"] == "ibm_mfm_2880k"
+        assert payload[0]["filesystem"] == "fat12"
     assert payload[0]["encoding"] == "mfm"
 
 
