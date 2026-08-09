@@ -844,6 +844,25 @@ def test_studio_parses_edited_hex_dump_text() -> None:
     assert services.parse_hex_dump_text(text, expected_size=5) == b"ABC\x00\xff"
 
 
+def test_studio_applies_ascii_hex_dump_edits_without_rewriting_nonprintable_bytes() -> None:
+    original = b"ABC\x00\xff"
+    text = services.format_hex_dump(original, width=4).replace("|ABC.|", "|AXC.|")
+
+    assert services.apply_ascii_hex_dump_edits(text, original, width=4) == b"AXC\x00\xff"
+
+
+def test_studio_rejects_ascii_hex_dump_column_length_changes() -> None:
+    original = b"ABC"
+    text = services.format_hex_dump(original).replace("|ABC|", "|AB|")
+
+    try:
+        services.apply_ascii_hex_dump_edits(text, original)
+    except ValueError as exc:
+        assert "contains 2 characters; expected 3" in str(exc)
+    else:
+        raise AssertionError("short ASCII column should fail")
+
+
 def test_studio_rejects_hex_dump_offset_gaps() -> None:
     text = "\n".join(
         [

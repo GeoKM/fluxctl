@@ -74,6 +74,19 @@ class Job(QRunnable):
                 pass
 
 
+class HexDumpEditor(QTextEdit):
+    """Editable Advanced-mode dump that synchronises columns on Enter."""
+
+    syncRequested = Signal()
+
+    def keyPressEvent(self, event) -> None:  # type: ignore[override]
+        if event.key() in {Qt.Key_Return, Qt.Key_Enter} and not event.modifiers() & Qt.ShiftModifier:
+            self.syncRequested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class DiskMapWidget(QWidget):
     sectorClicked = Signal(int, int, int)
     STATE_COLORS = {
@@ -777,9 +790,10 @@ class FluxctlStudio(QMainWindow):
         self.advanced_output.setReadOnly(True)
         self.advanced_hex_title_label = QLabel("No hex data loaded")
         self.advanced_hex_title_label.setObjectName("filePath")
-        self.advanced_hex_text = QTextEdit()
+        self.advanced_hex_text = HexDumpEditor()
         self.advanced_hex_text.setReadOnly(False)
         self.advanced_hex_text.setFont(QFont("Menlo"))
+        self.advanced_hex_text.syncRequested.connect(self.synchronize_advanced_hex_columns)
         self.advanced_hex_save_button = QPushButton("Save Edited Copy...")
         self.advanced_hex_save_button.clicked.connect(self.save_advanced_hex_edit)
         self.advanced_hex_revert_button = QPushButton("Revert")
@@ -2146,6 +2160,39 @@ class FluxctlStudio(QMainWindow):
             return
         self.advanced_hex_text.setPlainText(self._advanced_hex_dump.text)
         self.activity_label.setText(f"Reverted edited hex view for {self._advanced_hex_dump.title}.")
+
+    def synchronize_advanced_hex_columns(self) -> None:
+        """Rebuild the paired hex/ASCII column after an Advanced editor edit."""
+
+        dump = self._advanced_hex_dump
+        if dump is None:
+            self._warn("Load a sector or file dump before editing hex data.")
+            return
+        cursor = self.advanced_hex_text.textCursor()
+        line = cursor.block().text()
+        ascii_marker = line.find("|")
+        edit_ascii = ascii_marker >= 0 and cursor.positionInBlock() > ascii_marker
+        try:
+            original_data = dump.data
+            if len(original_data) != dump.size:
+                original_data = services.parse_hex_dump_text(dump.text, expected_size=dump.size)
+            if edit_ascii:
+                edited = services.apply_ascii_hex_dump_edits(
+                    self.advanced_hex_text.toPlainText(), original_data
+                )
+            else:
+                edited = services.parse_hex_dump_text(
+                    self.advanced_hex_text.toPlainText(), expected_size=dump.size
+                )
+        except ValueError as exc:
+            self._warn(str(exc))
+            return
+        cursor_position = cursor.position()
+        self.advanced_hex_text.setPlainText(services.format_hex_dump(edited))
+        refreshed_cursor = self.advanced_hex_text.textCursor()
+        refreshed_cursor.setPosition(min(cursor_position, len(self.advanced_hex_text.toPlainText())))
+        self.advanced_hex_text.setTextCursor(refreshed_cursor)
+        self.activity_label.setText("Synchronized Advanced hex and ASCII columns.")
 
     def save_advanced_hex_edit(self) -> None:
         if not self._require_image():
