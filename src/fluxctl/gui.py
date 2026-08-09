@@ -448,6 +448,7 @@ class FluxctlStudio(QMainWindow):
         self.blank_image_presets = services.blank_image_presets()
         self.greaseweazle_status = services.greaseweazle_status()
         self.greaseweazle_formats = services.greaseweazle_formats()
+        self._advanced_hex_dump: Optional[services.HexDumpView] = None
         self._build_ui()
         self._apply_style()
         self._update_hardware_controls()
@@ -777,12 +778,21 @@ class FluxctlStudio(QMainWindow):
         self.advanced_hex_title_label = QLabel("No hex data loaded")
         self.advanced_hex_title_label.setObjectName("filePath")
         self.advanced_hex_text = QTextEdit()
-        self.advanced_hex_text.setReadOnly(True)
+        self.advanced_hex_text.setReadOnly(False)
         self.advanced_hex_text.setFont(QFont("Menlo"))
+        self.advanced_hex_save_button = QPushButton("Save Edited Copy...")
+        self.advanced_hex_save_button.clicked.connect(self.save_advanced_hex_edit)
+        self.advanced_hex_revert_button = QPushButton("Revert")
+        self.advanced_hex_revert_button.clicked.connect(self.revert_advanced_hex_edit)
+        advanced_hex_actions = QHBoxLayout()
+        advanced_hex_actions.addWidget(self.advanced_hex_save_button)
+        advanced_hex_actions.addWidget(self.advanced_hex_revert_button)
+        advanced_hex_actions.addStretch(1)
         advanced_hex_panel = QWidget()
         advanced_hex_layout = QVBoxLayout(advanced_hex_panel)
         advanced_hex_layout.setContentsMargins(0, 0, 0, 0)
         advanced_hex_layout.addWidget(self.advanced_hex_title_label)
+        advanced_hex_layout.addLayout(advanced_hex_actions)
         advanced_hex_layout.addWidget(self.advanced_hex_text)
         self.advanced_detail_stack = QStackedWidget()
         self.advanced_detail_stack.addWidget(self.advanced_output)
@@ -918,7 +928,36 @@ class FluxctlStudio(QMainWindow):
         if not self._uses_cbm_logical_addressing():
             return dump
         title = f"Sector CBM T{track} H{head} S{sector}"
-        return services.HexDumpView(title=title, size=dump.size, text=dump.text)
+        return services.HexDumpView(
+            title=title,
+            size=dump.size,
+            text=dump.text,
+            data=dump.data,
+            source_kind=dump.source_kind,
+            track=dump.track,
+            head=dump.head,
+            sector=dump.sector,
+            file_path=dump.file_path,
+        )
+
+    def _update_advanced_hex_edit_actions(self) -> None:
+        enabled = (
+            self.current_path is not None
+            and self._advanced_hex_dump is not None
+            and self._advanced_hex_dump.source_kind in {"sector", "file"}
+        )
+        if hasattr(self, "advanced_hex_save_button"):
+            self.advanced_hex_save_button.setEnabled(enabled)
+            self.advanced_hex_save_button.setToolTip(
+                "Save edited Advanced hex bytes into a new image copy."
+                if enabled
+                else "Load a sector or file dump before saving edited hex."
+            )
+        if hasattr(self, "advanced_hex_revert_button"):
+            self.advanced_hex_revert_button.setEnabled(enabled)
+            self.advanced_hex_revert_button.setToolTip(
+                "Restore the loaded hex dump text." if enabled else "Load a sector or file dump before reverting."
+            )
 
     def _append_log(self, text: str) -> None:
         self.log.append(text)
@@ -1260,6 +1299,7 @@ class FluxctlStudio(QMainWindow):
         for button in self.advanced_image_buttons:
             button.setEnabled(has_image)
             button.setToolTip("" if has_image else "Open and probe a disk image before using this action.")
+        self._update_advanced_hex_edit_actions()
 
         if not has_image:
             self.layout_combo.setCurrentIndex(-1)
@@ -1272,6 +1312,10 @@ class FluxctlStudio(QMainWindow):
             self.advanced_file_browser_path = "/"
             self.file_path_input.clear()
             self.patch_payload_input.clear()
+            self._advanced_hex_dump = None
+            self.advanced_hex_title_label.setText("No hex data loaded")
+            self.advanced_hex_text.clear()
+            self._update_advanced_hex_edit_actions()
             return
 
         assert self.current_summary is not None
@@ -1291,6 +1335,10 @@ class FluxctlStudio(QMainWindow):
         self.sector_input.setText("1")
         self._load_advanced_file_path_options("/")
         self.patch_payload_input.clear()
+        self._advanced_hex_dump = None
+        self.advanced_hex_title_label.setText("No hex data loaded")
+        self.advanced_hex_text.clear()
+        self._update_advanced_hex_edit_actions()
         self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
         self.advanced_output.setPlainText(self._image_summary_text(self.current_summary))
 
@@ -2088,9 +2136,103 @@ class FluxctlStudio(QMainWindow):
         encoding = self._selected_encoding()
         self._run_job(
             f"dump file {file_path}",
-            lambda: services.file_hex_dump(self.current_path, layout, encoding, file_path, max_bytes=65536),
+            lambda: services.file_hex_dump(self.current_path, layout, encoding, file_path),
             self._show_advanced_hex_dump,
         )
+
+    def revert_advanced_hex_edit(self) -> None:
+        if self._advanced_hex_dump is None:
+            self._warn("Load a sector or file dump before reverting edited hex.")
+            return
+        self.advanced_hex_text.setPlainText(self._advanced_hex_dump.text)
+        self.activity_label.setText(f"Reverted edited hex view for {self._advanced_hex_dump.title}.")
+
+    def save_advanced_hex_edit(self) -> None:
+        if not self._require_image():
+            return
+        dump = self._advanced_hex_dump
+        if dump is None:
+            self._warn("Load a sector or file dump before saving edited hex.")
+            return
+        try:
+            edited = services.parse_hex_dump_text(self.advanced_hex_text.toPlainText(), expected_size=dump.size)
+        except ValueError as exc:
+            self._warn(str(exc))
+            return
+        if edited == dump.data:
+            self._warn("No byte changes were found in the Advanced hex editor.")
+            return
+        assert self.current_path is not None
+        default_output = self._default_hex_edit_output_path(self.current_path)
+        output_name, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save edited image copy",
+            str(default_output),
+            f"Disk images (*{self.current_path.suffix});;All files (*)",
+        )
+        if not output_name:
+            return
+        output = Path(output_name)
+        target = dump.file_path if dump.source_kind == "file" else f"T{dump.track} H{dump.head} S{dump.sector}"
+        question = (
+            "Fluxctl will create a new image copy with the edited Advanced hex bytes.\n\n"
+            f"Original image:\n{self.current_path}\n\n"
+            f"Edited target:\n{target}\n\n"
+            f"New image copy:\n{output}\n\n"
+            "The original image will not be modified. Continue?"
+        )
+        answer = QMessageBox.question(self, "Save edited hex to image copy", question, QMessageBox.Yes | QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+        layout = self._selected_layout() or None
+        encoding = self._selected_encoding()
+        if dump.source_kind == "file":
+            if not dump.file_path:
+                self._warn("The loaded file dump does not include a filesystem path.")
+                return
+            self._run_job(
+                f"save edited file hex {dump.file_path}",
+                lambda: services.replace_file_bytes_with_copy(
+                    self.current_path,
+                    layout,
+                    encoding,
+                    dump.file_path,
+                    edited,
+                    output,
+                ),
+                self._show_advanced_hex_edit_result,
+            )
+            return
+        if dump.source_kind == "sector":
+            if not layout:
+                self._warn("Choose a layout before saving edited sector hex.")
+                return
+            if dump.track is None or dump.head is None or dump.sector is None:
+                self._warn("The loaded sector dump does not include a complete sector address.")
+                return
+            self._run_job(
+                f"save edited sector hex T{dump.track} H{dump.head} S{dump.sector}",
+                lambda: services.replace_flat_sector_bytes_with_copy(
+                    self.current_path,
+                    layout,
+                    dump.track,
+                    dump.head,
+                    dump.sector,
+                    edited,
+                    output,
+                ),
+                self._show_advanced_hex_edit_result,
+            )
+            return
+        self._warn("The loaded hex dump cannot be saved because its source type is unknown.")
+
+    def _default_hex_edit_output_path(self, path: Path) -> Path:
+        candidate = path.with_name(f"{path.stem}-hexedit{path.suffix}")
+        counter = 2
+        while candidate.exists():
+            candidate = path.with_name(f"{path.stem}-hexedit-{counter}{path.suffix}")
+            counter += 1
+        return candidate
 
     def qc_export_dialog(self) -> None:
         if not self._require_image():
@@ -2377,20 +2519,34 @@ class FluxctlStudio(QMainWindow):
         text = "\n".join(lines)
         self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
         self.advanced_output.setPlainText(text)
+        self._advanced_hex_dump = None
+        self._update_advanced_hex_edit_actions()
         self.log.append(text)
 
     def _show_text_view(self, report: object) -> None:
         self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
         self.advanced_output.setPlainText(report.text)
+        self._advanced_hex_dump = None
+        self._update_advanced_hex_edit_actions()
         self.activity_label.setText(f"Loaded {report.title}.")
         self.log.append(f"{report.title}\n{report.text}")
 
     def _show_advanced_hex_dump(self, dump: object) -> None:
+        self._advanced_hex_dump = dump
         self.advanced_hex_title_label.setText(f"{dump.title}  ({dump.size:,} bytes)")
         self.advanced_hex_text.setPlainText(dump.text)
+        self._update_advanced_hex_edit_actions()
         self.advanced_detail_stack.setCurrentWidget(self.advanced_hex_text.parentWidget())
         self.activity_label.setText(f"Loaded hex view for {dump.title}.")
         self.log.append(f"Loaded hex view for {dump.title} ({dump.size:,} bytes)")
+
+    def _show_advanced_hex_edit_result(self, result: object) -> None:
+        self.activity_label.setText(
+            f"Saved edited {result.mode} hex for {result.target} ({result.bytes:,} bytes) to {result.path}."
+        )
+        self._append_log(
+            f"Saved edited {result.mode} hex for {result.target} ({result.bytes:,} bytes) to {result.path}"
+        )
 
     def _require_image(self) -> bool:
         if self.current_path is None:

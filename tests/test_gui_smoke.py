@@ -834,6 +834,70 @@ def test_advanced_dump_hex_updates_hex_panel() -> None:
     window.close()
 
 
+def test_simple_hex_panel_stays_read_only() -> None:
+    window = FluxctlStudio()
+
+    assert window.hex_text.isReadOnly()
+    window.close()
+
+
+def test_advanced_hex_panel_is_editable_and_can_save_file_copy(monkeypatch, tmp_path) -> None:
+    window = FluxctlStudio()
+    output = tmp_path / "edited.img"
+    captured: dict[str, object] = {}
+    window.current_path = FIXTURE_IMG
+    window.current_summary = services.ImageSummary(
+        path=str(FIXTURE_IMG),
+        size=FIXTURE_IMG.stat().st_size,
+        kind="img",
+        layout_id="ibm_mfm_720k",
+        encoding="mfm",
+        filesystem="fat12",
+        confidence=1.0,
+        evidence=[],
+    )
+    window._update_advanced_context()
+    window._show_advanced_hex_dump(
+        services.HexDumpView(
+            "File /AUTOEXEC.BAT",
+            5,
+            services.format_hex_dump(b"HELLO"),
+            data=b"HELLO",
+            source_kind="file",
+            file_path="/AUTOEXEC.BAT",
+        )
+    )
+    window.advanced_hex_text.setPlainText(services.format_hex_dump(b"JELLO"))
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_args, **_kwargs: (str(output), ""))
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.Yes)
+    monkeypatch.setattr(window, "_run_job", lambda _label, fn, done: done(fn()))
+
+    def fake_replace(path, layout, encoding, fs_path, replacement, out):
+        captured.update(
+            {
+                "path": path,
+                "layout": layout,
+                "encoding": encoding,
+                "fs_path": fs_path,
+                "replacement": replacement,
+                "out": out,
+            }
+        )
+        return services.HexEditResult(str(out), fs_path, len(replacement), "file")
+
+    monkeypatch.setattr(services, "replace_file_bytes_with_copy", fake_replace)
+
+    window.save_advanced_hex_edit()
+
+    assert not window.advanced_hex_text.isReadOnly()
+    assert captured["replacement"] == b"JELLO"
+    assert captured["fs_path"] == "/AUTOEXEC.BAT"
+    assert captured["out"] == output
+    assert "Saved edited file hex" in window.activity_label.text()
+    window.close()
+
+
 def test_advanced_panel_starts_blank_until_image_is_loaded() -> None:
     window = FluxctlStudio()
 

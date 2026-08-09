@@ -81,7 +81,3 @@
   - Manually verify selected-file highlighting in Studio across physical,
     filesystem-logical, and BAM map modes for FAT12, CBM DOS, 1581, Amiga, and
     CP/M fixtures.
-- Convert the Advanced HEX display panel into a HEX in-place editor. It should
-  allow byte edits in both Sector Dump and File Dump modes, validate changed
-  bytes, and write changes back through the same copy-only safety model used by
-  current manipulation actions rather than modifying the original image.
