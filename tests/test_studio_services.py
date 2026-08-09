@@ -833,12 +833,43 @@ def test_studio_formats_hex_dump_with_ascii_column() -> None:
     ]
 
 
+def test_studio_parses_edited_hex_dump_text() -> None:
+    text = "\n".join(
+        [
+            "00000000  41 42 43 00  |ABC.|",
+            "00000004  FF           |.|",
+        ]
+    )
+
+    assert services.parse_hex_dump_text(text, expected_size=5) == b"ABC\x00\xff"
+
+
+def test_studio_rejects_hex_dump_offset_gaps() -> None:
+    text = "\n".join(
+        [
+            "00000000  41 42 43 00  |ABC.|",
+            "00000005  FF           |.|",
+        ]
+    )
+
+    try:
+        services.parse_hex_dump_text(text)
+    except ValueError as exc:
+        assert "offset jumps" in str(exc)
+    else:
+        raise AssertionError("offset gap should fail")
+
+
 def test_studio_builds_sector_hex_dump() -> None:
     summary = services.summarize_image(FIXTURE_IMG)
     dump = services.sector_hex_dump(FIXTURE_IMG, summary.layout_id, summary.encoding, 0, 0, 1)
 
     assert dump.title == "Sector T0 H0 S1"
     assert dump.size == 512
+    assert dump.source_kind == "sector"
+    assert dump.track == 0
+    assert dump.head == 0
+    assert dump.sector == 1
     assert "MSDOS4.0" in dump.text
 
 
@@ -857,7 +888,55 @@ def test_studio_builds_file_hex_dump() -> None:
 
     assert dump.title == "File /AUTOEXEC.BAT"
     assert dump.size == 39
+    assert dump.source_kind == "file"
+    assert dump.file_path == "/AUTOEXEC.BAT"
     assert "@ECHO OFF" in dump.text
+
+
+def test_studio_replaces_file_bytes_from_hex_editor_copy(tmp_path: Path) -> None:
+    source = tmp_path / "disk.img"
+    source.write_bytes(FIXTURE_IMG.read_bytes())
+    output = tmp_path / "disk-hexedit.img"
+    replacement = b"@ECHO OFF\r\nREM HEX EDIT\r\n"
+
+    result = services.replace_file_bytes_with_copy(
+        source,
+        "ibm_mfm_720k",
+        "mfm",
+        "/AUTOEXEC.BAT",
+        replacement,
+        output,
+    )
+
+    assert result.mode == "file"
+    assert output.exists()
+    assert source.read_bytes() == FIXTURE_IMG.read_bytes()
+    filesystem = FAT12()
+    assert filesystem.probe(RawSectorImage(output.read_bytes(), 512))
+    assert filesystem.extract_file("/AUTOEXEC.BAT") == replacement
+
+
+def test_studio_replaces_flat_sector_bytes_from_hex_editor_copy(tmp_path: Path) -> None:
+    source = tmp_path / "disk.img"
+    source.write_bytes(FIXTURE_IMG.read_bytes())
+    output = tmp_path / "disk-sector-hexedit.img"
+    replacement = bytearray(source.read_bytes()[:512])
+    replacement[3:11] = b"FLUXEDIT"
+
+    result = services.replace_flat_sector_bytes_with_copy(
+        source,
+        "ibm_mfm_720k",
+        0,
+        0,
+        1,
+        bytes(replacement),
+        output,
+    )
+
+    assert result.mode == "sector"
+    assert output.exists()
+    assert source.read_bytes() == FIXTURE_IMG.read_bytes()
+    assert output.read_bytes()[:512] == bytes(replacement)
 
 
 def test_studio_exports_selected_file(tmp_path: Path) -> None:

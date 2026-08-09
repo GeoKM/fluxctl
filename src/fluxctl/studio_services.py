@@ -18,6 +18,7 @@ from .cli import (
     _prepare_image,
     _probe_flat_image,
     _prefix_track_count_for_size,
+    _track_in_range,
 )
 from .decoding import load_builtin_decoders
 from .detection import detect_encoding, detect_layout
@@ -128,6 +129,12 @@ class HexDumpView:
     title: str
     size: int
     text: str
+    data: bytes = b""
+    source_kind: str = ""
+    track: Optional[int] = None
+    head: Optional[int] = None
+    sector: Optional[int] = None
+    file_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -166,6 +173,16 @@ class MutationResult:
     entries: int
     bytes: int
     filesystem: str
+
+
+@dataclass(frozen=True)
+class HexEditResult:
+    """Summary of a safe copy-on-write Advanced hex edit."""
+
+    path: str
+    target: str
+    bytes: int
+    mode: str
 
 
 @dataclass(frozen=True)
@@ -900,6 +917,50 @@ def format_hex_dump(data: bytes, *, width: int = 16, max_bytes: Optional[int] = 
     return "\n".join(lines)
 
 
+def parse_hex_dump_text(text: str, *, expected_size: Optional[int] = None) -> bytes:
+    """Parse an edited Studio hex dump back into bytes.
+
+    The parser accepts Fluxctl's offset/hex/ASCII dump format and intentionally
+    ignores the ASCII column. Offsets must be contiguous so accidental line
+    deletion, wrapping damage, or pasted prose is caught before anything writes.
+    """
+
+    payload = bytearray()
+    expected_offset = 0
+    parsed_any = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("... truncated"):
+            continue
+        if "|" in line:
+            line = line.split("|", 1)[0].rstrip()
+        parts = line.split()
+        if not parts:
+            continue
+        try:
+            offset = int(parts[0], 16)
+        except ValueError as exc:
+            raise ValueError(f"Invalid hex dump offset: {parts[0]!r}") from exc
+        if offset != expected_offset:
+            raise ValueError(f"Hex dump offset jumps from {expected_offset:08X} to {offset:08X}")
+        line_bytes = bytearray()
+        for token in parts[1:]:
+            if len(token) != 2:
+                raise ValueError(f"Invalid hex byte token: {token!r}")
+            try:
+                line_bytes.append(int(token, 16))
+            except ValueError as exc:
+                raise ValueError(f"Invalid hex byte token: {token!r}") from exc
+        payload.extend(line_bytes)
+        expected_offset += len(line_bytes)
+        parsed_any = True
+    if not parsed_any:
+        raise ValueError("No hex bytes found in edited dump")
+    if expected_size is not None and len(payload) != expected_size:
+        raise ValueError(f"Edited data is {len(payload)} bytes; expected {expected_size} bytes")
+    return bytes(payload)
+
+
 def sector_hex_dump(
     path: Path,
     layout_id: Optional[str],
@@ -920,7 +981,16 @@ def sector_hex_dump(
     except KeyError as exc:
         raise ValueError(f"Sector {track}:{head}:{sector_id} is not available") from exc
     title = f"Sector T{track} H{head} S{sector_id}"
-    return HexDumpView(title=title, size=len(data), text=format_hex_dump(data, max_bytes=max_bytes))
+    return HexDumpView(
+        title=title,
+        size=len(data),
+        text=format_hex_dump(data, max_bytes=max_bytes),
+        data=data,
+        source_kind="sector",
+        track=track,
+        head=head,
+        sector=sector_id,
+    )
 
 
 def sector_list(
@@ -971,7 +1041,14 @@ def file_hex_dump(
     if filesystem is None:
         raise ValueError("No supported filesystem is available")
     data = filesystem.extract_file(file_path)
-    return HexDumpView(title=f"File {file_path}", size=len(data), text=format_hex_dump(data, max_bytes=max_bytes))
+    return HexDumpView(
+        title=f"File {file_path}",
+        size=len(data),
+        text=format_hex_dump(data, max_bytes=max_bytes),
+        data=data,
+        source_kind="file",
+        file_path=file_path,
+    )
 
 
 def file_allocation_for_image(
@@ -1151,6 +1228,84 @@ def replace_file_with_copy(
         file_path=fs_path,
         bytes=len(replacement),
         filesystem=filesystem_name,
+    )
+
+
+def replace_file_bytes_with_copy(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    fs_path: str,
+    replacement: bytes,
+    output_path: Path,
+) -> HexEditResult:
+    """Replace one filesystem file with edited bytes in a new image copy."""
+
+    source = path.resolve()
+    output = output_path.resolve()
+    if source == output:
+        raise ValueError("Output image must be a new copy, not the original image")
+    if output_path.exists():
+        raise ValueError(f"Output image already exists: {output_path}")
+
+    suffix = path.suffix.lower()
+    image_bytes = path.read_bytes()
+    if suffix == ".img":
+        filesystem = _probe_fat12_bytes(image_bytes)
+        patched = filesystem.replace_file_allocating_clusters(image_bytes, fs_path, replacement)
+    elif suffix in {".d64", ".d71"}:
+        filesystem = _probe_cbm_dos_bytes(image_bytes)
+        patched = filesystem.replace_file(image_bytes, fs_path, replacement)
+    elif suffix == ".d81":
+        filesystem = _probe_cbm_dos_1581_bytes(image_bytes)
+        patched = filesystem.replace_file(image_bytes, fs_path, replacement)
+    else:
+        raise ValueError(
+            "Advanced file hex editing is currently supported only for FAT12 .img and CBM DOS .d64/.d71/.d81 images"
+        )
+    _write_new_image_copy(output_path, patched)
+    return HexEditResult(path=str(output_path), target=fs_path, bytes=len(replacement), mode="file")
+
+
+def replace_flat_sector_bytes_with_copy(
+    path: Path,
+    layout_id: str,
+    track: int,
+    head: int,
+    sector_id: int,
+    replacement: bytes,
+    output_path: Path,
+) -> HexEditResult:
+    """Replace one decoded sector in a new flat image copy.
+
+    This intentionally rejects flux and structured exchange containers. Editing
+    an SCP/IMD sector requires a real encoder for that container, which Fluxctl
+    does not yet have.
+    """
+
+    source = path.resolve()
+    output = output_path.resolve()
+    if source == output:
+        raise ValueError("Output image must be a new copy, not the original image")
+    if output_path.exists():
+        raise ValueError(f"Output image already exists: {output_path}")
+    if path.suffix.lower() not in {".img", ".ima", ".raw", ".adf", ".d64", ".d71", ".d81"}:
+        raise ValueError("Advanced sector hex editing currently requires a flat sector image container")
+
+    layout = ensure_layout_loaded(layout_id)
+    offset, sector_size = _flat_sector_offset(layout, track, head, sector_id)
+    if len(replacement) != sector_size:
+        raise ValueError(f"Edited sector is {len(replacement)} bytes; sector requires {sector_size} bytes")
+    image_bytes = bytearray(path.read_bytes())
+    if offset + sector_size > len(image_bytes):
+        raise ValueError("Target sector exceeds image size")
+    image_bytes[offset : offset + sector_size] = replacement
+    _write_new_image_copy(output_path, bytes(image_bytes))
+    return HexEditResult(
+        path=str(output_path),
+        target=f"T{track} H{head} S{sector_id}",
+        bytes=len(replacement),
+        mode="sector",
     )
 
 
@@ -1355,6 +1510,52 @@ def _write_new_image_copy(output_path: Path, image_bytes: bytes) -> None:
         temp_name = Path(temp_file.name)
         temp_file.write(image_bytes)
     shutil.move(str(temp_name), str(output_path))
+
+
+def _flat_sector_offset(layout, track: int, head: int, sector_id: int) -> tuple[int, int]:
+    if track < 0 or head < 0:
+        raise ValueError("Track and head must be non-negative")
+    if track >= layout.tracks:
+        raise ValueError(f"Track {track} is outside layout {layout.layout_id}")
+    if head >= layout.sides:
+        raise ValueError(f"Head {head} is outside layout {layout.layout_id}")
+
+    sectors_per_cylinder = list(layout.track_sectors) if layout.track_sectors else [layout.sectors_per_track] * layout.tracks
+    if len(sectors_per_cylinder) < layout.tracks:
+        sectors_per_cylinder.extend([layout.sectors_per_track] * (layout.tracks - len(sectors_per_cylinder)))
+
+    def row_sizes(row_track: int, row_head: int) -> list[int]:
+        sectors_on_track = int(sectors_per_cylinder[row_track])
+        sector_size = int(layout.sector_size)
+        sector_sizes = list(layout.sector_sizes) if layout.sector_sizes else None
+        if layout.track_overrides:
+            for override in layout.track_overrides:
+                if _track_in_range(str(override.get("track_range", "")), row_track) and (
+                    override.get("head") is None or override.get("head") == row_head
+                ):
+                    sectors_on_track = int(override.get("sectors_per_track", sectors_on_track))
+                    sector_size = int(override.get("sector_size", sector_size))
+                    sector_sizes = list(override.get("sector_sizes", [])) or None
+                    break
+        return [int(size) for size in sector_sizes] if sector_sizes else [sector_size] * sectors_on_track
+
+    side_blocked_flat = layout.layout_id == "commodore_gcr_1571_341k"
+    rows = (
+        ((cylinder, row_head) for row_head in range(layout.sides) for cylinder in range(layout.tracks))
+        if side_blocked_flat
+        else ((cylinder, row_head) for cylinder in range(layout.tracks) for row_head in range(layout.sides))
+    )
+    sector_base = int(layout.id_rules.get("sector_number_base", 1))
+    offset = 0
+    for row_track, row_head in rows:
+        sizes = row_sizes(row_track, row_head)
+        if row_track == track and row_head == head:
+            sector_index = sector_id - sector_base
+            if sector_index < 0 or sector_index >= len(sizes):
+                raise ValueError(f"Sector {sector_id} is outside track {track} head {head}")
+            return offset + sum(sizes[:sector_index]), sizes[sector_index]
+        offset += sum(sizes)
+    raise ValueError(f"Sector T{track} H{head} S{sector_id} is outside layout {layout.layout_id}")
 
 
 def _import_directory_tree(image_bytes: bytes, directory: str, host_directory: Path) -> tuple[int, int, bytes]:
