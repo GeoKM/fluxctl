@@ -19,6 +19,89 @@ def _build_mock_adf() -> RawSectorImage:
     return RawSectorImage(payload)
 
 
+def _set_long(block: bytearray, index: int, value: int) -> None:
+    block[index * 4 : index * 4 + 4] = value.to_bytes(4, "big", signed=value < 0)
+
+
+def _set_amiga_checksum(block: bytearray) -> None:
+    block[20:24] = b"\x00" * 4
+    total = sum(int.from_bytes(block[offset : offset + 4], "big") for offset in range(0, 512, 4))
+    block[20:24] = (-total & 0xFFFFFFFF).to_bytes(4, "big")
+
+
+def _build_ffs_extension_chain_adf() -> RawSectorImage:
+    sectors = [bytearray(512) for _ in range(886)]
+    sectors[0][:4] = b"DOS\1"
+
+    root = sectors[880]
+    _set_long(root, 0, 2)
+    _set_long(root, 6, 881)
+
+    header = sectors[881]
+    _set_long(header, 0, 2)
+    _set_long(header, 1, 881)
+    _set_long(header, 2, 1)
+    _set_long(header, 77, 882)
+    _set_long(header, 81, 1024)
+    header[432] = 8
+    header[433:441] = b"CHAINED!"
+    _set_long(header, 124, 883)
+    _set_long(header, 126, 884)
+    _set_long(header, 127, -3)
+    _set_amiga_checksum(header)
+
+    sibling = sectors[883]
+    _set_long(sibling, 0, 2)
+    _set_long(sibling, 1, 883)
+    sibling[432] = 5
+    sibling[433:438] = b"OTHER"
+    _set_long(sibling, 127, -3)
+    _set_amiga_checksum(sibling)
+
+    extension = sectors[884]
+    _set_long(extension, 0, 16)
+    _set_long(extension, 1, 884)
+    _set_long(extension, 2, 1)
+    _set_long(extension, 77, 885)
+    _set_long(extension, 125, 881)
+    _set_long(extension, 127, -3)
+    _set_amiga_checksum(extension)
+
+    sectors[882][:] = b"A" * 512
+    sectors[885][:] = b"B" * 512
+    return RawSectorImage(b"".join(bytes(sector) for sector in sectors))
+
+
+def _build_ofs_chain_adf() -> RawSectorImage:
+    sectors = [bytearray(512) for _ in range(883)]
+    sectors[0][:4] = b"DOS\0"
+
+    root = sectors[880]
+    _set_long(root, 0, 2)
+    _set_long(root, 6, 881)
+
+    header = sectors[881]
+    _set_long(header, 0, 2)
+    _set_long(header, 1, 881)
+    _set_long(header, 2, 1)
+    _set_long(header, 4, 882)
+    _set_long(header, 77, 882)
+    _set_long(header, 81, 488)
+    header[432] = 3
+    header[433:436] = b"OFS"
+    _set_long(header, 127, -3)
+    _set_amiga_checksum(header)
+
+    data = sectors[882]
+    _set_long(data, 0, 8)
+    _set_long(data, 1, 881)
+    _set_long(data, 2, 1)
+    _set_long(data, 3, 488)
+    data[24:512] = b"Z" * 488
+    _set_amiga_checksum(data)
+    return RawSectorImage(b"".join(bytes(sector) for sector in sectors))
+
+
 def test_amiga_probe_and_extract():
     image = _build_mock_adf()
     fs = AmigaOFS()
@@ -27,6 +110,30 @@ def test_amiga_probe_and_extract():
     assert entries[0].name == "file.txt"
     content = fs.extract_file("file.txt")
     assert content.startswith(b"DATA")
+
+
+def test_amiga_ffs_file_uses_real_header_extension_and_data_blocks():
+    image = _build_ffs_extension_chain_adf()
+    fs = AmigaOFS()
+
+    assert fs.probe(image)
+    assert {entry.name for entry in fs.list_directory("/")} == {"CHAINED!", "OTHER"}
+    assert fs.extract_file("CHAINED!") == b"A" * 512 + b"B" * 512
+    assert fs.file_sector_addresses("CHAINED!") == {
+        (40, 0, 1),
+        (40, 0, 2),
+        (40, 0, 4),
+        (40, 0, 5),
+    }
+
+
+def test_amiga_ofs_file_follows_data_chain_and_excludes_block_headers_from_content():
+    image = _build_ofs_chain_adf()
+    fs = AmigaOFS()
+
+    assert fs.probe(image)
+    assert fs.extract_file("OFS") == b"Z" * 488
+    assert fs.file_sector_addresses("OFS") == {(40, 0, 1), (40, 0, 2)}
 
 
 def test_amiga_kickstart_probe_exposes_virtual_rom_file():

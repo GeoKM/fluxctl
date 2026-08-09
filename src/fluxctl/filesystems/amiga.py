@@ -116,7 +116,7 @@ class AmigaOFS(Filesystem):
                             is_dir=secondary_type == 2,
                         )
                     )
-                block = self._long(data, 126)
+                block = self._long(data, 124)
         return sorted(entries, key=lambda entry: (not entry.is_dir, entry.name.lower()))
 
     def _parse_real_directory(self) -> None:
@@ -203,37 +203,162 @@ class AmigaOFS(Filesystem):
         if self.image is None:
             raise FilesystemError("Filesystem not probed")
         target = self._entry_for_file(path)
-        start = target.start_sector
-        count = (target.length + self.image.bytes_per_sector - 1) // self.image.bytes_per_sector
-        data = self.image.read_sector(start, count)
-        return data[: target.length]
+        blocks = self._real_file_blocks(target)
+        if blocks is None:
+            count = (target.length + self.image.bytes_per_sector - 1) // self.image.bytes_per_sector
+            return self.image.read_sector(target.start_sector, count)[: target.length]
+        data_blocks, _metadata_blocks, is_ofs = blocks
+        if is_ofs:
+            payload = bytearray()
+            for block_number in data_blocks:
+                block = self.image.read_sector(block_number)
+                payload.extend(block[24 : 24 + self._long(block, 3)])
+            return bytes(payload[: target.length])
+        return b"".join(self.image.read_sector(block) for block in data_blocks)[: target.length]
 
     def file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
-        """Return physical ``(track, head, sector_id)`` addresses for a file.
-
-        The current Amiga reader extracts files as contiguous logical blocks,
-        so the overlay mirrors that same model until full AmigaDOS file-list
-        block traversal is implemented.
-        """
+        """Return physical ``(track, head, sector_id)`` addresses for a file."""
 
         if self.image is None:
             raise FilesystemError("Filesystem not probed")
         target = self._entry_for_file(path)
+        blocks = self._real_file_blocks(target)
+        if blocks is None:
+            count = (target.length + self.image.bytes_per_sector - 1) // self.image.bytes_per_sector
+            block_numbers = range(target.start_sector, target.start_sector + count)
+        else:
+            data_blocks, metadata_blocks, _is_ofs = blocks
+            block_numbers = [target.start_sector, *metadata_blocks, *data_blocks]
         sectors_per_track = 11
         heads = 2
         sector_base = 0
         geometry = getattr(self.image, "_geometry", None)
         if geometry is not None:
             sectors_per_track, heads, sector_base = geometry
-        count = (target.length + self.image.bytes_per_sector - 1) // self.image.bytes_per_sector
         addresses: set[tuple[int, int, int]] = set()
-        for lba in range(target.start_sector, target.start_sector + count):
+        for lba in block_numbers:
             track = lba // (sectors_per_track * heads)
             rem = lba % (sectors_per_track * heads)
             head = rem // sectors_per_track
             sector_id = (rem % sectors_per_track) + sector_base
             addresses.add((track, head, sector_id))
         return addresses
+
+    @staticmethod
+    def _block_checksum_is_valid(data: bytes) -> bool:
+        if len(data) != 512:
+            return False
+        return sum(int.from_bytes(data[offset : offset + 4], "big") for offset in range(0, 512, 4)) & 0xFFFFFFFF == 0
+
+    def _real_file_blocks(self, target: _AmigaDirEntry) -> tuple[list[int], list[int], bool] | None:
+        """Return data and extension blocks for a real AmigaDOS file header.
+
+        Synthetic test images deliberately use a direct start/length table, so
+        they return ``None`` and retain the simple contiguous fallback.
+        """
+
+        assert self.image is not None
+        try:
+            header = self.image.read_sector(target.start_sector)
+        except FilesystemError:
+            return None
+        if len(header) != 512 or self._long(header, 0) != 2 or self._long(header, 127, signed=True) != -3:
+            return None
+        if self._long(header, 1) != target.start_sector:
+            raise FilesystemError(f"Amiga file header key mismatch at block {target.start_sector}")
+        if not self._block_checksum_is_valid(header):
+            raise FilesystemError(f"Amiga file header checksum failed at block {target.start_sector}")
+
+        extension_blocks, pointer_blocks = self._file_extension_chain(header, target.start_sector)
+        is_ofs = self._file_uses_ofs_blocks(header)
+        if is_ofs:
+            data_blocks = self._ofs_data_chain(header, target.start_sector, target.length)
+        else:
+            data_blocks = self._ffs_data_blocks(header, pointer_blocks, target.length)
+        return data_blocks, extension_blocks, is_ofs
+
+    def _file_extension_chain(self, header: bytes, header_block: int) -> tuple[list[int], list[int]]:
+        extension_blocks: list[int] = []
+        pointers = self._reversed_data_pointers(header)
+        extension = self._long(header, 126)
+        seen: set[int] = set()
+        while extension:
+            if extension in seen:
+                raise FilesystemError(f"Amiga file extension chain loops at block {extension}")
+            seen.add(extension)
+            assert self.image is not None
+            data = self.image.read_sector(extension)
+            if (
+                len(data) != 512
+                or self._long(data, 0) != 16
+                or self._long(data, 1) != extension
+                or self._long(data, 125) != header_block
+                or self._long(data, 127, signed=True) != -3
+            ):
+                raise FilesystemError(f"Invalid Amiga file extension block {extension}")
+            if not self._block_checksum_is_valid(data):
+                raise FilesystemError(f"Amiga file extension checksum failed at block {extension}")
+            extension_blocks.append(extension)
+            pointers.extend(self._reversed_data_pointers(data))
+            extension = self._long(data, 126)
+        return extension_blocks, pointers
+
+    def _file_uses_ofs_blocks(self, header: bytes) -> bool:
+        if self.filesystem == "amiga_ofs":
+            return True
+        if self.filesystem == "amiga_ffs":
+            return False
+        first_data = self._long(header, 4)
+        if not first_data or self.image is None:
+            return False
+        try:
+            return self._long(self.image.read_sector(first_data), 0) == 8
+        except FilesystemError:
+            return False
+
+    def _ofs_data_chain(self, header: bytes, header_block: int, length: int) -> list[int]:
+        expected_blocks = (length + 487) // 488
+        if expected_blocks == 0:
+            return []
+        block_number = self._long(header, 4)
+        if not block_number:
+            raise FilesystemError("Amiga OFS file header has no first data block")
+        blocks: list[int] = []
+        seen: set[int] = set()
+        while block_number and len(blocks) < expected_blocks:
+            if block_number in seen:
+                raise FilesystemError(f"Amiga OFS data chain loops at block {block_number}")
+            seen.add(block_number)
+            assert self.image is not None
+            data = self.image.read_sector(block_number)
+            if (
+                len(data) != 512
+                or self._long(data, 0) != 8
+                or self._long(data, 1) != header_block
+                or not 0 <= self._long(data, 3) <= 488
+            ):
+                raise FilesystemError(f"Invalid Amiga OFS data block {block_number}")
+            if not self._block_checksum_is_valid(data):
+                raise FilesystemError(f"Amiga OFS data checksum failed at block {block_number}")
+            blocks.append(block_number)
+            block_number = self._long(data, 4)
+        if len(blocks) != expected_blocks:
+            raise FilesystemError("Amiga OFS data chain ends before the file length")
+        return blocks
+
+    @staticmethod
+    def _reversed_data_pointers(data: bytes) -> list[int]:
+        count = AmigaOFS._long(data, 2)
+        if not 0 <= count <= 72:
+            raise FilesystemError("Amiga file block has an invalid data-pointer count")
+        return [AmigaOFS._long(data, 77 - index) for index in range(count) if AmigaOFS._long(data, 77 - index)]
+
+    @staticmethod
+    def _ffs_data_blocks(header: bytes, pointers: list[int], length: int) -> list[int]:
+        expected_blocks = (length + 511) // 512
+        if len(pointers) < expected_blocks:
+            raise FilesystemError("Amiga FFS data-pointer list ends before the file length")
+        return pointers[:expected_blocks]
 
     def _entry_for_file(self, path: str) -> _AmigaDirEntry:
         parts = [part for part in path.strip("/").split("/") if part]

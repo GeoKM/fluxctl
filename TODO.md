@@ -72,12 +72,12 @@
   directory clusters; CBM DOS, Amiga, CP/M, and other filesystems need their own
   directory record/block interpretation instead of overloading File Dump.
 - Deepen selected-file disk-map overlay accuracy. Studio now highlights selected
-  file sectors for FAT12, CBM DOS, 1581, Amiga's current contiguous-file model,
-  and CP/M allocation blocks for modelled DPBs. Follow-ups:
+  file sectors for FAT12, CBM DOS, 1581, Amiga OFS/FFS header/data/extension
+  chains, and CP/M allocation blocks for modelled DPBs. CP/M overlays now also
+  honour each extent's 128-byte record count rather than highlighting unused
+  trailing allocation slots. Follow-ups:
   - Add more CP/M disk parameter blocks as formats are promoted from heuristic
     directory listing to extraction/export support.
-  - Replace the Amiga overlay's contiguous-sector assumption with real OFS/FFS
-    file header, data block, extension block, checksum, and hash-chain traversal.
   - Manually verify selected-file highlighting in Studio across physical,
     filesystem-logical, and BAM map modes for FAT12, CBM DOS, 1581, Amiga, and
     CP/M fixtures.
