@@ -387,7 +387,7 @@ class CPMFilesystem(Filesystem):
 
         if self._is_c64_cpm_2_2():
             addresses: set[tuple[int, int, int]] = set()
-            for block in self._allocation_blocks_for_file(path):
+            for block in self._allocation_blocks_for_file(path, occupied_only=True):
                 for logical_sector in range(block * 4, block * 4 + 4):
                     logical_track = logical_sector // 17
                     sector_id = logical_sector % 17
@@ -402,7 +402,7 @@ class CPMFilesystem(Filesystem):
 
         sector_base = int(getattr(layout, "id_rules", {}).get("sector_number_base", 1))
         addresses = set()
-        for block in self._allocation_blocks_for_file(path):
+        for block in self._allocation_blocks_for_file(path, occupied_only=True):
             first_sector = params.first_directory_sector + block * params.sectors_per_block
             for offset in range(params.sectors_per_block):
                 logical_sector = first_sector + offset
@@ -416,8 +416,19 @@ class CPMFilesystem(Filesystem):
                 addresses.add((track, 0, sector_id))
         return addresses
 
-    def _allocation_blocks_for_file(self, path: str) -> set[int]:
-        return set(self._records_for_file(path, require_records=False)[1])
+    def _allocation_blocks_for_file(self, path: str, *, occupied_only: bool = False) -> set[int]:
+        records, _blocks = self._records_for_file(path, require_records=False)
+        if occupied_only:
+            return {
+                block
+                for record in records
+                for block in self._record_allocation_blocks(record, occupied_only=True)
+            }
+        return {
+            block
+            for record in records
+            for block in self._record_allocation_blocks(record)
+        }
 
     def _records_for_file(self, path: str, *, require_records: bool) -> tuple[list[CPMDirectoryRecord], list[int]]:
         target_user, target_name = self._target_user_and_name(path)
@@ -432,7 +443,7 @@ class CPMFilesystem(Filesystem):
         for record in sorted(matches, key=lambda item: item.extent):
             if require_records and record.records == 0:
                 continue
-            blocks.extend(self._record_allocation_blocks(record))
+            blocks.extend(self._record_allocation_blocks(record, occupied_only=require_records))
         return sorted(matches, key=lambda item: item.extent), blocks
 
     def _target_user_and_name(self, path: str) -> tuple[int, str]:
@@ -448,7 +459,7 @@ class CPMFilesystem(Filesystem):
             target_name = target
         return target_user, target_name
 
-    def _record_allocation_blocks(self, record: CPMDirectoryRecord) -> list[int]:
+    def _record_allocation_blocks(self, record: CPMDirectoryRecord, *, occupied_only: bool = False) -> list[int]:
         params = self._disk_parameters()
         width = params.allocation_width if params is not None else 1
         blocks: list[int] = []
@@ -459,7 +470,11 @@ class CPMFilesystem(Filesystem):
                 block = int.from_bytes(record.allocation[offset : offset + 2], "little")
                 if block:
                     blocks.append(block)
-        return blocks
+        if not occupied_only or params is None:
+            return blocks
+        records_per_block = params.block_size // 128
+        occupied_blocks = (record.records + records_per_block - 1) // records_per_block
+        return blocks[:occupied_blocks]
 
     def _read_logical_sector(self, sector_index: int, params: CPMDiskParameters) -> bytes:
         if self._image is None:

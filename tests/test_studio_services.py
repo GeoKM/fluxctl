@@ -185,6 +185,7 @@ def test_studio_reports_amiga_file_allocation_for_map_overlay() -> None:
         (32, 1, 8),
         (32, 1, 9),
         (32, 1, 10),
+        (33, 0, 0),
     }
 
 

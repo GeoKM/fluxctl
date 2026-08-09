@@ -6,6 +6,7 @@ from fluxctl import cli
 from fluxctl import studio_services as services
 from fluxctl.cli import _prepare_image
 from fluxctl.filesystem_detection import detect_filesystem
+from fluxctl.filesystems.cpm import CPMDirectoryRecord
 from fluxctl.layouts.loader import load_builtin_layouts
 
 
@@ -127,6 +128,25 @@ def test_cpm_26_sector_file_allocation_overlay_uses_dpb_skew() -> None:
     assert (52, 0, 2) in addresses
     assert (52, 0, 25) in addresses
     assert (55, 0, 25) in addresses
+
+
+def test_cpm_overlay_ignores_unused_trailing_allocation_slots() -> None:
+    filesystem = _mount_cpm_fixture(FIXTURE_CPM_SRC1)
+    filesystem._records = [
+        CPMDirectoryRecord(
+            user=0,
+            name="TRAIL.COM",
+            extent=0,
+            records=1,
+            allocation=bytes([3, 4]),
+        )
+    ]
+
+    addresses = filesystem.file_sector_addresses("/TRAIL.COM")
+
+    assert len(addresses) == 8
+    assert (2, 0, 16) in addresses
+    assert (3, 0, 11) not in addresses
 
 
 def test_osborne_cpm_extracts_file_contents() -> None:
