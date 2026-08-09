@@ -8,7 +8,8 @@ pytest.importorskip("PySide6")
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QItemSelectionModel, QTimer
+from PySide6.QtCore import QEvent, QItemSelectionModel, QTimer, Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QAbstractItemView, QFileDialog, QMessageBox
 
 from fluxctl import studio_services as services
@@ -831,6 +832,44 @@ def test_advanced_dump_hex_updates_hex_panel() -> None:
     assert "Sector T0 H0 S1" in window.advanced_hex_title_label.text()
     assert "48 45 4C 4C 4F" in window.advanced_hex_text.toPlainText()
     assert "Loaded hex view for Sector T0 H0 S1" in window.activity_label.text()
+    window.close()
+
+
+def test_advanced_hex_editor_synchronizes_hex_edits_to_ascii() -> None:
+    window = FluxctlStudio()
+    window._show_advanced_hex_dump(
+        services.HexDumpView("File /HELLO.TXT", 5, services.format_hex_dump(b"HELLO"), data=b"HELLO")
+    )
+    window.advanced_hex_text.setPlainText(services.format_hex_dump(b"JELLO"))
+    cursor = window.advanced_hex_text.textCursor()
+    cursor.setPosition(11)
+    window.advanced_hex_text.setTextCursor(cursor)
+
+    QApplication.sendEvent(
+        window.advanced_hex_text,
+        QKeyEvent(QEvent.KeyPress, Qt.Key_Return, Qt.NoModifier),
+    )
+
+    assert "4A 45 4C 4C 4F" in window.advanced_hex_text.toPlainText()
+    assert "|JELLO|" in window.advanced_hex_text.toPlainText()
+    window.close()
+
+
+def test_advanced_hex_editor_synchronizes_ascii_edits_to_hex() -> None:
+    window = FluxctlStudio()
+    window._show_advanced_hex_dump(
+        services.HexDumpView("File /HELLO.TXT", 5, services.format_hex_dump(b"H\x00LLO"), data=b"H\x00LLO")
+    )
+    window.advanced_hex_text.setPlainText(services.format_hex_dump(b"H\x00LLO").replace("|H.LLO|", "|HALLO|"))
+    line = window.advanced_hex_text.toPlainText()
+    cursor = window.advanced_hex_text.textCursor()
+    cursor.setPosition(line.find("|") + 2)
+    window.advanced_hex_text.setTextCursor(cursor)
+
+    window.advanced_hex_text.syncRequested.emit()
+
+    assert "48 41 4C 4C 4F" in window.advanced_hex_text.toPlainText()
+    assert "|HALLO|" in window.advanced_hex_text.toPlainText()
     window.close()
 
 

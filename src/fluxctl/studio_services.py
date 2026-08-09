@@ -961,6 +961,65 @@ def parse_hex_dump_text(text: str, *, expected_size: Optional[int] = None) -> by
     return bytes(payload)
 
 
+def apply_ascii_hex_dump_edits(text: str, original_data: bytes, *, width: int = 16) -> bytes:
+    """Apply edited ASCII-column characters to a Fluxctl hex dump.
+
+    Non-printable source bytes are rendered as ``.``. Keeping that character
+    preserves the original byte, so merely synchronising an unchanged ASCII
+    column cannot turn every non-printable byte into a literal full stop.
+    """
+
+    if width <= 0:
+        raise ValueError("Hex dump width must be positive")
+    payload = bytearray(original_data)
+    expected_offset = 0
+    parsed_any = False
+    for raw_line in text.splitlines():
+        if not raw_line or raw_line.startswith("... truncated"):
+            continue
+        marker = raw_line.find("|")
+        if marker < 0:
+            raise ValueError("ASCII edit requires a complete Fluxctl hex dump line")
+        closing_marker = raw_line.find("|", marker + 1)
+        if closing_marker < 0:
+            raise ValueError("ASCII edit requires a closing ASCII column marker")
+        if raw_line[closing_marker + 1 :].strip():
+            raise ValueError("Unexpected text after ASCII column")
+        prefix_parts = raw_line[:marker].split()
+        if not prefix_parts:
+            raise ValueError("ASCII edit is missing a hex dump offset")
+        try:
+            offset = int(prefix_parts[0], 16)
+        except ValueError as exc:
+            raise ValueError(f"Invalid hex dump offset: {prefix_parts[0]!r}") from exc
+        if offset != expected_offset:
+            raise ValueError(f"Hex dump offset jumps from {expected_offset:08X} to {offset:08X}")
+        row_size = min(width, len(original_data) - offset)
+        if row_size <= 0:
+            raise ValueError(f"Hex dump offset {offset:08X} is beyond the edited data")
+        ascii_text = raw_line[marker + 1 : closing_marker]
+        if len(ascii_text) != row_size:
+            raise ValueError(
+                f"ASCII column at {offset:08X} contains {len(ascii_text)} characters; expected {row_size}"
+            )
+        for index, character in enumerate(ascii_text):
+            source_byte = original_data[offset + index]
+            rendered = chr(source_byte) if 32 <= source_byte < 127 else "."
+            if character == rendered:
+                continue
+            codepoint = ord(character)
+            if not 32 <= codepoint < 127:
+                raise ValueError("ASCII edits must use printable 7-bit characters; edit other bytes as hex")
+            payload[offset + index] = codepoint
+        expected_offset += row_size
+        parsed_any = True
+    if not parsed_any:
+        raise ValueError("No ASCII bytes found in edited dump")
+    if expected_offset != len(original_data):
+        raise ValueError(f"Edited ASCII data is {expected_offset} bytes; expected {len(original_data)} bytes")
+    return bytes(payload)
+
+
 def sector_hex_dump(
     path: Path,
     layout_id: Optional[str],
