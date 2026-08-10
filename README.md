@@ -75,23 +75,28 @@ python3 scripts/install_fluxctl.py
 ## Supported operations
 - **info**: inspect SCP headers and inferred geometry.
 - **doctor**: check the local installation and optional helper integrations.
-- **probe**: detect encoding, layout, and filesystem (where detectable) for SCP, IMD, TRS-80 `.dsk`/`.dmk`, and flat images.
+- **probe**: detect encoding, layout, and filesystem (where detectable) for SCP, WOZ, Apple II `.po`/`.do`/`.nib`, IMD, TRS-80 `.dsk`/`.dmk`, and flat images.
 - **compare**: hash + byte diff two images; SCP inputs are decoded first.
 - **roundtrip**: convert through an intermediate format and verify decoded-sector
   hashes after each leg.
 - **qc**: generate quality control reports (JSON or text).
 - **visualize**: render ASCII or SVG disk maps.
 - **extract**: detect filesystems and extract files or raw sectors.
-- **convert**: export to raw, IMD, ADF, D64, D71, D81, and G64 images.
+- **convert**: export to raw, IMD, ADF, D64, D71, D81, G64, and Apple II PO/DO images.
 - **sectors/dump/patch**: per-track listing, hex dump, and simple patching helpers.
 - **studio**: optional desktop GUI for guided and advanced workflows.
 
 ## Encodings and filesystems
-- Encodings: MFM, FM, GCR (Commodore) via plugin registry.
+- Encodings: MFM, FM, Commodore GCR, and Apple II 16-sector 6-and-2 GCR via plugin registry.
 - Physical layouts include IBM PC FAT geometries, IBM XDF OS/2 media,
   Commodore/Amiga formats, CP/M machine formats, Tandy TRS-80 formats, RT-11
-  RX01/RX02 RT-11 media, and IBM DisplayWriter mixed-sector media.
-- Filesystems detected: FAT12, CBM DOS, CP/M (C64 CP/M 2.2, C128 CP/M 3.0, Osborne/Kaypro/Tandy variants), TRSDOS 1.3, LDOS/TRSDOS 6, NEWDOS/80, Amiga OFS/FFS, RT-11 (normal RX02 volumes and RX01/IBM 3740 Interchange labels), Displaywriter probe; raw sector dumps always supported.
+  RX01/RX02 RT-11 media, IBM DisplayWriter mixed-sector media, and Apple II
+  35-track 140K media in WOZ, NIB, PO, DO, DSK/IMG, or decoded SCP form.
+- Filesystems detected: FAT12, CBM DOS, Apple ProDOS, Apple DOS 3.3, CP/M
+  (C64 CP/M 2.2, C128 CP/M 3.0, Osborne/Kaypro/Tandy variants), TRSDOS 1.3,
+  LDOS/TRSDOS 6, NEWDOS/80, Amiga OFS/FFS, RT-11 (normal RX02 volumes and
+  RX01/IBM 3740 Interchange labels), Displaywriter probe; raw sector dumps
+  always supported.
 - Filesystem listing, extraction, export, and copy-only mutation support varies
   by format. See the
   [filesystem capability matrix](docs/filesystem_capabilities.md) for current

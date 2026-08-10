@@ -155,6 +155,15 @@ def test_studio_defaults_scp_conversion_to_layout_appropriate_exporter() -> None
     assert ("d81", "Commodore 1581 image (.d81)") in window._exporter_choices_for_image(
         "scp", "commodore_mfm_1581_800k", "mfm"
     )
+    assert window._default_exporter_for_image(
+        "woz", "apple2_gcr_nofs_140_140k", "apple2_gcr"
+    ) == "po"
+    assert window._exporter_choices_for_image(
+        "woz", "apple2_gcr_nofs_140_140k", "apple2_gcr"
+    ) == [
+        ("po", "Apple ProDOS-order sector image (.po)"),
+        ("do", "Apple DOS-order sector image (.do)"),
+    ]
 
     window.close()
 

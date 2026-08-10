@@ -40,6 +40,7 @@ def load_builtin_exporters() -> list[PluginInfo]:
     from .d71 import D71Exporter
     from .d81 import D81Exporter
     from .g64 import G64Exporter
+    from .apple2 import Apple2DOExporter, Apple2POExporter
 
     registry.register_exporter(
         "raw",
@@ -93,6 +94,24 @@ def load_builtin_exporters() -> list[PluginInfo]:
             version="0.1",
             entry=G64Exporter(),
             description="Commodore 1541 GCR nibble image (.g64)",
+        ),
+    )
+    registry.register_exporter(
+        "po",
+        PluginInfo(
+            name="Apple II ProDOS-order exporter",
+            version="0.1",
+            entry=Apple2POExporter(),
+            description="Apple II ProDOS-order sector image (.po)",
+        ),
+    )
+    registry.register_exporter(
+        "do",
+        PluginInfo(
+            name="Apple II DOS-order exporter",
+            version="0.1",
+            entry=Apple2DOExporter(),
+            description="Apple II DOS-order sector image (.do)",
         ),
     )
     registry.register_exporter(

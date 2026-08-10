@@ -1,8 +1,8 @@
 {
   "schema_version": "layout.v1",
   "layout_id": "apple2_gcr_nofs_140_140k",
-  "name": "Apple2 nofs.140 140K GCR",
-  "encoding": "gcr",
+  "name": "Apple II 5.25-inch 140K 6-and-2 GCR",
+  "encoding": "apple2_gcr",
   "rpm_nominal": 300,
   "sides": 1,
   "tracks": 35,

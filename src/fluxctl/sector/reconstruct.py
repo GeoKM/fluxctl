@@ -402,6 +402,12 @@ def build_track_sectors(
     """Decode a revolution and reconstruct sectors using the supplied decoder."""
 
     effective_encoding = encoding or getattr(decoder, "encoding", None)
+    if effective_encoding == "apple2_gcr":
+        from ..apple2 import decode_apple2_revolutions
+
+        return decode_apple2_revolutions(
+            [rev], cylinder=cylinder, head=head
+        )
     if effective_encoding == "gcr" and hasattr(decoder, "set_track"):
         decoder.set_track(cylinder)
     bitstream = decoder.decode_revolution(rev)
@@ -485,6 +491,12 @@ def build_track_sectors_from_revolutions(
 
     tracks: list[TrackSectors] = []
     effective_encoding = encoding or getattr(decoder, "encoding", None)
+    if effective_encoding == "apple2_gcr":
+        from ..apple2 import decode_apple2_revolutions
+
+        return decode_apple2_revolutions(
+            revolutions, cylinder=cylinder, head=head
+        )
     for rev in revolutions:
         if not getattr(rev, "interval_ns", None):
             continue
