@@ -31,7 +31,6 @@ try:  # pragma: no cover - exercised only when GUI dependencies are installed.
         QMainWindow,
         QMessageBox,
         QPushButton,
-        QSplitter,
         QStackedWidget,
         QTableWidget,
         QTableWidgetItem,
@@ -477,7 +476,7 @@ class FluxctlStudio(QMainWindow):
         self.addToolBar(self.toolbar)
 
         root = QWidget()
-        root_layout = QHBoxLayout(root)
+        root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
 
         self.sidebar = QFrame()
@@ -536,15 +535,40 @@ class FluxctlStudio(QMainWindow):
         sidebar_layout.addStretch(1)
         self._update_blank_image_tooltip()
 
-        self.stack = QStackedWidget()
         self.simple = self._build_simple_mode()
         self.advanced = self._build_advanced_mode()
-        self.stack.addWidget(self.simple)
-        self.stack.addWidget(self.advanced)
 
-        root_layout.addWidget(self.sidebar, 0)
-        root_layout.addWidget(self.stack, 1)
+        self.main_page = QWidget()
+        main_page_layout = QHBoxLayout(self.main_page)
+        main_page_layout.setContentsMargins(0, 0, 0, 0)
+        main_page_layout.addWidget(self.sidebar, 0)
+        main_page_layout.addWidget(self.simple, 1)
+
+        self.hex_mode_stack = QStackedWidget()
+        self.hex_mode_stack.addWidget(self.hex_panel)
+        self.hex_mode_stack.addWidget(self.advanced_hex_panel)
+        self.hex_page = QWidget()
+        hex_page_layout = QVBoxLayout(self.hex_page)
+        hex_page_layout.setContentsMargins(8, 8, 8, 8)
+        hex_page_layout.addWidget(self.hex_mode_stack)
+
+        self.jobs_page = QWidget()
+        jobs_layout = QVBoxLayout(self.jobs_page)
+        jobs_layout.setContentsMargins(8, 8, 8, 8)
+        jobs_layout.addWidget(self.log)
+
+        self.main_tabs = QTabWidget()
+        self.disk_tab_index = self.main_tabs.addTab(self.main_page, "Disk && Imaging")
+        self.files_tab_index = self.main_tabs.addTab(self.file_panel, "Files && Directories")
+        self.hex_tab_index = self.main_tabs.addTab(self.hex_page, "HEX && ASCII")
+        self.advanced_tab_index = self.main_tabs.addTab(self.advanced, "Advanced")
+        self.jobs_tab_index = self.main_tabs.addTab(self.jobs_page, "Jobs && Logs")
+        self.main_tabs.setTabToolTip(self.advanced_tab_index, "Available when Advanced Mode is selected.")
+
+        root_layout.addWidget(self.activity_label)
+        root_layout.addWidget(self.main_tabs, 1)
         self.setCentralWidget(root)
+        self._switch_mode(self.mode.currentIndex())
 
     def _build_hardware_section(self) -> QWidget:
         section = QFrame()
@@ -689,38 +713,12 @@ class FluxctlStudio(QMainWindow):
         hex_panel_layout.addLayout(hex_controls)
         hex_panel_layout.addWidget(self.hex_text)
 
-        map_toggle_row = QHBoxLayout()
-        map_toggle_row.addStretch(1)
-        self.map_toggle_button = QPushButton("Hide Disk Map")
-        self.map_toggle_button.setToolTip("Hide the disk map and expand the Files, Hex, and Jobs panel.")
-        self.map_toggle_button.clicked.connect(self.toggle_disk_map_panel)
-        map_toggle_row.addWidget(self.map_toggle_button)
-
-        self.simple_splitter = QSplitter(Qt.Vertical)
-        self.simple_splitter.setChildrenCollapsible(False)
-        self.map_panel = QWidget()
-        self.map_panel_visible = True
-        self._map_panel_sizes = [430, 470]
-        upper_layout = QVBoxLayout(self.map_panel)
-        upper_layout.addWidget(self.activity_label)
-        upper_layout.addLayout(actions)
+        layout.addLayout(actions)
         self.map_canvas_panel = QWidget()
         map_canvas_layout = QVBoxLayout(self.map_canvas_panel)
         map_canvas_layout.setContentsMargins(0, 0, 0, 0)
         map_canvas_layout.addWidget(self.map_widget, 1)
-        upper_layout.addWidget(self.map_canvas_panel, 1)
-        self.lower_tabs = QTabWidget()
-        self.lower_tabs.setMinimumHeight(380)
-        self.lower_tabs.addTab(self.file_panel, "Files")
-        self.lower_tabs.addTab(self.hex_panel, "Hex")
-        self.lower_tabs.addTab(self.log, "Jobs")
-        self.simple_splitter.addWidget(self.map_panel)
-        self.simple_splitter.addWidget(self.lower_tabs)
-        self.simple_splitter.setStretchFactor(0, 2)
-        self.simple_splitter.setStretchFactor(1, 3)
-        self.simple_splitter.setSizes(self._map_panel_sizes)
-        layout.addLayout(map_toggle_row)
-        layout.addWidget(self.simple_splitter)
+        layout.addWidget(self.map_canvas_panel, 1)
         return page
 
     def _build_advanced_mode(self) -> QWidget:
@@ -802,15 +800,14 @@ class FluxctlStudio(QMainWindow):
         advanced_hex_actions.addWidget(self.advanced_hex_save_button)
         advanced_hex_actions.addWidget(self.advanced_hex_revert_button)
         advanced_hex_actions.addStretch(1)
-        advanced_hex_panel = QWidget()
-        advanced_hex_layout = QVBoxLayout(advanced_hex_panel)
+        self.advanced_hex_panel = QWidget()
+        advanced_hex_layout = QVBoxLayout(self.advanced_hex_panel)
         advanced_hex_layout.setContentsMargins(0, 0, 0, 0)
         advanced_hex_layout.addWidget(self.advanced_hex_title_label)
         advanced_hex_layout.addLayout(advanced_hex_actions)
         advanced_hex_layout.addWidget(self.advanced_hex_text)
         self.advanced_detail_stack = QStackedWidget()
         self.advanced_detail_stack.addWidget(self.advanced_output)
-        self.advanced_detail_stack.addWidget(advanced_hex_panel)
         layout.addLayout(controls)
         layout.addLayout(buttons)
         layout.addWidget(self.advanced_detail_stack, 1)
@@ -852,39 +849,34 @@ class FluxctlStudio(QMainWindow):
             QHeaderView::section { background: #1b2636; color: #dce7f7; padding: 6px; border: 0; }
             QTabBar::tab { background: #1b2636; padding: 8px 14px; border-top-left-radius: 6px; border-top-right-radius: 6px; }
             QTabBar::tab:selected { background: #31455f; }
-            QSplitter::handle {
-                background: #263241;
-                border: 1px solid #40536c;
-            }
-            QSplitter::handle:vertical {
-                height: 10px;
-                margin: 4px 0;
-            }
-            QSplitter::handle:hover { background: #3a516e; }
+            QTabBar::tab:disabled { background: #111722; color: #697386; }
             """
         )
 
     def _switch_mode(self, index: int) -> None:
-        self.stack.setCurrentIndex(index)
+        advanced = index == 1
+        self.hex_mode_stack.setCurrentIndex(1 if advanced else 0)
+        if not advanced and self.main_tabs.currentIndex() == self.advanced_tab_index:
+            self.main_tabs.setCurrentIndex(self.disk_tab_index)
+        self.main_tabs.setTabEnabled(self.advanced_tab_index, advanced)
 
-    def toggle_disk_map_panel(self) -> None:
-        if self.map_panel_visible:
-            sizes = self.simple_splitter.sizes()
-            if sizes and sizes[0] > 0:
-                self._map_panel_sizes = sizes
-            self.map_canvas_panel.setVisible(False)
-            self.map_panel_visible = False
-            self.map_toggle_button.setText("Show Disk Map")
-            self.map_toggle_button.setToolTip("Show the disk map above the Files, Hex, and Jobs panel.")
-            total_size = sum(sizes) if sizes else sum(self._map_panel_sizes)
-            self.simple_splitter.setSizes([1, max(1, total_size - 1)])
-            return
+    def _show_main_tab(self) -> None:
+        self.main_tabs.setCurrentIndex(self.disk_tab_index)
 
-        self.map_canvas_panel.setVisible(True)
-        self.map_panel_visible = True
-        self.map_toggle_button.setText("Hide Disk Map")
-        self.map_toggle_button.setToolTip("Hide the disk map and expand the Files, Hex, and Jobs panel.")
-        self.simple_splitter.setSizes(self._map_panel_sizes)
+    def _show_files_tab(self) -> None:
+        self.main_tabs.setCurrentIndex(self.files_tab_index)
+
+    def _show_hex_tab(self, *, advanced: Optional[bool] = None) -> None:
+        use_advanced = self.mode.currentIndex() == 1 if advanced is None else advanced
+        self.hex_mode_stack.setCurrentIndex(1 if use_advanced else 0)
+        self.main_tabs.setCurrentIndex(self.hex_tab_index)
+
+    def _show_advanced_tab(self) -> None:
+        if self.main_tabs.isTabEnabled(self.advanced_tab_index):
+            self.main_tabs.setCurrentIndex(self.advanced_tab_index)
+
+    def _show_jobs_tab(self) -> None:
+        self.main_tabs.setCurrentIndex(self.jobs_tab_index)
 
     def _selected_layout(self) -> str:
         return str(self.layout_combo.currentData() or (self.current_summary.layout_id if self.current_summary else ""))
@@ -975,7 +967,6 @@ class FluxctlStudio(QMainWindow):
 
     def _append_log(self, text: str) -> None:
         self.log.append(text)
-        self.advanced_output.append(text)
 
     def _run_job(self, label: str, fn: Callable[[], object], done: Callable[[object], None]) -> None:
         self.summary_labels["status"].setText("running")
@@ -1011,6 +1002,7 @@ class FluxctlStudio(QMainWindow):
             self.current_path = Path(filename)
             self.file_label.setText(str(self.current_path))
             self._clear_image_results()
+            self._show_main_tab()
             self.run_probe()
 
     def _selected_blank_preset(self):
@@ -1197,7 +1189,7 @@ class FluxctlStudio(QMainWindow):
             self._append_log(result.stdout.strip())
         if result.stderr:
             self._append_log(result.stderr.strip())
-        self.lower_tabs.setCurrentWidget(self.log)
+        self._show_jobs_tab()
         self.run_probe()
 
     def _show_blank_image_result(self, result: object) -> None:
@@ -1211,6 +1203,7 @@ class FluxctlStudio(QMainWindow):
             f"Created blank image {result.path} using {result.preset_id} "
             f"({result.layout_id}, {result.filesystem}, {result.size:,} bytes)"
         )
+        self._show_main_tab()
         self.run_probe()
 
     def _clear_image_results(self) -> None:
@@ -1623,6 +1616,7 @@ class FluxctlStudio(QMainWindow):
         )
 
     def _show_files(self, entries: object) -> None:
+        self._show_files_tab()
         volume_text = ""
         if isinstance(entries, services.FileListView):
             volume_text = entries.volume_text
@@ -2079,9 +2073,12 @@ class FluxctlStudio(QMainWindow):
         self.view_sector_hex()
 
     def _show_hex_dump(self, dump: object) -> None:
+        if self.mode.currentIndex() == 1:
+            self._show_advanced_hex_dump(dump)
+            return
         self.hex_title_label.setText(f"{dump.title}  ({dump.size:,} bytes)")
         self.hex_text.setPlainText(dump.text)
-        self.lower_tabs.setCurrentWidget(self.hex_panel)
+        self._show_hex_tab(advanced=False)
         self.activity_label.setText(f"Loaded hex view for {dump.title}.")
         self._append_log(f"Loaded hex view for {dump.title} ({dump.size:,} bytes)")
 
@@ -2566,6 +2563,7 @@ class FluxctlStudio(QMainWindow):
         text = "\n".join(lines)
         self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
         self.advanced_output.setPlainText(text)
+        self._show_advanced_tab()
         self._advanced_hex_dump = None
         self._update_advanced_hex_edit_actions()
         self.log.append(text)
@@ -2573,6 +2571,7 @@ class FluxctlStudio(QMainWindow):
     def _show_text_view(self, report: object) -> None:
         self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
         self.advanced_output.setPlainText(report.text)
+        self._show_advanced_tab()
         self._advanced_hex_dump = None
         self._update_advanced_hex_edit_actions()
         self.activity_label.setText(f"Loaded {report.title}.")
@@ -2583,7 +2582,7 @@ class FluxctlStudio(QMainWindow):
         self.advanced_hex_title_label.setText(f"{dump.title}  ({dump.size:,} bytes)")
         self.advanced_hex_text.setPlainText(dump.text)
         self._update_advanced_hex_edit_actions()
-        self.advanced_detail_stack.setCurrentWidget(self.advanced_hex_text.parentWidget())
+        self._show_hex_tab(advanced=True)
         self.activity_label.setText(f"Loaded hex view for {dump.title}.")
         self.log.append(f"Loaded hex view for {dump.title} ({dump.size:,} bytes)")
 
