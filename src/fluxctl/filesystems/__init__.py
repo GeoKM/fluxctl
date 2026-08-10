@@ -142,7 +142,7 @@ def load_builtin_filesystems() -> List[PluginInfo]:
     from .cbm_dos import CBMDOS
     from .cbm_dos_1581 import CBMDOS1581
     from .cpm import CPMFilesystem
-    from .rt11 import RT11Filesystem
+    from .rt11 import RT11Filesystem, RT11InterchangeFilesystem
     from .displaywriter import DisplaywriterFS
     from .trsdos import TRSDOS13Filesystem
     from .newdos80 import NEWDOS80Filesystem
@@ -182,6 +182,15 @@ def load_builtin_filesystems() -> List[PluginInfo]:
             version="0.1",
             entry=CBMDOS1581(),
             description="Commodore 1581 CBM DOS 10 filesystem",
+        ),
+    )
+    registry.register_filesystem(
+        "rt11_interchange",
+        PluginInfo(
+            name="RT-11 Interchange Labels",
+            version="0.1",
+            entry=RT11InterchangeFilesystem(),
+            description="IBM 3740/RX01 EBCDIC RT-11 interchange label reader",
         ),
     )
     registry.register_filesystem(

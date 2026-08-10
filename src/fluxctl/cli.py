@@ -814,6 +814,7 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
     ".d81": ("commodore_mfm_1581_800k",),
     ".adf": ("amiga_mfm_880k",),
     ".imd": (
+        "dec_fm_rx01_250k",
         "tandy_mfm_cpmplus_156k",
         "tandy_mfm_cpmplus_hxc_360k",
         "tandy_mfm_ssdd_180k",
@@ -841,6 +842,7 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
         "tandy_mfm_ssdd_180k_s0",
     ),
     ".img": (
+        "dec_fm_rx01_250k",
         "tandy_mfm_ssdd_180k",
         "kaypro_mfm_ssdd_40_200k",
         "osborne_mfm_ssdd_200k",
@@ -1061,6 +1063,8 @@ def _flat_layout_filesystem_penalty(layout: LayoutDescriptor, filesystem_name: O
         return 0 if layout.layout_id in modelled_cpm_layouts else 1
     if filesystem_name == "rt11":
         return 0 if layout.layout_id in {"generic_mfm_8inch_500k", "dec_dec_rx02_rx02_250k"} else 3
+    if filesystem_name == "rt11_interchange":
+        return 0 if layout.layout_id == "dec_fm_rx01_250k" else 3
     if filesystem_name == "cbm_dos" and layout.layout_id == "commodore_gcr_1541_cpm_170k":
         return 1
     return 0
@@ -1353,6 +1357,19 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
                     filesystem=imd_filesystem_name,
                     score=1.0,
                     evidence=evidence + [f"layout={lid}", "filesystem=displaywriter"],
+                )
+            ]
+        if imd_filesystem_name == "rt11_interchange":
+            lid = "dec_fm_rx01_250k"
+            layout = registry.layout.get(lid)
+            return [
+                CandidateFormat(
+                    candidate_id=lid,
+                    encoding=layout.encoding if layout else "fm",
+                    layout_id=lid,
+                    filesystem=imd_filesystem_name,
+                    score=1.0,
+                    evidence=evidence + [f"layout={lid}", "filesystem=rt11_interchange"],
                 )
             ]
         # Fast-path common IMD geometries.

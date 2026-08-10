@@ -15,6 +15,7 @@ format-specific code to safely extract or modify file data.
 | CP/M variants | Yes | Yes | Yes for modelled DPBs | Root only | Root file import and delete for modelled flat `.img` | CP/M 26-sector 256K FM, Osborne 1 SSDD 200K MFM, Kaypro II SSDD 200K MFM, Tandy Model 4 CP/M 2.2 180K MFM, and Tandy Model 4 CP/M Plus mixed-sector media are modelled for extraction. Mixed-sector CP/M Plus mutation is read-only until a safe writer exists. |
 | DisplayWriter | Yes | Label directory only | No | No | No | The reader lists IBM standard-label `HDR1` records from track 0. Actual DisplayWriter document extraction is not implemented. |
 | RT-11 | Yes | No | No | No | No | Probe and volume label metadata exist. Directory listing and extraction are not implemented. |
+| RT-11 Interchange (RX01/IBM 3740) | Yes | Active `HDR1` dataset labels | Yes for nonempty labels | No | No | Exports fixed-length EBCDIC record streams from the `HDR1` start through its first-unused address. Labelled-empty datasets expose a separately named raw residual extent and JSON manifest for forensic recovery. |
 | Raw sectors | Not a filesystem | N/A | Sector dump/export | N/A | Sector patch helpers only | Raw sector operations do not understand filesystem allocation or directory structures. |
 
 ## Fluxctl Studio Function Matrix
@@ -37,6 +38,7 @@ opened and probed. Write/manipulation actions always create a new image copy.
 | Tandy/TRS-80 `.dsk`/`.dmk`/`.imd`/`.scp` | Yes | Model III TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and CP/M where probes pass | Root only | Yes | TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and modelled Tandy CP/M files | TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and modelled Tandy CP/M files | No | No | No | No | No | No | Allocation-block/extent overlay where supported | Physical map; filesystem logical map where supported |
 | DisplayWriter | Yes | Label entries only | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
 | RT-11 | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
+| RT-11 Interchange RX01/IBM 3740 | Yes | Active labels and labelled-empty raw recovery extents | No | Yes | Yes | Nonempty datasets; raw residual extent where labelled empty | No | No | No | No | No | No | No | Physical map only |
 
 Notes:
 
@@ -77,6 +79,11 @@ Known list-without-extract cases:
   format has not been decoded.
 - **RT-11**: can identify likely RT-11 volumes, but directory listing and
   extraction are both pending.
+- **RT-11 Interchange (RX01/IBM 3740)**: exports a nonempty `HDR1` dataset as
+  its fixed-length EBCDIC record stream. When a label declares its extent empty,
+  Studio exposes a clearly named `.RESIDUAL.RAW` sector-for-sector recovery
+  export plus a JSON manifest; it does not claim this residual payload is a
+  valid logical file.
 
 ## Mutation Safety
 

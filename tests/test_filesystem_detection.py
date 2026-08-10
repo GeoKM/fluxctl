@@ -1,6 +1,11 @@
 from pathlib import Path
 
+import pytest
+
 from fluxctl.cli import _prepare_image
+from fluxctl.exceptions import FilesystemError
+from fluxctl.filesystems import RawSectorImage
+from fluxctl.filesystems.rt11 import RT11InterchangeFilesystem
 from fluxctl.filesystem_detection import detect_filesystem
 from fluxctl.layouts.loader import load_builtin_layouts
 
@@ -14,6 +19,7 @@ FIXTURE_D71_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-MF
 FIXTURE_CPM_SRC1_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC1-256K.img")
 FIXTURE_CPM_SRC2_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC2-256K.img")
 FIXTURE_KAYPRO_CPM22_IMD = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-CPM22-200K.imd")
+FIXTURE_RX01_INTERCHANGE_SCP = Path("tests/fixtures/8inch/DEC/DEC-RX01-SSSD-FM-RT11_IDF-250K.scp")
 
 
 def test_detects_1541_cbm_dos_with_strong_probe() -> None:
@@ -118,3 +124,39 @@ def test_detects_kaypro_cpm_before_rt11_false_positive() -> None:
     assert detection.plugin is not None
     names = [entry.name for entry in detection.plugin.list_directory("/")]
     assert "STAT.COM" in names
+
+
+def test_detects_rx01_rt11_interchange_labels_without_claiming_residual_data() -> None:
+    load_builtin_layouts()
+    image = _prepare_image(FIXTURE_RX01_INTERCHANGE_SCP, "dec_fm_rx01_250k", "fm")
+
+    detection = detect_filesystem(image, path_name="interchange-disk.scp")
+
+    assert detection.primary == "rt11_interchange"
+    assert detection.plugin is not None
+    assert [entry.name for entry in detection.plugin.list_directory("/")] == [
+        "DATA",
+        "DATA.RESIDUAL.RAW",
+        "DATA.RESIDUAL.json",
+    ]
+    assert detection.plugin.metadata()["datasets"] == "1"
+    with pytest.raises(FilesystemError, match="labelled empty"):
+        detection.plugin.extract_file("/DATA")
+    assert len(detection.plugin.extract_file("/DATA.RESIDUAL.RAW")) == 242_944
+
+
+def test_extracts_nonempty_rt11_interchange_dataset_records() -> None:
+    sectors = bytearray(77 * 26 * 128)
+    sectors[6 * 128 : 7 * 128] = "VOL1RT11A".ljust(80).encode("cp037")
+    sectors[7 * 128 : 8 * 128] = (
+        "HDR1 TEST               080 01001 01002                                   01002 "
+        .ljust(80)
+        .encode("cp037")
+    )
+    sectors[26 * 128 : 27 * 128] = b"A" * 80 + b"\x00" * 48
+    filesystem = RT11InterchangeFilesystem()
+
+    assert filesystem.probe(RawSectorImage(bytes(sectors), bytes_per_sector=128))
+    entries = filesystem.list_directory("/")
+    assert [(entry.name, entry.size) for entry in entries] == [("TEST", 80)]
+    assert filesystem.extract_file("/TEST") == b"A" * 80
