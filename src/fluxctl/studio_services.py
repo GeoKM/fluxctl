@@ -1757,7 +1757,14 @@ def _filesystem_volume_text(filesystem) -> str:
             parts.append(f"DOS: {dos_type}")
         return "  ".join(parts)
     volume_label = str(metadata.get("volume_label") or metadata.get("label") or "").strip()
-    return f"Label: {volume_label}" if volume_label else ""
+    if volume_label:
+        return f"Label: {volume_label}"
+    if metadata.get("filesystem") == "apple_dos_3_3":
+        volume_number = metadata.get("volume_number")
+        catalog_entries = int(metadata.get("catalog_entries") or 0)
+        catalog = f"{catalog_entries} cataloged file(s)" if catalog_entries else "empty catalog"
+        return f"Apple DOS 3.3  Volume: {volume_number}  {catalog}"
+    return ""
 
 
 def provenance_json(path: Path) -> dict:
