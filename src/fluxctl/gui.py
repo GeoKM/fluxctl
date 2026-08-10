@@ -1005,7 +1005,7 @@ class FluxctlStudio(QMainWindow):
             self,
             "Open disk image",
             "",
-            "Disk images (*.scp *.img *.imd *.dsk *.dmk *.d64 *.d71 *.d81 *.adf);;All files (*)",
+            "Disk images (*.scp *.woz *.po *.do *.nib *.img *.imd *.dsk *.dmk *.d64 *.d71 *.d81 *.adf);;All files (*)",
         )
         if filename:
             self.current_path = Path(filename)
@@ -1426,6 +1426,8 @@ class FluxctlStudio(QMainWindow):
         combo.setCurrentIndex(index if index >= 0 else 0)
 
     def _default_exporter_for_image(self, kind: str, layout_id: str = "", encoding: str = "") -> str:
+        if layout_id.startswith("apple2_") or kind in {"woz", "po", "do", "nib"}:
+            return "do" if kind == "do" else "po"
         if kind in {"img", "raw"}:
             return "raw"
         if kind in {"imd", "adf", "d64", "d71", "g64"}:
@@ -1447,6 +1449,11 @@ class FluxctlStudio(QMainWindow):
         return "raw"
 
     def _exporter_choices_for_image(self, kind: str, layout_id: str = "", encoding: str = "") -> list[tuple[str, str]]:
+        if layout_id.startswith("apple2_") or kind in {"woz", "po", "do", "nib"}:
+            return [
+                ("po", "Apple ProDOS-order sector image (.po)"),
+                ("do", "Apple DOS-order sector image (.do)"),
+            ]
         choices = [
             ("raw", "Raw sector image (.img)"),
             ("imd", "ImageDisk (.imd)"),
@@ -1466,6 +1473,8 @@ class FluxctlStudio(QMainWindow):
         return choices
 
     def _default_roundtrip_back_exporter_for_image(self, kind: str) -> str:
+        if kind in {"woz", "po", "do", "nib"}:
+            return "do" if kind == "do" else "po"
         if kind in {"img", "raw", "scp", "imd"}:
             return "raw"
         if kind in {"adf", "d64", "d71", "g64"}:
@@ -2537,7 +2546,7 @@ class FluxctlStudio(QMainWindow):
     def compare_dialog(self) -> None:
         if not self._require_image():
             return
-        other, _ = QFileDialog.getOpenFileName(self, "Compare with image", "", "Disk images (*.scp *.img *.imd *.dsk *.dmk *.d64 *.d71 *.d81 *.adf);;All files (*)")
+        other, _ = QFileDialog.getOpenFileName(self, "Compare with image", "", "Disk images (*.scp *.woz *.po *.do *.nib *.img *.imd *.dsk *.dmk *.d64 *.d71 *.d81 *.adf);;All files (*)")
         if not other:
             return
         self._run_cli(["compare", str(self.current_path), other])

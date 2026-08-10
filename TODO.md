@@ -33,6 +33,37 @@
 
 ## Filesystem Modelling
 
+- Expand Apple II support beyond standard 35-track 16-sector media. Add DOS
+  3.2 13-sector decoding, 40-track variants, protected/nonstandard WOZ track
+  handling, and WOZ/NIB writing only after bitstream fidelity and round-trip
+  expectations are defined. Current support reads WOZ1/WOZ2, NIB, PO, DO,
+  140K IMG, and Apple 6-and-2 SCP captures, with ProDOS and DOS 3.3 extraction.
+- Complete Apple II regression coverage with known-good, independently verified
+  fixtures. Locate or create the following images, retaining the original
+  preservation container and a trusted sector-image conversion where possible:
+  - A WOZ1 35-track, 16-sector disk with an ordinary readable filesystem.
+  - A standard 35-track `.nib` image and matching `.woz` or `.do`/`.po` image
+    so decoded sectors can be compared byte-for-byte.
+  - A real Apple DOS 3.3 disk in `.woz`, `.scp`, and `.do` form with several
+    extractable file types and known file contents.
+  - An Apple DOS 3.3 disk with multiple T/S-list sectors and a file large enough
+    to validate chained T/S lists and selected-file map overlays.
+  - A ProDOS disk with nested directories and known file contents.
+  - ProDOS disks containing seedling, sapling, tree, and extended files so each
+    storage type and data-fork path can be tested independently.
+  - A standard 140K Apple `.img` image with a matching `.po` or `.do` reference
+    to verify content-based sector-order detection.
+  - A DOS 3.2 13-sector disk in WOZ and, if available, SCP/NIB form for future
+    5-and-3 GCR decoder work.
+  - A genuine 40-track Apple II image to define and test nonstandard geometry.
+  - A copy-protected or otherwise nonstandard WOZ image with quarter-track or
+    weak/fake-bit behavior, plus emulator confirmation of expected behavior.
+  - A deliberately damaged Apple capture with known missing, weak, or bad
+    sectors for QC, partial extraction, and error-reporting tests.
+  Fluxctl can generate malformed/truncated WOZ, invalid CRC, missing-chunk, and
+  missing-sector negative fixtures locally; these do not need to be sourced
+  from original media.
+
 - Extend Tandy CP/M write support beyond uniform CP/M 2.2 flat `.img` images.
   Tandy CP/M 2.2 and CP/M Plus now have modelled DPBs for extraction and
   selected-file overlays, but CP/M Plus mixed-sector mutation needs a writer

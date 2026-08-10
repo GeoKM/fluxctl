@@ -79,6 +79,7 @@ Use these as the baseline known fixtures.
 | Commodore 1571 CP/M | `Commodore-1571-DSDD-MFM-C128CPM-340K.d71`, related `.scp`; `Commodore-1571-SSDD-MFM-C128CPM-170K.d64`, related `.scp` | CP/M detection, GCR/MFM expectations, root listing, export disabled, selected-file overlay limitations. |
 | Commodore 1581 CBM DOS | `Commodore-1581-DSDD-MFM-C64-800K.d81`, `.img`, `.scp` | 80-track MFM geometry, directory drill-down, 1581 BAM map, root-file import on `.d81`, copy-only gating on `.scp/.img` where applicable. |
 | Amiga OFS/FFS | `Commodore-1010-DSDD-MFM-Amiga-880K.adf`, `.img`, `.scp` | Amiga filesystem detection, directory drill-down, file/directory export, approximate selected-file overlay, mutation disabled. |
+| Apple II ProDOS 140K | `Apple-AppleII-SSDD-Apple6A2-ProDOSvb1a-140K.woz`, `.po`, `.scp` | All three identify 35 populated tracks, 16x256-byte sectors, ProDOS volume `/PRODOS`, the same three root entries, exact file extraction, and matching selected-file overlays. WOZ and SCP conversion to PO must be byte-identical. |
 | IBM DOS FAT12 | 180K, 360K, 720K, 1.2M, 1.44M `.img`, `.imd`, `.scp` fixtures | FAT12 detection, directory support where available, file export, flat `.img` mutation actions, decoded container write gating. |
 | IBM XDF OS/2 | `IBM-XDF-DSHD-MFM-OS2-1890K.scp` | 80-track DSHD MFM physical XDF layout; track 0 has 19x512 sectors, tracks 1-79 use 512/1024/2048/8192-byte sectors. Probe/QC should identify `ibm_xdf_1890k`; filesystem listing remains unsupported until logical XDF unpacking is implemented. |
 | IBM 8-inch FAT12 | `IBM-Generic-DSDD-MFM-IBMPC-1200K-B.scp`, `IBM-Generic-DSDD-MFM-IBMPC-1200K-C.scp`, known-bad 1.2M variants | Geometry mismatch tolerance, empty disk behavior, bad/unknown filesystem handling, need for known-good 1.15 MB fixtures. |
@@ -206,6 +207,7 @@ before the save-location dialog appears.
 | Amiga MFM `.scp` to raw | `.img` when the tester chooses raw sector image. | Output probes as Amiga OFS/FFS with `--layout amiga_mfm_880k`. |
 | Amiga MFM `.scp` to IMD | `.imd` remains available as a decoded-sector interchange target. | Studio warns that IMD does not preserve Amiga physical track encoding; regenerated IMD should QC good and list files, but ADF remains the recommended Amiga target. |
 | DisplayWriter FM `.scp/.imd` | `.imd` or raw as appropriate. | Mixed sector sizes are represented or rejected clearly. |
+| Apple II WOZ/NIB/SCP | `.po` or `.do` as selected. | PO is the default for ProDOS media; converting the supplied WOZ and SCP to PO produces identical 143,360-byte output. IMD is not offered. |
 
 Flag any conversion that silently chooses FAT12 for Commodore/Amiga media,
 does not offer an appropriate alternate target, loses head geometry, or reports

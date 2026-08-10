@@ -19,6 +19,7 @@ def test_filesystem_capabilities_documents_current_studio_media() -> None:
         "CBM DOS 1581 decoded `.scp`/`.imd`",
         "Amiga OFS/FFS `.adf`",
         "Amiga decoded `.scp`/`.imd`",
+        "Apple II 140K `.woz`/`.po`/`.do`/`.nib`/`.dsk`/`.img`/`.scp`",
         "CP/M variants",
         "Tandy/TRS-80 `.dsk`/`.dmk`/`.imd`/`.scp`",
         "DisplayWriter",

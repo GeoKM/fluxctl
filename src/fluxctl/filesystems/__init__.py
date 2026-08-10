@@ -147,6 +147,8 @@ def load_builtin_filesystems() -> List[PluginInfo]:
     from .trsdos import TRSDOS13Filesystem
     from .newdos80 import NEWDOS80Filesystem
     from .ldos import LDOSTRSDOS6Filesystem
+    from .prodos import ProDOSFilesystem
+    from .apple_dos import AppleDOS33Filesystem
 
     registry.register_filesystem(
         "fat12",
@@ -236,6 +238,24 @@ def load_builtin_filesystems() -> List[PluginInfo]:
             version="0.1",
             entry=LDOSTRSDOS6Filesystem(),
             description="TRS-80 LDOS 5.x and TRSDOS/LS-DOS 6.x filesystem",
+        ),
+    )
+    registry.register_filesystem(
+        "prodos",
+        PluginInfo(
+            name="Apple ProDOS Filesystem",
+            version="0.1",
+            entry=ProDOSFilesystem(),
+            description="Apple II ProDOS filesystem reader",
+        ),
+    )
+    registry.register_filesystem(
+        "apple_dos_3_3",
+        PluginInfo(
+            name="Apple DOS 3.3 Filesystem",
+            version="0.1",
+            entry=AppleDOS33Filesystem(),
+            description="Apple II DOS 3.3 VTOC and catalog reader",
         ),
     )
     registry.register_filesystem(

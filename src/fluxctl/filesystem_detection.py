@@ -50,6 +50,31 @@ def detect_filesystem(image, *, path_name: str = "") -> FilesystemDetection:
     layout = getattr(image, "layout", None)
     layout_id = getattr(layout, "layout_id", "") or ""
 
+    if layout_id.startswith("apple2_"):
+        prodos = registry.filesystem.get("prodos")
+        if prodos and prodos.entry.probe(image):
+            return FilesystemDetection(
+                primary="prodos",
+                confidence=0.99,
+                evidence=[f"layout={layout_id}", "prodos_volume_header=1"],
+                regions=[FilesystemRegion("disk", "prodos", ["ProDOS volume directory begins at block 2"])],
+                plugin=prodos.entry,
+            )
+        apple_dos = registry.filesystem.get("apple_dos_3_3")
+        if apple_dos and apple_dos.entry.probe(image):
+            return FilesystemDetection(
+                primary="apple_dos_3_3",
+                confidence=0.97,
+                evidence=[f"layout={layout_id}", "apple_dos_vtoc_catalog=1"],
+                regions=[FilesystemRegion("disk", "apple_dos_3_3", ["DOS 3.3 VTOC at track 17 sector 0"])],
+                plugin=apple_dos.entry,
+            )
+        return FilesystemDetection(
+            primary=None,
+            confidence=0.0,
+            evidence=[f"layout={layout_id}", "no_supported_apple2_filesystem_probe"],
+        )
+
     if layout_id.startswith("commodore_"):
         return _detect_commodore(image, layout_id)
 

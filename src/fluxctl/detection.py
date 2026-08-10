@@ -643,9 +643,11 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
     mfm_decoder = registry.encoding.get("mfm").entry if "mfm" in registry.encoding else None
     fm_decoder = registry.encoding.get("fm").entry if "fm" in registry.encoding else None
     gcr_decoder = registry.encoding.get("gcr").entry if "gcr" in registry.encoding else None
+    apple2_decoder = registry.encoding.get("apple2_gcr").entry if "apple2_gcr" in registry.encoding else None
     mfm_bits = _estimate_bitstream_length(image, mfm_decoder) if mfm_decoder else None
     mfm_conf = _average_confidence(mfm_decoder, image) if mfm_decoder else None
     gcr_conf = _average_confidence(gcr_decoder, image) if gcr_decoder else None
+    apple2_conf = _average_confidence(apple2_decoder, image) if apple2_decoder else None
     flux_median = _estimate_flux_median(image)
     mfm_geometry = _estimate_geometry(image, mfm_decoder) if mfm_decoder else {}
     fm_bits = _estimate_bitstream_length(image, fm_decoder) if fm_decoder else None
@@ -663,6 +665,18 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
     # scanning and is especially expensive on high-density synthetic captures.
     skip_gcr_geometry = strong_mfm_geometry
     gcr_geometry = {} if skip_gcr_geometry else (_estimate_geometry(image, gcr_decoder) if gcr_decoder else {})
+    apple2_geometry = (
+        _estimate_geometry(image, apple2_decoder)
+        if not skip_gcr_geometry and apple2_decoder is not None and (apple2_conf or 0.0) >= 0.25
+        else {}
+    )
+    apple2_track_samples = int(apple2_geometry.get("track_samples") or 0)
+    apple2_tracks_with_sectors = int(apple2_geometry.get("tracks_with_sectors") or 0)
+    strong_apple2_geometry = (
+        apple2_tracks_with_sectors >= 2
+        and apple2_geometry.get("sectors_per_track") == 16
+        and apple2_geometry.get("sector_size") == 256
+    )
     fm_ratio = None
     if fm_bits is not None and mfm_bits is not None and mfm_bits > 0:
         fm_ratio = fm_bits / mfm_bits
@@ -730,6 +744,34 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
             if geometry.get("track_samples") and geometry.get("tracks_with_sectors") == 0:
                 score -= 0.4
                 evidence.append("gcr_no_sectors_penalty=1")
+            if strong_apple2_geometry:
+                score -= 1.25
+                evidence.append("gcr_vs_apple2_geometry_penalty=1")
+        if desc.encoding == "apple2_gcr":
+            geometry = apple2_geometry
+            if apple2_track_samples and not apple2_tracks_with_sectors:
+                score -= 1.0
+                evidence.append("apple2_no_sectors_penalty=1")
+            if geometry.get("sectors_per_track") == 16:
+                score += 0.45
+                evidence.append("apple2_16_sector_match=1")
+            else:
+                score -= 0.3
+            if geometry.get("sector_size") == 256:
+                score += 0.3
+                evidence.append("apple2_256_byte_sector_match=1")
+            else:
+                score -= 0.2
+            if apple2_track_samples:
+                coverage = apple2_tracks_with_sectors / apple2_track_samples
+                score += 0.45 * coverage
+                evidence.append(f"apple2_sector_coverage={coverage:.2f}")
+            if apple2_conf is not None:
+                score += 0.4 * apple2_conf
+                evidence.append(f"apple2_conf={apple2_conf:.2f}")
+            if 34 <= logical_tracks <= 40 and desc.sides == 1:
+                score += 0.25
+                evidence.append("apple2_track_count_match=1")
         if desc.encoding == "mfm" and mfm_bits is not None:
             if logical_tracks <= 77 and desc.tracks >= 80:
                 adjusted_score = _apply_layout_hint(desc, hint, score, evidence)

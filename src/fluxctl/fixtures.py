@@ -10,7 +10,10 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence
 from fluxctl.exceptions import FluxctlError
 
 
-FIXTURE_EXTENSIONS: Sequence[str] = (".scp", ".img", ".imd", ".dsk", ".dmk", ".d64", ".d71", ".d81", ".adf")
+FIXTURE_EXTENSIONS: Sequence[str] = (
+    ".scp", ".img", ".imd", ".dsk", ".dmk", ".d64", ".d71", ".d81", ".adf",
+    ".woz", ".po", ".do", ".nib",
+)
 
 
 class FixtureDiscoveryError(FluxctlError):

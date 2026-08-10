@@ -18,6 +18,13 @@ from typing import Optional, Sequence
 import typer
 
 from . import __version__
+from .apple2 import (
+    APPLE2_DO_ORDER,
+    APPLE2_PO_ORDER,
+    Apple2SectorImage,
+    load_apple2_tracks,
+    tracks_from_apple2_sector_image,
+)
 from .decoding import load_builtin_decoders
 from .decoding.mfm import mfm_decoder
 from .detection import detect_encoding, detect_layout, infer_track_step, logical_track_count
@@ -425,7 +432,7 @@ def info(
     path: Path = typer.Argument(..., exists=True, readable=True),
     hxcfe: Optional[Path] = typer.Option(None, "--hxcfe", help="Path to an hxcfe binary for hints."),
 ) -> None:
-    """Print basic image information (SCP, IMG, ADF, D64, D71, D81, IMD, DSK/DMK)."""
+    """Print basic image information (SCP, WOZ, PO/DO/NIB, IMG, ADF, Commodore, IMD, DSK/DMK)."""
 
     load_builtin_decoders()
     load_builtin_layouts()
@@ -727,6 +734,12 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
     layout_desc = ensure_layout_loaded(layout_id) if layout_id else None
     ext = path.suffix.lower()
 
+    if ext in {".woz", ".po", ".do", ".nib"} or (
+        ext in {".img", ".dsk"} and layout_desc is not None and layout_desc.layout_id.startswith("apple2_")
+    ):
+        tracks, _metadata = load_apple2_tracks(path)
+        return Apple2SectorImage(tracks, layout_desc)
+
     if layout_desc and ext == ".d81" and layout_desc.layout_id == "commodore_mfm_1581_800k":
         from .exporters.d81 import d81_bytes_to_physical_tracks
 
@@ -766,6 +779,8 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
             _apply_layout_geometry(image, layout_desc)
             return image
         track_data = _decode_tracks(path, layout_id, encoding=encoding)
+        if layout_desc and layout_desc.layout_id.startswith("apple2_"):
+            return Apple2SectorImage(track_data, layout_desc)
         image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size if layout_desc else None)
         if layout_desc:
             image.layout = layout_desc
@@ -809,6 +824,10 @@ def _decode_amiga_tracks(path: Path, layout: LayoutDescriptor) -> list[TrackSect
 
 
 FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
+    ".woz": ("apple2_gcr_nofs_140_140k",),
+    ".po": ("apple2_gcr_nofs_140_140k",),
+    ".do": ("apple2_gcr_nofs_140_140k",),
+    ".nib": ("apple2_gcr_nofs_140_140k",),
     ".d64": ("commodore_gcr_1541_170k", "commodore_gcr_1541_cpm_170k"),
     ".d71": ("commodore_gcr_1571_341k",),
     ".d81": ("commodore_mfm_1581_800k",),
@@ -832,6 +851,7 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
         "ibm_mfm_1440k",
     ),
     ".dsk": (
+        "apple2_gcr_nofs_140_140k",
         "tandy_mfm_cpmplus_156k",
         "tandy_mfm_ssdd_180k",
         "tandy_mfm_ssdd_180k_s0",
@@ -842,6 +862,7 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
         "tandy_mfm_ssdd_180k_s0",
     ),
     ".img": (
+        "apple2_gcr_nofs_140_140k",
         "dec_fm_rx01_250k",
         "tandy_mfm_ssdd_180k",
         "kaypro_mfm_ssdd_40_200k",
@@ -865,6 +886,7 @@ SECTOR_SIZE_TO_CODE = {128: 0, 256: 1, 512: 2, 1024: 3, 2048: 4, 4096: 5}
 
 # Last-resort hints when filesystem probes fail but layout strongly suggests one.
 LAYOUT_FILESYSTEM_HINTS: dict[str, str] = {
+    "apple2_gcr_nofs_140_140k": "prodos",
     "generic_mfm_8inch_500k": "rt11",
     "dec_dec_rx02_rx02_250k": "rt11",
     "ibm_displaywriter_fm_284k": "displaywriter",
@@ -894,7 +916,9 @@ def _flat_layout_candidates(extension: str) -> list[LayoutDescriptor]:
         if layout:
             order.append(layout)
             seen.add(layout.layout_id)
-    if extension in {".d64", ".d71"}:
+    if extension in {".woz", ".po", ".do", ".nib"}:
+        extras = [layout for layout in registry.layout.values() if layout.layout_id.startswith("apple2_")]
+    elif extension in {".d64", ".d71"}:
         extras = [layout for layout in registry.layout.values() if layout.encoding == "gcr" and layout.sector_size == 256]
     elif extension in {".d81", ".adf"}:
         extras = [layout for layout in registry.layout.values() if layout.encoding == "mfm" and layout.sector_size == 512]
@@ -1279,6 +1303,54 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
     imd_geom = None
     imd_image = None
     imd_filesystem_name = None
+    if ext in {".woz", ".po", ".do", ".nib"}:
+        layout = registry.layout.get("apple2_gcr_nofs_140_140k")
+        if layout is None:
+            return []
+        tracks, metadata = load_apple2_tracks(path)
+        image_obj = Apple2SectorImage(tracks, layout)
+        fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+        good = sum(1 for ts in tracks for sector in ts.sectors if sector.data and sector.crc_ok)
+        total = layout.tracks * layout.sectors_per_track
+        return [
+            CandidateFormat(
+                candidate_id=layout.layout_id,
+                encoding=layout.encoding,
+                layout_id=layout.layout_id,
+                filesystem=fs_name,
+                score=good / total if total else 0.0,
+                evidence=[
+                    f"format={metadata.get('format', ext.lstrip('.'))}",
+                    f"size={path.stat().st_size}",
+                    f"decoded_sectors={good}/{total}",
+                    f"layout={layout.layout_id}",
+                    *fs_evidence,
+                ],
+            )
+        ]
+    if ext == ".dsk" and path.stat().st_size == 143_360:
+        layout = registry.layout.get("apple2_gcr_nofs_140_140k")
+        if layout is not None:
+            for order_name, order in (("po", APPLE2_PO_ORDER), ("do", APPLE2_DO_ORDER)):
+                tracks = tracks_from_apple2_sector_image(path.read_bytes(), order)
+                image_obj = Apple2SectorImage(tracks, layout)
+                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+                if fs_name in {"prodos", "apple_dos_3_3"}:
+                    return [
+                        CandidateFormat(
+                            candidate_id=layout.layout_id,
+                            encoding=layout.encoding,
+                            layout_id=layout.layout_id,
+                            filesystem=fs_name,
+                            score=1.0,
+                            evidence=[
+                                "format=apple2_dsk",
+                                f"size={path.stat().st_size}",
+                                f"apple2_sector_order={order_name}",
+                                *fs_evidence,
+                            ],
+                        )
+                    ]
     if ext == ".imd":
         imd_tracks, imd_geom, imd_meta = load_imd_image(path)
         imd_image = TrackSectorImage(imd_tracks)
@@ -1325,6 +1397,28 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
         data_bytes = path.read_bytes()
         size = len(data_bytes)
         evidence = [f"size={size}"]
+
+    if ext == ".img" and len(data_bytes) == 143360:
+        layout = registry.layout.get("apple2_gcr_nofs_140_140k")
+        if layout is not None:
+            for order_name, order in (("po", APPLE2_PO_ORDER), ("do", APPLE2_DO_ORDER)):
+                try:
+                    tracks = tracks_from_apple2_sector_image(data_bytes, order)
+                    image_obj = Apple2SectorImage(tracks, layout)
+                    fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+                except Exception:
+                    continue
+                if fs_name in {"prodos", "apple_dos_3_3"}:
+                    return [
+                        CandidateFormat(
+                            candidate_id=layout.layout_id,
+                            encoding=layout.encoding,
+                            layout_id=layout.layout_id,
+                            filesystem=fs_name,
+                            score=1.0,
+                            evidence=evidence + [f"apple2_sector_order={order_name}", *fs_evidence],
+                        )
+                    ]
 
     if ext == ".img" and "displaywriter" in path.stem.lower():
         lid = "ibm_displaywriter_fm_284k"
@@ -1548,7 +1642,11 @@ def _prepare_convert_payload(path: Path, to: str, layout: Optional[str], encodin
                 track_data, track_nibbles = decode_result
             else:
                 track_data = decode_result
-        image_obj = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size if layout_desc else None)
+        image_obj = (
+            Apple2SectorImage(track_data, layout_desc)
+            if layout_desc and layout_desc.layout_id.startswith("apple2_")
+            else TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size if layout_desc else None)
+        )
         if track_nibbles:
             image_obj.tracks_nibbles = track_nibbles
         if layout_desc:
@@ -1564,9 +1662,22 @@ def _prepare_convert_payload(path: Path, to: str, layout: Optional[str], encodin
                 layout_desc.sides,
                 int(layout_desc.id_rules.get("sector_number_base", 1)),
             )
+    elif path.suffix.lower() in {".woz", ".po", ".do", ".nib"}:
+        if layout_desc is None:
+            layout_desc = ensure_layout_loaded("apple2_gcr_nofs_140_140k")
+            decoder_used = layout_desc.encoding
+        track_data, _metadata = load_apple2_tracks(path)
+        image_obj = Apple2SectorImage(track_data, layout_desc)
     elif path.suffix.lower() == ".imd":
         track_data, imd_geom, _meta = load_imd_image(path)
         image_obj = _image_from_tracks(track_data, imd_geom, layout_desc)
+    elif (
+        path.suffix.lower() == ".dsk"
+        and layout_desc is not None
+        and layout_desc.layout_id.startswith("apple2_")
+    ):
+        track_data, _metadata = load_apple2_tracks(path)
+        image_obj = Apple2SectorImage(track_data, layout_desc)
     elif path.suffix.lower() in {".dsk", ".dmk"}:
         track_data, trs_geom, _meta = load_trs80_image(path)
         image_obj = _image_from_tracks(track_data, trs_geom, layout_desc)
@@ -1607,6 +1718,8 @@ def _infer_roundtrip_back_exporter(path: Path) -> str:
         return "raw"
     if suffix in {".adf", ".d64", ".d71", ".g64"}:
         return suffix.lstrip(".")
+    if suffix in {".po", ".do"}:
+        return suffix.lstrip(".")
     if suffix == ".d81":
         return "raw"
     return "raw"
@@ -1626,8 +1739,8 @@ def compare(
     b: Path = typer.Argument(..., exists=True, readable=True),
     layout_a: Optional[str] = typer.Option(None, "--layout-a", help="Layout ID for decoding input A (SCP only)"),
     layout_b: Optional[str] = typer.Option(None, "--layout-b", help="Layout ID for decoding input B (SCP only)"),
-    encoding_a: str = typer.Option("auto", "--encoding-a", help="Encoding for input A (mfm, fm, gcr, auto for SCP)"),
-    encoding_b: str = typer.Option("auto", "--encoding-b", help="Encoding for input B (mfm, fm, gcr, auto for SCP)"),
+    encoding_a: str = typer.Option("auto", "--encoding-a", help="Encoding for input A (mfm, fm, gcr, apple2_gcr, auto for SCP)"),
+    encoding_b: str = typer.Option("auto", "--encoding-b", help="Encoding for input B (mfm, fm, gcr, apple2_gcr, auto for SCP)"),
     json_out: Optional[Path] = typer.Option(None, "--json-out", help="Write compare report to JSON"),
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar for --json-out"),
 ):
@@ -1710,7 +1823,7 @@ def sectors(
     path: Path = typer.Argument(..., exists=True, readable=True),
     track: int = typer.Option(0, "--track", help="Cylinder index"),
     head: int = typer.Option(0, "--head", help="Head index"),
-    encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding (mfm, fm, gcr)"),
+    encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding (mfm, fm, gcr, apple2_gcr)"),
 ):
     """Decode a specific track/head and list reconstructed sectors."""
 
@@ -1889,7 +2002,7 @@ def visualize(
     path: Path = typer.Argument(..., exists=True, readable=True),
     format: str = typer.Option("ascii", "--format", help="Output format: ascii or svg"),
     out: Optional[Path] = typer.Option(None, "--out", help="Write output to a file"),
-    encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding (mfm, fm, gcr)"),
+    encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding (mfm, fm, gcr, apple2_gcr)"),
     layout: Optional[str] = typer.Option(None, "--layout", help="Layout identifier for flat images"),
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar path"),
 ):
