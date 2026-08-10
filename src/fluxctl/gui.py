@@ -1633,11 +1633,11 @@ class FluxctlStudio(QMainWindow):
         self.file_volume_label.setText(volume_text)
         if not entries:
             self.files_table.setRowCount(1)
-            self.files_table.setItem(0, 0, QTableWidgetItem(f"No filesystem entries found in {self.file_browser_path}"))
+            self.files_table.setItem(0, 0, QTableWidgetItem(f"No cataloged filesystem entries found in {self.file_browser_path}"))
             self.files_table.setItem(0, 1, QTableWidgetItem("-"))
             self.files_table.setItem(0, 2, QTableWidgetItem("-"))
             self._clear_file_map_highlight()
-            self.activity_label.setText(f"No supported filesystem entries were found in {self.file_browser_path}.")
+            self.activity_label.setText(f"The detected filesystem has no cataloged entries in {self.file_browser_path}.")
             self._append_log(f"Listed 0 filesystem entries in {self.file_browser_path}")
             return
         self.files_table.setRowCount(len(entries))

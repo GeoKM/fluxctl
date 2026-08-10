@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from ..apple2 import APPLE2_SECTORS, APPLE2_TRACKS, Apple2SectorImage
+from ..apple2 import APPLE2_DO_ORDER, APPLE2_SECTORS, APPLE2_TRACKS, Apple2SectorImage
 from ..exceptions import FilesystemError
 from . import FileEntry, SectorImage
 
@@ -32,7 +32,7 @@ class AppleDOS33Filesystem:
         if self.image is None:
             return False
         try:
-            vtoc = self.image.read_physical_sector(17, 0)
+            vtoc = self._read_dos_sector(17, 0)
         except Exception:
             return False
         catalog_track, catalog_sector = vtoc[1], vtoc[2]
@@ -72,21 +72,29 @@ class AppleDOS33Filesystem:
         assert self.image is not None
         payload = bytearray()
         for track, sector in self._file_data_sectors(entry):
-            payload.extend(self.image.read_physical_sector(track, sector))
+            payload.extend(self._read_dos_sector(track, sector))
         return bytes(payload)
 
     def file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
         entry = self._entry(path)
-        addresses = {(track, 0, sector) for track, sector in self._file_data_sectors(entry)}
-        addresses.update((track, 0, sector) for track, sector in self._ts_list_sectors(entry))
+        addresses = {
+            (track, 0, APPLE2_DO_ORDER[sector])
+            for track, sector in self._file_data_sectors(entry)
+        }
+        addresses.update(
+            (track, 0, APPLE2_DO_ORDER[sector])
+            for track, sector in self._ts_list_sectors(entry)
+        )
         return addresses
 
     def metadata(self) -> dict[str, object]:
+        catalog_entries = len(self._catalog_entries()) if self.image is not None else 0
         return {
             "filesystem": "apple_dos_3_3",
             "volume_number": self.volume_number,
             "catalog_track": self.catalog_track,
             "catalog_sector": self.catalog_sector,
+            "catalog_entries": catalog_entries,
             "sector_size": 256,
         }
 
@@ -107,7 +115,7 @@ class AppleDOS33Filesystem:
             if address in seen or track >= APPLE2_TRACKS or sector >= APPLE2_SECTORS:
                 raise FilesystemError("Apple DOS catalog chain is invalid")
             seen.add(address)
-            data = self.image.read_physical_sector(track, sector)
+            data = self._read_dos_sector(track, sector)
             for slot in range(7):
                 offset = 0x0B + slot * 35
                 ts_track, ts_sector = data[offset], data[offset + 1]
@@ -140,7 +148,7 @@ class AppleDOS33Filesystem:
                 raise FilesystemError(f"Apple DOS T/S list for '{entry.name}' is invalid")
             seen.add(address)
             result.append(address)
-            data = self.image.read_physical_sector(track, sector)
+            data = self._read_dos_sector(track, sector)
             track, sector = data[1], data[2]
         return result
 
@@ -148,7 +156,7 @@ class AppleDOS33Filesystem:
         assert self.image is not None
         result: list[tuple[int, int]] = []
         for track, sector in self._ts_list_sectors(entry):
-            data = self.image.read_physical_sector(track, sector)
+            data = self._read_dos_sector(track, sector)
             for offset in range(0x0C, 0x100, 2):
                 data_track, data_sector = data[offset], data[offset + 1]
                 if data_track == 0:
@@ -157,6 +165,12 @@ class AppleDOS33Filesystem:
                     raise FilesystemError(f"Apple DOS file '{entry.name}' has an invalid sector address")
                 result.append((data_track, data_sector))
         return result
+
+    def _read_dos_sector(self, track: int, logical_sector: int) -> bytes:
+        assert self.image is not None
+        if not 0 <= logical_sector < APPLE2_SECTORS:
+            raise FilesystemError(f"Apple DOS logical sector {logical_sector} is invalid")
+        return self.image.read_physical_sector(track, APPLE2_DO_ORDER[logical_sector])
 
 
 __all__ = ["AppleDOS33Filesystem"]

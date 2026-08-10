@@ -31,6 +31,9 @@ FIXTURE_STEM = "Apple-AppleII-SSDD-Apple6A2-ProDOSvb1a-140K"
 FIXTURE_WOZ = FIXTURE_ROOT / f"{FIXTURE_STEM}.woz"
 FIXTURE_SCP = FIXTURE_ROOT / f"{FIXTURE_STEM}.scp"
 FIXTURE_PO = FIXTURE_ROOT / f"{FIXTURE_STEM}.po"
+FIXTURE_DOS33_PROTECTED = (
+    FIXTURE_ROOT / "Apple-AppleII-SSDD-Apple6A2-AppleDOS-boulderdashii-140K.woz"
+)
 EXPECTED_PO_SHA256 = "c35c8e558b557558721601d6ca38ed1123d99dd046b49b5e78167a26aeb6a0de"
 
 
@@ -129,14 +132,14 @@ def test_apple_dos_33_catalog_extract_and_overlay(tmp_path: Path) -> None:
     vtoc[1:3] = bytes((17, 15))
     vtoc[6] = 254
     vtoc[0x34:0x38] = bytes((35, 16, 0, 1))
-    catalog = physical_sector(17, 15)
+    catalog = physical_sector(17, APPLE2_DO_ORDER[15])
     entry_offset = 0x0B
     catalog[entry_offset : entry_offset + 3] = bytes((17, 14, 0x04))
     catalog[entry_offset + 3 : entry_offset + 33] = bytes(
         byte | 0x80 for byte in b"HELLO".ljust(30)
     )
     catalog[entry_offset + 33 : entry_offset + 35] = (2).to_bytes(2, "little")
-    ts_list = physical_sector(17, 14)
+    ts_list = physical_sector(17, APPLE2_DO_ORDER[14])
     ts_list[0x0C:0x0E] = bytes((18, 0))
     physical_sector(18, 0)[:11] = b"HELLO APPLE"
 
@@ -146,7 +149,7 @@ def test_apple_dos_33_catalog_extract_and_overlay(tmp_path: Path) -> None:
     assert filesystem.probe(image)
     assert [(entry.name, entry.size) for entry in filesystem.list_directory()] == [("HELLO", 256)]
     assert filesystem.extract_file("/HELLO").startswith(b"HELLO APPLE")
-    assert filesystem.file_sector_addresses("/HELLO") == {(17, 0, 14), (18, 0, 0)}
+    assert filesystem.file_sector_addresses("/HELLO") == {(17, 0, 2), (18, 0, 0)}
 
     dsk_path = tmp_path / "dos33.dsk"
     dsk_path.write_bytes(payload)
@@ -162,3 +165,30 @@ def test_apple_dsk_container_is_content_detected_as_prodos(tmp_path: Path) -> No
     summary = services.summarize_image(dsk_path)
     assert summary.layout_id == "apple2_gcr_nofs_140_140k"
     assert summary.filesystem == "prodos"
+
+
+def test_copy_protected_apple_dos_disk_reports_empty_catalog_without_losing_geometry() -> None:
+    image = parse_woz(FIXTURE_DOS33_PROTECTED)
+    assert len(image.tracks) == 35
+    assert sum(len(track.sectors) for track in image.tracks) == 544
+    assert next(track for track in image.tracks if track.track == 6).missing == 16
+
+    filesystem = AppleDOS33Filesystem()
+    assert filesystem.probe(Apple2SectorImage(image.tracks))
+    assert filesystem.list_directory("/") == []
+    assert filesystem.metadata() == {
+        "filesystem": "apple_dos_3_3",
+        "volume_number": 254,
+        "catalog_track": 17,
+        "catalog_sector": 15,
+        "catalog_entries": 0,
+        "sector_size": 256,
+    }
+
+    summary = services.summarize_image(FIXTURE_DOS33_PROTECTED)
+    assert summary.filesystem == "apple_dos_3_3"
+    listing = services.list_files_with_info(
+        FIXTURE_DOS33_PROTECTED, summary.layout_id, summary.encoding
+    )
+    assert listing.entries == []
+    assert listing.volume_text == "Apple DOS 3.3  Volume: 254  empty catalog"

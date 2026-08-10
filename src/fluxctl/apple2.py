@@ -215,12 +215,10 @@ def parse_woz(path: Path) -> WOZImage:
     cleaned = bool(info[4]) if len(info) > 4 else False
     metadata = _parse_woz_metadata(chunks.get(b"META", b""))
     decoded: list[TrackSectors] = []
-    seen_descriptors: set[int] = set()
     for cylinder in range(APPLE2_TRACKS):
         descriptor = tmap[cylinder * 4]
-        if descriptor == 0xFF or descriptor in seen_descriptors:
+        if descriptor == 0xFF:
             continue
-        seen_descriptors.add(descriptor)
         bits = _woz_track_bits(data, trks, version, descriptor)
         decoded.append(decode_apple2_bitstream(bits, cylinder=cylinder))
     if not decoded:
