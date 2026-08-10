@@ -485,30 +485,36 @@ def test_left_panel_runs_greaseweazle_read_to_scp(monkeypatch, tmp_path) -> None
     assert captured["kwargs"]["revs"] == 2
     assert captured["probed"] is True
     assert window.current_path == tmp_path / "capture.scp"
+    assert window.main_tabs.currentIndex() == window.jobs_tab_index
 
     window.close()
 
 
-def test_simple_mode_can_hide_and_restore_disk_map() -> None:
+def test_studio_uses_five_top_level_workflow_tabs() -> None:
     window = FluxctlStudio()
 
-    assert window.map_panel_visible
+    assert [window.main_tabs.tabText(index) for index in range(window.main_tabs.count())] == [
+        "Disk && Imaging",
+        "Files && Directories",
+        "HEX && ASCII",
+        "Advanced",
+        "Jobs && Logs",
+    ]
+    assert window.main_tabs.currentIndex() == window.disk_tab_index
+    assert not window.main_tabs.isTabEnabled(window.advanced_tab_index)
+    assert window.main_tabs.isTabEnabled(window.jobs_tab_index)
     assert not window.map_canvas_panel.isHidden()
-    assert window.map_toggle_button.text() == "Hide Disk Map"
 
-    window.toggle_disk_map_panel()
+    window.mode.setCurrentIndex(1)
 
-    assert not window.map_panel_visible
-    assert window.map_canvas_panel.isHidden()
-    assert window.map_toggle_button.text() == "Show Disk Map"
-    assert "Show the disk map" in window.map_toggle_button.toolTip()
+    assert window.main_tabs.isTabEnabled(window.advanced_tab_index)
+    assert window.hex_mode_stack.currentWidget() == window.advanced_hex_panel
 
-    window.toggle_disk_map_panel()
+    window.main_tabs.setCurrentIndex(window.advanced_tab_index)
+    window.mode.setCurrentIndex(0)
 
-    assert window.map_panel_visible
-    assert not window.map_canvas_panel.isHidden()
-    assert window.map_toggle_button.text() == "Hide Disk Map"
-    assert "expand the Files" in window.map_toggle_button.toolTip()
+    assert window.main_tabs.currentIndex() == window.disk_tab_index
+    assert window.hex_mode_stack.currentWidget() == window.hex_panel
     window.close()
 
 
@@ -528,9 +534,10 @@ def test_simple_mode_uses_sidebar_summary_and_larger_file_area() -> None:
 
     assert window.sidebar.minimumWidth() >= 340
     assert window.summary_labels["layout"].text() == "-"
-    assert window.lower_tabs.minimumHeight() >= 380
     assert window.files_table.minimumHeight() >= 340
-    assert window._map_panel_sizes[1] > window._map_panel_sizes[0]
+    assert window.main_tabs.widget(window.files_tab_index) == window.file_panel
+    assert window.main_tabs.widget(window.hex_tab_index) == window.hex_page
+    assert window.main_tabs.widget(window.jobs_tab_index) == window.jobs_page
     window.close()
 
 
@@ -753,12 +760,13 @@ def test_file_panel_selected_file_hex_updates_hex_tab() -> None:
     entries = [services.FileEntryView("README.TXT", "file", 42, "/README.TXT", False)]
     window._show_files(entries)
     window.files_table.setCurrentCell(0, 0)
-    window.lower_tabs.setCurrentWidget(window.file_panel)
+    window.main_tabs.setCurrentIndex(window.files_tab_index)
 
     window._show_hex_dump(services.HexDumpView("File /README.TXT", 5, services.format_hex_dump(b"HELLO")))
 
     assert window._selected_file_entry_path() == ("/README.TXT", False)
-    assert window.lower_tabs.currentWidget() == window.hex_panel
+    assert window.main_tabs.currentIndex() == window.hex_tab_index
+    assert window.hex_mode_stack.currentWidget() == window.hex_panel
     assert "File /README.TXT" in window.hex_title_label.text()
     assert "48 45 4C 4C 4F" in window.hex_text.toPlainText()
     window.close()
@@ -806,6 +814,7 @@ def test_file_panel_export_result_updates_activity() -> None:
 
 def test_advanced_command_result_updates_output_panel() -> None:
     window = FluxctlStudio()
+    window.mode.setCurrentIndex(1)
     window._show_advanced_hex_dump(services.HexDumpView("Sector T0 H0 S1", 1, "00000000  00  |.|"))
 
     window._show_command_result(
@@ -816,11 +825,13 @@ def test_advanced_command_result_updates_output_panel() -> None:
     assert "$ info disk.img" in window.advanced_output.toPlainText()
     assert "Filesystem: fat12" in window.advanced_output.toPlainText()
     assert "Filesystem: fat12" in window.log.toPlainText()
+    assert window.main_tabs.currentIndex() == window.advanced_tab_index
     window.close()
 
 
 def test_advanced_sector_report_updates_output_panel() -> None:
     window = FluxctlStudio()
+    window.mode.setCurrentIndex(1)
     window._show_advanced_hex_dump(services.HexDumpView("Sector T0 H0 S1", 1, "00000000  00  |.|"))
 
     window._show_text_view(services.TextView("Sectors T0 H0", "Track 0 head 0: 9 sectors"))
@@ -829,15 +840,18 @@ def test_advanced_sector_report_updates_output_panel() -> None:
     assert window.activity_label.text() == "Loaded Sectors T0 H0."
     assert "Track 0 head 0" in window.advanced_output.toPlainText()
     assert "Track 0 head 0" in window.log.toPlainText()
+    assert window.main_tabs.currentIndex() == window.advanced_tab_index
     window.close()
 
 
 def test_advanced_dump_hex_updates_hex_panel() -> None:
     window = FluxctlStudio()
+    window.mode.setCurrentIndex(1)
 
     window._show_advanced_hex_dump(services.HexDumpView("Sector T0 H0 S1", 5, services.format_hex_dump(b"HELLO")))
 
-    assert window.advanced_detail_stack.currentWidget() != window.advanced_output
+    assert window.main_tabs.currentIndex() == window.hex_tab_index
+    assert window.hex_mode_stack.currentWidget() == window.advanced_hex_panel
     assert "Sector T0 H0 S1" in window.advanced_hex_title_label.text()
     assert "48 45 4C 4C 4F" in window.advanced_hex_text.toPlainText()
     assert "Loaded hex view for Sector T0 H0 S1" in window.activity_label.text()
@@ -978,6 +992,7 @@ def test_advanced_panel_shows_doctor_summary_without_image() -> None:
 
 def test_advanced_panel_populates_from_loaded_image_summary() -> None:
     window = FluxctlStudio()
+    window.mode.setCurrentIndex(1)
     summary = services.ImageSummary(
         path=str(FIXTURE_IMG),
         size=FIXTURE_IMG.stat().st_size,
@@ -1010,6 +1025,7 @@ def test_advanced_panel_populates_from_loaded_image_summary() -> None:
 
 def test_advanced_dump_file_mode_loads_file_hex(monkeypatch) -> None:
     window = FluxctlStudio()
+    window.mode.setCurrentIndex(1)
     window.current_path = FIXTURE_IMG
     window.current_summary = services.ImageSummary(
         path=str(FIXTURE_IMG),
@@ -1036,7 +1052,8 @@ def test_advanced_dump_file_mode_loads_file_hex(monkeypatch) -> None:
 
     assert "File /AUTOEXEC.BAT" in window.advanced_hex_title_label.text()
     assert "48 45 4C 4C 4F" in window.advanced_hex_text.toPlainText()
-    assert window.advanced_detail_stack.currentWidget() != window.advanced_output
+    assert window.main_tabs.currentIndex() == window.hex_tab_index
+    assert window.hex_mode_stack.currentWidget() == window.advanced_hex_panel
     window.close()
 
 

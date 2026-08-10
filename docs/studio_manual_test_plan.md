@@ -34,7 +34,8 @@ Run these once at the start of a session.
 | Startup | Launch Studio with no image loaded. | Simple mode starts without a crash. Image-specific panels are blank or neutral. | Old image data is visible, controls imply an image is loaded, or Python exits unexpectedly. |
 | Open image | Open any known-good `.img`, `.d64`, `.d71`, `.d81`, `.adf`, `.scp`, and `.imd`. | Path updates, old file list clears, summary fields refresh, status becomes ready/good/suspect as appropriate. | Previous image files remain listed, stale map remains, or summary fields disagree with the opened image. |
 | Mode switch | Switch between Simple Mode and Advanced Mode with and without an image loaded. | No data loss; Advanced fields match current image when loaded and stay blank when not loaded. | Buttons do nothing silently, fields show stale values, or lower panel does not match selected mode/action. |
-| Hide map | Toggle Hide Disk Map and show it again. | Lower Files/Hex/Jobs area expands and returns cleanly. | Layout overlaps, file table becomes unusable, or map state is lost unexpectedly. |
+| Top-level tabs | Visit Disk & Imaging, Files & Directories, HEX & ASCII, Advanced, and Jobs & Logs. | Each workflow has a full-size page; Advanced is disabled in Simple Mode and enabled in Advanced Mode. | Content remains cramped, a tab is blank, or Advanced is selectable in Simple Mode. |
+| Action routing | List files, view file/sector HEX, run Advanced Info/Sectors, and run a Greaseweazle read. | Each action selects its relevant Files, HEX, Advanced, or Jobs tab without losing the loaded image. | Results appear only on a hidden tab, the wrong tab opens, or prior results are cleared unexpectedly. |
 | Disabled actions | Open unsupported media for write actions, such as `.scp`, `.imd`, `.adf`, CP/M, DisplayWriter, or RT-11. | Unsupported buttons are greyed out and tooltips explain why. | Disabled buttons look active, enabled buttons fail immediately, or tooltip text is stale. |
 
 ## Probe, QC, and Map Views
@@ -242,10 +243,10 @@ cannot be probed/listed.
 | --- | --- | --- |
 | Initial state | Enter Advanced Mode with no image. | Top panel blank; lower panel shows doctor summary only. |
 | Loaded image | Enter Advanced Mode after opening an image. | Top panel fields match current image and defaults are sensible. |
-| Info | Press Info. | Lower panel returns to text/detail view. |
-| Sectors | Change sector fields and press Sectors/Dump. | Sector list/dump reflects selected address. |
+| Info | Press Info. | The Advanced tab opens and shows the text/detail view. |
+| Sectors | Change sector fields and press Sectors. | The Advanced tab opens and shows the selected track/head sector list. |
 | File path chooser | Use the dropdown to traverse directories and select files. | File path is valid and action mode follows selected file. |
-| Dump mode switch | Toggle Sector Dump and Selected File Dump. | Dump applies to the chosen target only. |
+| Dump mode switch | Toggle Sector Dump and Selected File Dump. | Dump applies to the chosen target only and opens the editable HEX & ASCII tab. |
 
 ## Visual and Usability Review
 
