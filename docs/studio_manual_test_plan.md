@@ -83,7 +83,8 @@ Use these as the baseline known fixtures.
 | IBM XDF OS/2 | `IBM-XDF-DSHD-MFM-OS2-1890K.scp` | 80-track DSHD MFM physical XDF layout; track 0 has 19x512 sectors, tracks 1-79 use 512/1024/2048/8192-byte sectors. Probe/QC should identify `ibm_xdf_1890k`; filesystem listing remains unsupported until logical XDF unpacking is implemented. |
 | IBM 8-inch FAT12 | `IBM-Generic-DSDD-MFM-IBMPC-1200K-B.scp`, `IBM-Generic-DSDD-MFM-IBMPC-1200K-C.scp`, known-bad 1.2M variants | Geometry mismatch tolerance, empty disk behavior, bad/unknown filesystem handling, need for known-good 1.15 MB fixtures. |
 | IBM DisplayWriter | `IBM-6580-SSDD-FM-DisplayWriter-284K.scp`, `.imd`, `.img` | Mixed FM geometry, standard-label entries, document extraction disabled with a clear message. |
-| DEC RT-11 | `DEC-RX02-DSDD-MFM-RT11-500K.scp`, `.imd`, `.img` | Probe metadata, no listing/export claims, clear unsupported behavior. |
+| DEC RT-11 RX02 | `DEC-RX02-DSDD-MFM-RT11-500K.scp`, `.imd`, `.img` | Probe metadata, no listing/export claims, clear unsupported behavior. |
+| DEC RT-11 Interchange RX01 | `DEC-RX01-SSSD-FM-RT11_IDF-250K.scp`, `.imd`, `.img` | Probe as 77-track, one-sided, 26 x 128-byte FM RX01 media. Export nonempty `HDR1` datasets as fixed-length EBCDIC record streams. This fixture's `DATA` label is empty, so verify the separately named `DATA.RESIDUAL.RAW` forensic export and its JSON missing-sector manifest. |
 
 ## Files Panel and Directory Workflows
 

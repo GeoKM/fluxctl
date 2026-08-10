@@ -20,6 +20,7 @@ FIXTURE_DIR_2880K_IMD = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSED-MFM-IB
 FIXTURE_CPM_340K = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C128CPM-340K.scp")
 FIXTURE_CPM_170K = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-SSDD-GCR-C128CPM-170K.scp")
 FIXTURE_8IN_500K = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM-RT11-500K.scp")
+FIXTURE_RX01_INTERCHANGE_SCP = Path("tests/fixtures/8inch/DEC/DEC-RX01-SSSD-FM-RT11_IDF-250K.scp")
 FIXTURE_8IN_1200K = Path("tests/fixtures/8inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-1200K.scp")
 FIXTURE_8IN_FM_284K = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWriter-284K.scp")
 FIXTURE_AMIGA_880K = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.scp")
@@ -29,11 +30,13 @@ FIXTURE_DISK_DISECTOR_D64 = Path("tests/fixtures/5.25inch/Commodore/0008-DISC001
 FIXTURE_IMG_720K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.img")
 FIXTURE_ADF = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.adf")
 FIXTURE_IMD_RX02 = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM-RT11-500K.imd")
+FIXTURE_RX01_INTERCHANGE_IMD = Path("tests/fixtures/8inch/DEC/DEC-RX01-SSSD-FM-RT11_IDF-250K.imd")
 FIXTURE_IMD_8IN_1200K = Path("tests/fixtures/8inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-1200K.imd")
 FIXTURE_IMD_180K = Path("tests/fixtures/5.25inch/IBM/IBM-Generic-SSDD-MFM-IBMPC-180K.imd")
 FIXTURE_IMD_DISPLAYWRITER = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWriter-284K.imd")
 FIXTURE_IMD_1440K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSHD-MFM-IBMPC-1440K.imd")
 FIXTURE_RX02_IMG = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM-RT11-500K.img")
+FIXTURE_RX01_INTERCHANGE_IMG = Path("tests/fixtures/8inch/DEC/DEC-RX01-SSSD-FM-RT11_IDF-250K.img")
 FIXTURE_RX02_IMG_GENERIC = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM.img")
 FIXTURE_DISPLAYWRITER_IMG = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWriter-284K.img")
 FIXTURE_D64_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64CPM-170K.d64")
@@ -348,6 +351,21 @@ def test_probe_supports_imd_rx02() -> None:
     payload = json.loads(result.stdout)
     assert payload[0]["layout_id"] == "generic_mfm_8inch_500k"
     assert payload[0]["filesystem"] == "rt11"
+
+
+def test_probe_supports_rx01_rt11_interchange_in_all_fixture_containers() -> None:
+    runner = CliRunner()
+    for fixture in (
+        FIXTURE_RX01_INTERCHANGE_SCP,
+        FIXTURE_RX01_INTERCHANGE_IMG,
+        FIXTURE_RX01_INTERCHANGE_IMD,
+    ):
+        result = runner.invoke(cli.app, ["probe", str(fixture)])
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload[0]["layout_id"] == "dec_fm_rx01_250k"
+        assert payload[0]["encoding"] == "fm"
+        assert payload[0]["filesystem"] == "rt11_interchange"
 
 
 def test_probe_supports_imd_ibm_1200k() -> None:
