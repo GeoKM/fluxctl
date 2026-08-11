@@ -282,6 +282,11 @@ class CPMFilesystem(Filesystem):
         params = self._parameters_for_image(image)
         if params is not None:
             self._records = self._modelled_directory_records(image, params)
+            if not self._records:
+                # Some CP/M media has a known geometry but a vendor-specific
+                # directory placement. Keep detection useful without claiming
+                # that extraction is safe until that DPB is modelled.
+                self._records = self._directory_records(image)
             self._probed = bool(self._records) or self._is_modelled_blank_directory(image)
         else:
             self._records = self._directory_records(image)
@@ -331,7 +336,7 @@ class CPMFilesystem(Filesystem):
         if cpm3_markers & names:
             return "c128_cpm_3_0"
 
-        if layout_id == "commodore_gcr_1541_cpm_170k":
+        if layout_id in {"commodore_gcr_1541_170k", "commodore_gcr_1541_cpm_170k"}:
             return "c64_cpm_2_2"
         if layout_id.startswith("commodore_mfm_1571_cpm_"):
             return "c128_cpm_3_0"
@@ -342,14 +347,89 @@ class CPMFilesystem(Filesystem):
             return None
         return self._parameters_for_image(self._image)
 
+    def _format_specific_allocation_error(self, operation: str) -> FilesystemError:
+        layout_id = getattr(getattr(self._image, "layout", None), "layout_id", "unknown")
+        variant = self._variant or "unknown"
+        return FilesystemError(
+            f"CP/M {variant} {operation} is not implemented for layout {layout_id}: "
+            "no format-specific disk parameter block/allocation map is available"
+        )
+
     def _parameters_for_image(self, image: SectorImage) -> CPMDiskParameters | None:
         layout = getattr(image, "layout", None)
         layout_id = getattr(layout, "layout_id", "")
         return cpm_disk_parameters_for_layout(layout_id)
 
     def _is_c64_cpm_2_2(self) -> bool:
+        return self._variant == "c64_cpm_2_2"
+
+    def _is_c128_gcr(self) -> bool:
         layout_id = getattr(getattr(self._image, "layout", None), "layout_id", "") if self._image is not None else ""
-        return self._variant == "c64_cpm_2_2" or layout_id == "commodore_gcr_1541_170k"
+        return layout_id in {
+            "commodore_gcr_1541_170k",
+            "commodore_gcr_1571_341k",
+        } and self._variant == "c128_cpm_3_0"
+
+    def _c64_cpm_block_addresses(self, block: int) -> list[tuple[int, int, int]]:
+        """Return one C64 CP/M 1K allocation block in physical CHS order."""
+
+        addresses: list[tuple[int, int, int]] = []
+        for logical_sector in range(block * 4, block * 4 + 4):
+            logical_track = logical_sector // 17
+            sector_id = logical_sector % 17
+            track = logical_track + 2 if logical_track < 15 else logical_track - 15 + 18
+            addresses.append((track, 0, sector_id))
+        return addresses
+
+    def _c128_gcr_sector_order(self) -> list[tuple[int, int, int]]:
+        """Return the C128 CP/M logical data-sector order in physical CHS form."""
+
+        if self._image is None or not hasattr(self._image, "_sector_lookup"):
+            raise FilesystemError("C128 CP/M GCR data needs reconstructed track sectors")
+        lookup = self._image._sector_lookup
+        double_sided = any(head == 1 for _track, head, _sector in lookup)
+        order: list[tuple[int, int, int]] = []
+
+        def append_track(head: int, track: int, start: int, skip: set[int]) -> None:
+            ids = sorted(sector for t, h, sector in lookup if t == track and h == head)
+            if not ids:
+                return
+            count = len(ids)
+            sector = start % count
+            for _ in ids:
+                if sector in ids and sector not in skip:
+                    order.append((track, head, sector))
+                sector = (sector + 5) % count
+
+        if double_sided:
+            # The first double-sided allocation unit begins at T1/S6 and
+            # continues through T2/S20; T1/S0 and T1/S5 are unused.
+            for sector in (6, 11, 16):
+                order.append((0, 0, sector))
+            for track in range(1, 35):
+                append_track(0, track, 0, {0} if track == 17 else set())
+            for track in range(35):
+                skip = {0, 5} if track == 0 else {0} if track == 17 else set()
+                append_track(1, track, 0, skip)
+        else:
+            # The single-sided directory consumes the first two 1K units;
+            # the first data unit is T1/S8, T1/S13, T1/S18, T1/S2.
+            for sector in (8, 13, 18, 2, 7, 12, 17, 1, 6, 11, 16):
+                order.append((0, 0, sector))
+            for track in range(1, 35):
+                append_track(0, track, 0, {0} if track == 17 else set())
+        return order
+
+    def _c128_gcr_block_addresses(self, block: int) -> list[tuple[int, int, int]]:
+        if block < 2:
+            raise FilesystemError("C128 CP/M system and directory allocation blocks are not file data")
+        sectors_per_block = 8 if any(head == 1 for _track, head, _sector in self._image._sector_lookup) else 4
+        order = self._c128_gcr_sector_order()
+        start = (block - 2) * sectors_per_block
+        addresses = order[start : start + sectors_per_block]
+        if len(addresses) != sectors_per_block:
+            raise FilesystemError(f"C128 CP/M allocation block {block} is incomplete")
+        return addresses
 
     def list_directory(self, path: str = "/") -> List[FileEntry]:
         if path not in {"/", ""}:
@@ -385,20 +465,24 @@ class CPMFilesystem(Filesystem):
     def file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
         """Return selected-file sector addresses for supported CP/M variants."""
 
+        if self._is_c128_gcr():
+            return {
+                address
+                for block in self._allocation_blocks_for_file(path, occupied_only=True)
+                for address in self._c128_gcr_block_addresses(block)
+            }
+
         if self._is_c64_cpm_2_2():
-            addresses: set[tuple[int, int, int]] = set()
-            for block in self._allocation_blocks_for_file(path, occupied_only=True):
-                for logical_sector in range(block * 4, block * 4 + 4):
-                    logical_track = logical_sector // 17
-                    sector_id = logical_sector % 17
-                    track = logical_track + 2 if logical_track < 15 else logical_track - 15 + 18
-                    addresses.add((track, 0, sector_id))
-            return addresses
+            return {
+                address
+                for block in self._allocation_blocks_for_file(path, occupied_only=True)
+                for address in self._c64_cpm_block_addresses(block)
+            }
 
         params = self._disk_parameters()
         layout = getattr(self._image, "layout", None) if self._image is not None else None
         if params is None or layout is None:
-            raise FilesystemError("CP/M file allocation overlay needs a format-specific allocation map")
+            raise self._format_specific_allocation_error("file allocation overlay")
 
         sector_base = int(getattr(layout, "id_rules", {}).get("sector_number_base", 1))
         addresses = set()
@@ -521,6 +605,12 @@ class CPMFilesystem(Filesystem):
             raise FilesystemError("CP/M sector skew table does not match sectors per track") from exc
 
     def _read_allocation_block(self, block: int, params: CPMDiskParameters) -> bytes:
+        if self._is_c128_gcr():
+            lookup = self._image._sector_lookup
+            return b"".join(lookup[address] for address in self._c128_gcr_block_addresses(block))
+        if self._is_c64_cpm_2_2():
+            lookup = self._image._sector_lookup
+            return b"".join(lookup[address] for address in self._c64_cpm_block_addresses(block))
         first_sector = params.first_directory_sector + block * params.sectors_per_block
         return b"".join(
             self._read_logical_sector(first_sector + offset, params)
@@ -645,13 +735,26 @@ class CPMFilesystem(Filesystem):
 
     def extract_file(self, path: str) -> bytes:
         params = self._disk_parameters()
-        if params is None:
-            raise FilesystemError("CP/M file extraction needs a format-specific disk parameter block")
+        if params is None and not (self._is_c128_gcr() or self._is_c64_cpm_2_2()):
+            raise self._format_specific_allocation_error("file extraction")
         records, blocks = self._records_for_file(path, require_records=True)
         if not records:
             raise FilesystemError(f"File has no extractable records: {path}")
         expected_size = sum(record.records for record in records) * 128
-        data = b"".join(self._read_allocation_block(block, params) for block in blocks)
+        if self._is_c128_gcr():
+            lookup = self._image._sector_lookup
+            data = b"".join(
+                b"".join(lookup[address] for address in self._c128_gcr_block_addresses(block))
+                for block in blocks
+            )
+        elif self._is_c64_cpm_2_2():
+            lookup = self._image._sector_lookup
+            data = b"".join(
+                b"".join(lookup[address] for address in self._c64_cpm_block_addresses(block))
+                for block in blocks
+            )
+        else:
+            data = b"".join(self._read_allocation_block(block, params) for block in blocks)
         return data[:expected_size]
 
     def metadata(self) -> Dict[str, Any]:

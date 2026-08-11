@@ -40,7 +40,7 @@ def test_filesystem_capabilities_documents_current_studio_media() -> None:
         if preset.filesystem == "fat12":
             assert preset.label.split("FAT12 ", maxsplit=1)[1].split(" ", maxsplit=1)[0] in text
 
-    assert "Root PRG import only" in text
+    assert "Root file import with type suffix inference" in text
     assert "Files and empty directories" in text
     assert "CP/M export is enabled only when Fluxctl has a modelled disk parameter block" in text
     assert "`.scp` and `.imd` write/manipulation actions are disabled" in text

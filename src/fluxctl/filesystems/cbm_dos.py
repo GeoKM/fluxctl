@@ -11,6 +11,18 @@ from . import FileEntry, Filesystem, SectorImage, TrackSectorImage
 DIRECTORY_TRACK = 18
 DIRECTORY_START_SECTOR = 1
 BAM_SECTOR = (18, 0)
+CBM_FILE_TYPE_CODES = {"DEL": 0, "SEQ": 1, "PRG": 2, "USR": 3, "REL": 4}
+CBM_FILE_TYPE_NAMES = {value: key for key, value in CBM_FILE_TYPE_CODES.items()}
+
+
+def cbm_file_type_label(file_type: int | None, is_dir: bool = False) -> str:
+    """Return the CBM DOS directory type name without open/lock flags."""
+
+    if is_dir:
+        return "DIR"
+    if file_type is None:
+        return ""
+    return CBM_FILE_TYPE_NAMES.get(file_type & 0x07, f"TYPE{file_type & 0x07}")
 
 
 @dataclass(slots=True)
@@ -322,7 +334,9 @@ class CBMDOS(Filesystem):
             for idx in range(8):
                 entry_offset = sector_offset + 2 + idx * 32
                 entry = data[2 + idx * 32 : 2 + (idx + 1) * 32]
-                if len(entry) < 32 or entry[0] in {0x00, 0xE5}:
+                # The eighth slot in a 256-byte directory sector is only
+                # 30 bytes long after the two-byte sector link header.
+                if len(entry) < 30 or entry[0] in {0x00, 0xE5}:
                     continue
                 start_track = entry[1]
                 start_sector = entry[2]
@@ -362,6 +376,7 @@ class CBMDOS(Filesystem):
                     is_dir=record.is_dir,
                     size=size,
                     cluster_start=(record.start_track << 8) | record.start_sector,
+                    attributes=record.file_type,
                 )
             )
         return entries
@@ -390,11 +405,13 @@ class CBMDOS(Filesystem):
         return addresses
 
     def import_file(self, image_bytes: bytes, directory: str, filename: str, data: bytes) -> bytes:
-        """Return a copy with one root-level CBM DOS PRG file imported."""
+        """Return a copy with one root-level CBM DOS file imported."""
 
         if directory.strip("/") != "":
             raise FilesystemError("CBM DOS import currently supports the root directory only")
-        raw_name = self._encode_directory_name(filename)
+        raw_name, file_type = self._encode_directory_name_and_type(filename)
+        if file_type == CBM_FILE_TYPE_CODES["REL"]:
+            raise FilesystemError("CBM DOS REL import is not implemented; side-sector allocation is required")
         target_name = raw_name.replace(b"\xA0", b" ").rstrip().decode("latin-1")
         if any(record.name.upper() == target_name.upper() for record in self.directory):
             raise FilesystemError(f"CBM DOS entry already exists: {target_name}")
@@ -418,7 +435,7 @@ class CBMDOS(Filesystem):
             self._mark_block_used(patched, track, sector)
 
         entry = bytearray(32)
-        entry[0] = 0x82  # closed PRG
+        entry[0] = 0x80 | file_type  # closed CBM DOS file
         entry[1] = blocks[0][0]
         entry[2] = blocks[0][1]
         entry[3:19] = raw_name
@@ -430,6 +447,8 @@ class CBMDOS(Filesystem):
         """Return a copy with one root-level CBM DOS file's contents replaced."""
 
         slot = self._directory_slot_for_path(path)
+        if slot.record.file_type & 0x07 == CBM_FILE_TYPE_CODES["REL"]:
+            raise FilesystemError("CBM DOS REL mutation is not implemented; side-sector allocation is required")
         blocks_needed = max(1, (len(replacement) + (SECTOR_SIZE - 3)) // (SECTOR_SIZE - 2))
         patched = bytearray(image_bytes)
         for track, sector, _data in self._iter_chain_blocks(slot.record.start_track, slot.record.start_sector):
@@ -462,6 +481,8 @@ class CBMDOS(Filesystem):
         """Return a copy with one root-level CBM DOS file scratched."""
 
         slot = self._directory_slot_for_path(path)
+        if slot.record.file_type & 0x07 == CBM_FILE_TYPE_CODES["REL"]:
+            raise FilesystemError("CBM DOS REL mutation is not implemented; side-sector allocation is required")
         patched = bytearray(image_bytes)
         for track, sector, _data in self._iter_chain_blocks(slot.record.start_track, slot.record.start_sector):
             self._mark_block_free(patched, track, sector)
@@ -570,9 +591,15 @@ class CBMDOS(Filesystem):
         raise FilesystemError("CBM DOS root directory has no free entry slots")
 
     def _encode_directory_name(self, filename: str) -> bytes:
+        return self._encode_directory_name_and_type(filename)[0]
+
+    def _encode_directory_name_and_type(self, filename: str) -> tuple[bytes, int]:
         name = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-        if "." in name:
-            name = name.rsplit(".", 1)[0]
+        file_type = CBM_FILE_TYPE_CODES["PRG"]
+        stem, separator, suffix = name.rpartition(".")
+        if separator and stem and suffix.upper() in CBM_FILE_TYPE_CODES:
+            name = stem
+            file_type = CBM_FILE_TYPE_CODES[suffix.upper()]
         name = name.strip().upper()
         if not name:
             raise FilesystemError("Choose a non-empty CBM DOS file name")
@@ -585,7 +612,7 @@ class CBMDOS(Filesystem):
         invalid = set('/\\":*?,')
         if any(ord(char) < 32 or char in invalid for char in name):
             raise FilesystemError("CBM DOS name contains unsupported characters")
-        return encoded.ljust(16, b"\xA0")
+        return encoded.ljust(16, b"\xA0"), file_type
 
     @staticmethod
     def _decode_header_field(raw: bytes) -> str:

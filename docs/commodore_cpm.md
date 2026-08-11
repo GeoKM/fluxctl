@@ -31,13 +31,21 @@ on-disk probing.
 ## Current fluxctl Implications
 
 - `commodore_gcr_1541_cpm_170k` should identify C64/1541 CP/M 2.2 only when a
-  CP/M directory probes successfully.
+  CP/M directory probes successfully. Its 1K allocation blocks are translated
+  through the CP/M data tracks while skipping the reserved system tracks and
+  track 18, enabling file HEX viewing, export, and selected-file overlays.
 - `commodore_gcr_1571_341k` can represent plain 1571 CBM DOS or a D71-shaped
   CP/M logical image. The detector must inspect the BAM/directory and CP/M
   directory entries to distinguish them.
-- `commodore_mfm_1571_cpm_170k` and `commodore_mfm_1571_cpm_340k` are native
-  1571 CP/M layouts and should identify C128 CP/M 3.0 when CP/M directory
-  entries are present.
+- C128 CP/M 3 GCR single- and double-sided media use a documented physical
+  skew rather than a flat sector order. Fluxctl models the directory and file
+  allocation maps for these images, including the skipped sectors and the
+  different 1K/2K allocation-unit sizes, so Studio HEX viewing and selected
+  file map overlays can follow the real file chains.
+- `commodore_mfm_1571_cpm_170k` and `commodore_mfm_1571_cpm_340k` can identify
+  CP/M directories when entries are present, but their foreign-disk DPBs and
+  allocation translation are not yet modelled. They therefore remain
+  list-only for file extraction and selected-file overlays.
 - Future MFM CP/M layout work should model the exact sector size, sector count,
   reserved tracks, starting position, and sector numbering from the target
   format rather than folding all CP/M disks into one geometry.
