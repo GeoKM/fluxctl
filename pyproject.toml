@@ -1,6 +1,6 @@
 [project]
 name = "fluxctl"
-version = "0.3.1"
+version = "0.3.2"
 description = "Modular SCP flux imaging toolkit"
 authors = [{name = "Fluxctl Maintainers"}]
 readme = "README.md"
