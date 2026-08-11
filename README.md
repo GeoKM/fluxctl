@@ -3,17 +3,7 @@
 fluxctl is a modular toolkit for inspecting and converting floppy disk flux captures. It supports decoding flux streams, reconstructing sectors, quality control, visualization, extraction, and exporting to standard image formats.
 
 ## Getting started
-Until the packaging branch is merged to `main`, clone or switch to the branch
-before running the source installer:
-
-```bash
-git clone -b codex/packaging-distribution https://github.com/GeoKM/fluxctl.git
-cd fluxctl
-python3 scripts/install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clone-hxcfe --build-hxcfe
-```
-
-After the packaging branch is merged to `main`, the easiest source-checkout
-install becomes:
+The easiest source-checkout install is:
 
 ```bash
 git clone https://github.com/GeoKM/fluxctl.git
@@ -30,7 +20,7 @@ On Windows PowerShell, use the Python launcher and Windows script paths:
 > verification steps.
 
 ```powershell
-git clone -b codex/packaging-distribution https://github.com/GeoKM/fluxctl.git
+git clone https://github.com/GeoKM/fluxctl.git
 cd fluxctl
 py -3 scripts\install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clone-hxcfe --build-hxcfe --build-native
 .venv\Scripts\fluxctl.exe doctor

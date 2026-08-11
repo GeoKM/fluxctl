@@ -110,6 +110,16 @@ def test_hxcfe_candidate_paths_include_known_build_locations(monkeypatch, tmp_pa
     ]
 
 
+def test_hxcfe_windows_executable_does_not_need_unix_execute_bit(monkeypatch, tmp_path):
+    installer = _load_installer()
+    hxcfe = tmp_path / "hxcfe.exe"
+    hxcfe.write_bytes(b"MZ")
+    monkeypatch.setattr(installer.os, "name", "nt")
+    monkeypatch.setattr(installer.os, "access", lambda path, mode: False)
+
+    assert installer._check_hxcfe(hxcfe) == f"HxCFE found: {hxcfe}"
+
+
 def test_is_importable_uses_target_python(monkeypatch, tmp_path):
     installer = _load_installer()
     python = tmp_path / "venv" / "bin" / "python"

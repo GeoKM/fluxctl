@@ -8,6 +8,7 @@ on each target OS.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -45,7 +46,11 @@ def build_pyinstaller(name: str, entry_point: str, extra_args: list[str]) -> Non
     )
     entry_dir = ROOT / "build" / "pyinstaller-entrypoints"
     entry_dir.mkdir(parents=True, exist_ok=True)
-    entry_script = entry_dir / f"{name}.py"
+    for stale_entrypoint in entry_dir.glob("*.py"):
+        stale_entrypoint.unlink()
+    # Do not name this file after the package. PyInstaller puts the entrypoint
+    # directory on its analysis path, so `fluxctl.py` would shadow src/fluxctl.
+    entry_script = entry_dir / f"{name.replace('-', '_')}_entrypoint.py"
     module, function = entry_point.split(":", 1)
     entry_script.write_text(
         f"from {module} import {function}\n\n"
@@ -62,6 +67,12 @@ def build_pyinstaller(name: str, entry_point: str, extra_args: list[str]) -> Non
             "--noconfirm",
             "--name",
             name,
+            "--paths",
+            str(ROOT / "src"),
+            "--collect-submodules",
+            "fluxctl",
+            "--add-data",
+            f"{ROOT / 'src' / 'fluxctl' / 'data' / 'layouts'}{os.pathsep}fluxctl/data/layouts",
             *extra_args,
             str(entry_script),
         ]
