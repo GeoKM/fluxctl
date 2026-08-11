@@ -157,9 +157,19 @@ def _hxcfe_candidate_paths(explicit_path: Optional[Path] = None) -> list[Path]:
     return unique_candidates
 
 
+def _is_executable(path: Path) -> bool:
+    """Accept Windows executables without relying on Unix execute bits."""
+
+    if not path.is_file():
+        return False
+    if os.name == "nt" and path.suffix.lower() in {".exe", ".com", ".bat", ".cmd"}:
+        return True
+    return os.access(path, os.X_OK)
+
+
 def _first_executable_hxcfe(explicit_path: Optional[Path] = None) -> Path | None:
     for candidate in _hxcfe_candidate_paths(explicit_path):
-        if candidate.exists() and os.access(candidate, os.X_OK):
+        if _is_executable(candidate):
             return candidate
     return None
 
@@ -280,7 +290,7 @@ def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
         )
     elif not hxcfe_path.exists():
         checks.append(_status_check("hxcfe", "fail", f"{hxcfe_path} does not exist", "Check the --hxcfe path."))
-    elif not os.access(hxcfe_path, os.X_OK):
+    elif not _is_executable(hxcfe_path):
         checks.append(
             _status_check("hxcfe", "fail", f"{hxcfe_path} is not executable", "Run chmod +x or rebuild hxcfe.")
         )

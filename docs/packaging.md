@@ -14,16 +14,7 @@ Fluxctl ships two command entry points from the same Python package:
 
 ## Source Checkout Installer
 
-Until this branch is merged to `main`, clone or switch to it before running the
-source installer:
-
-```bash
-git clone -b codex/packaging-distribution https://github.com/GeoKM/fluxctl.git
-cd fluxctl
-python3 scripts/install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clone-hxcfe --build-hxcfe
-```
-
-After this branch is merged to `main`, the easiest checkout install is:
+The easiest checkout install is:
 
 ```bash
 git clone https://github.com/GeoKM/fluxctl.git
@@ -39,7 +30,7 @@ and optional software checklist, official download links, architecture
 selection, and verification commands.
 
 ```powershell
-git clone -b codex/packaging-distribution https://github.com/GeoKM/fluxctl.git
+git clone https://github.com/GeoKM/fluxctl.git
 cd fluxctl
 py -3 scripts\install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clone-hxcfe --build-hxcfe --build-native
 .venv\Scripts\fluxctl.exe doctor

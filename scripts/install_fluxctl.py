@@ -179,10 +179,20 @@ def _hxcfe_candidate_paths(explicit_path: Path | None = None) -> list[Path]:
     return candidates
 
 
+def _is_executable(path: Path) -> bool:
+    """Accept Windows executables without relying on Unix execute bits."""
+
+    if not path.is_file():
+        return False
+    if os.name == "nt" and path.suffix.lower() in {".exe", ".com", ".bat", ".cmd"}:
+        return True
+    return os.access(path, os.X_OK)
+
+
 def _check_hxcfe(explicit_path: Path | None) -> str:
     candidates = _hxcfe_candidate_paths(explicit_path)
     for candidate in candidates:
-        if candidate.exists() and os.access(candidate, os.X_OK):
+        if _is_executable(candidate):
             return f"HxCFE found: {candidate}"
     return (
         "HxCFE not found. It is optional. Clone and build HxCFloppyEmulator with:\n"

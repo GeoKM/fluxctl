@@ -106,7 +106,7 @@ The source-checkout installer prints the exact MSYS2 commands when
 From PowerShell:
 
 ```powershell
-git clone -b codex/packaging-distribution https://github.com/GeoKM/fluxctl.git
+git clone https://github.com/GeoKM/fluxctl.git
 cd fluxctl
 py -3 scripts\install_fluxctl.py --yes --greaseweazle --clone-greaseweazle --clone-hxcfe --build-hxcfe --build-native
 ```
