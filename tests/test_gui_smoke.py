@@ -979,7 +979,7 @@ def test_advanced_panel_shows_doctor_summary_without_image() -> None:
 
     window._show_doctor(
         {
-            "version": "0.3.1",
+            "version": "0.3.2",
             "overall": "ok",
             "checks": [{"name": "layouts", "status": "ok", "detail": "114 loaded", "suggestion": ""}],
         }
@@ -1253,13 +1253,53 @@ def test_map_sector_click_updates_sector_hex_inputs(monkeypatch) -> None:
         window,
         "view_sector_hex",
         lambda: loaded.append(
-            (window.hex_track_input.text(), window.hex_head_input.text(), window.hex_sector_input.text())
+            (str(window.hex_track_input.value()), str(window.hex_head_input.value()), str(window.hex_sector_input.value()))
         ),
     )
 
     window.load_sector_hex_from_map(7, 1, 12)
 
     assert loaded == [("7", "1", "12")]
+    window.close()
+
+
+def test_sector_hex_inputs_are_stepper_controls() -> None:
+    window = FluxctlStudio()
+
+    assert window.hex_track_input.minimum() == 0
+    assert window.hex_track_input.maximum() == 999
+    assert window.hex_head_input.maximum() == 1
+    assert window.hex_sector_input.minimum() == 0
+
+    window.hex_track_input.stepUp()
+    window.hex_head_input.stepUp()
+    window.hex_sector_input.stepDown()
+
+    assert window.hex_track_input.value() == 1
+    assert window.hex_head_input.value() == 1
+    assert window.hex_sector_input.value() == 0
+    window.close()
+
+
+def test_sector_hex_stepper_refreshes_immediately(monkeypatch) -> None:
+    window = FluxctlStudio()
+    window.current_path = Path("/tmp/example.img")
+    loaded: list[tuple[int, int, int]] = []
+    monkeypatch.setattr(
+        window,
+        "view_sector_hex",
+        lambda: loaded.append(
+            (
+                window.hex_track_input.value(),
+                window.hex_head_input.value(),
+                window.hex_sector_input.value(),
+            )
+        ),
+    )
+
+    window.hex_sector_input.setValue(2)
+
+    assert loaded == [(0, 0, 2)]
     window.close()
 
 
@@ -1287,9 +1327,10 @@ def test_cbm_sector_hex_input_uses_logical_track_numbers(monkeypatch) -> None:
 
     monkeypatch.setattr(services, "sector_hex_dump", fake_sector_hex)
     monkeypatch.setattr(window, "_run_job", run_immediate)
-    window.hex_track_input.setText("18")
-    window.hex_head_input.setText("0")
-    window.hex_sector_input.setText("0")
+    window.hex_track_input.setValue(18)
+    window.hex_head_input.setValue(0)
+    window.hex_sector_input.setValue(0)
+    calls.clear()
 
     window.view_sector_hex()
 
@@ -1316,7 +1357,7 @@ def test_cbm_map_click_shows_logical_track_numbers(monkeypatch) -> None:
         window,
         "view_sector_hex",
         lambda: loaded.append(
-            (window.hex_track_input.text(), window.hex_head_input.text(), window.hex_sector_input.text())
+            (str(window.hex_track_input.value()), str(window.hex_head_input.value()), str(window.hex_sector_input.value()))
         ),
     )
 
@@ -1363,7 +1404,7 @@ def test_cbm_bam_map_click_keeps_logical_track_numbers(monkeypatch) -> None:
         window,
         "view_sector_hex",
         lambda: loaded.append(
-            (window.hex_track_input.text(), window.hex_head_input.text(), window.hex_sector_input.text())
+            (str(window.hex_track_input.value()), str(window.hex_head_input.value()), str(window.hex_sector_input.value()))
         ),
     )
 

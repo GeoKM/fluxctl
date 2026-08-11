@@ -31,6 +31,7 @@ try:  # pragma: no cover - exercised only when GUI dependencies are installed.
         QMainWindow,
         QMessageBox,
         QPushButton,
+        QSpinBox,
         QStackedWidget,
         QTableWidget,
         QTableWidgetItem,
@@ -690,9 +691,24 @@ class FluxctlStudio(QMainWindow):
         self.log.setMinimumHeight(340)
         self.hex_title_label = QLabel("No hex data loaded")
         self.hex_title_label.setObjectName("filePath")
-        self.hex_track_input = QLineEdit("0")
-        self.hex_head_input = QLineEdit("0")
-        self.hex_sector_input = QLineEdit("1")
+        self.hex_track_input = QSpinBox()
+        self.hex_track_input.setRange(0, 999)
+        self.hex_track_input.setValue(0)
+        self.hex_track_input.setToolTip("Track number")
+        self.hex_head_input = QSpinBox()
+        self.hex_head_input.setRange(0, 1)
+        self.hex_head_input.setValue(0)
+        self.hex_head_input.setToolTip("Head number")
+        self.hex_sector_input = QSpinBox()
+        self.hex_sector_input.setRange(0, 99)
+        self.hex_sector_input.setValue(1)
+        self.hex_sector_input.setToolTip("Sector ID")
+        for input_widget in (
+            self.hex_track_input,
+            self.hex_head_input,
+            self.hex_sector_input,
+        ):
+            input_widget.valueChanged.connect(self._auto_view_sector_hex)
         self.hex_sector_button = QPushButton("View Sector Hex")
         self.hex_sector_button.clicked.connect(self.view_sector_hex)
         hex_controls = QHBoxLayout()
@@ -2090,9 +2106,9 @@ class FluxctlStudio(QMainWindow):
         layout = self._selected_layout() or None
         encoding = self._selected_encoding()
         try:
-            track = int(self.hex_track_input.text())
-            head = int(self.hex_head_input.text())
-            sector = int(self.hex_sector_input.text())
+            track = self.hex_track_input.value()
+            head = self.hex_head_input.value()
+            sector = self.hex_sector_input.value()
         except ValueError:
             self._warn("Track, head, and sector must be integer values.")
             return
@@ -2102,14 +2118,34 @@ class FluxctlStudio(QMainWindow):
             self._show_hex_dump,
         )
 
+    def _auto_view_sector_hex(self, _value: int) -> None:
+        """Refresh the sector view immediately after manual CHS stepping."""
+
+        if self.current_path is not None:
+            self.view_sector_hex()
+
     def load_sector_hex_from_map(self, track: int, head: int, sector: int) -> None:
         if self._current_map_uses_cbm_logical_addressing():
             display_track, display_head, display_sector = track, head, sector
         else:
             display_track, display_head, display_sector = self._internal_to_display_chs(track, head, sector)
-        self.hex_track_input.setText(str(display_track))
-        self.hex_head_input.setText(str(display_head))
-        self.hex_sector_input.setText(str(display_sector))
+        for input_widget in (
+            self.hex_track_input,
+            self.hex_head_input,
+            self.hex_sector_input,
+        ):
+            input_widget.blockSignals(True)
+        try:
+            self.hex_track_input.setValue(display_track)
+            self.hex_head_input.setValue(display_head)
+            self.hex_sector_input.setValue(display_sector)
+        finally:
+            for input_widget in (
+                self.hex_track_input,
+                self.hex_head_input,
+                self.hex_sector_input,
+            ):
+                input_widget.blockSignals(False)
         self.view_sector_hex()
 
     def _show_hex_dump(self, dump: object) -> None:
