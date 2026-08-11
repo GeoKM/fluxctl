@@ -388,6 +388,24 @@ def test_studio_blank_cbm_dos_images_accept_file_import(tmp_path) -> None:
         assert dump.size == 512
 
 
+def test_studio_cbm_import_infers_directory_file_type_from_suffix(tmp_path) -> None:
+    for preset_id, suffix, layout_id, encoding in [
+        ("cbm_dos_1541_d64", ".d64", "commodore_gcr_1541_170k", "gcr"),
+        ("cbm_dos_1581_d81", ".d81", "commodore_mfm_1581_800k", "mfm"),
+    ]:
+        output = tmp_path / f"typed-blank{suffix}"
+        imported_path = tmp_path / f"typed-imported{suffix}"
+        host_file = tmp_path / "README.SEQ"
+        host_file.write_bytes(b"sequential data")
+        services.create_blank_image(preset_id, output)
+
+        services.import_file_with_copy(output, layout_id, encoding, "/", host_file, imported_path)
+        entries = services.list_files(imported_path, layout_id, encoding)
+
+        assert [entry.name for entry in entries] == ["README"]
+        assert entries[0].file_type == "SEQ"
+
+
 def test_studio_cbm_dos_images_replace_and_delete_files(tmp_path) -> None:
     for preset_id, suffix, layout_id, filesystem_name, entry_name in [
         ("cbm_dos_1541_d64", ".d64", "commodore_gcr_1541_170k", "cbm_dos", "HELLO64"),
@@ -1042,6 +1060,43 @@ def test_studio_exports_multiple_selected_files(tmp_path: Path) -> None:
     assert result.bytes > 39
     assert (tmp_path / "AUTOEXEC.BAT").read_bytes().startswith(b"@ECHO OFF")
     assert (tmp_path / "CONFIG.SYS").exists()
+
+
+def test_studio_multi_file_export_can_overwrite_existing_targets(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_IMG)
+    (tmp_path / "AUTOEXEC.BAT").write_bytes(b"old")
+    (tmp_path / "CONFIG.SYS").write_bytes(b"old")
+
+    result = services.export_filesystem_entries(
+        FIXTURE_IMG,
+        summary.layout_id,
+        summary.encoding,
+        ["/AUTOEXEC.BAT", "/CONFIG.SYS"],
+        tmp_path,
+        overwrite=True,
+    )
+
+    assert result.files == 2
+    assert (tmp_path / "AUTOEXEC.BAT").read_bytes().startswith(b"@ECHO OFF")
+    assert (tmp_path / "CONFIG.SYS").read_bytes() != b"old"
+
+
+def test_studio_exports_cbm_root_files_with_slashes_in_names(tmp_path: Path) -> None:
+    summary = services.summarize_image(FIXTURE_D64)
+
+    result = services.export_filesystem_entries(
+        FIXTURE_D64,
+        summary.layout_id,
+        summary.encoding,
+        ["/C.FEDERATION", "/C/FAT ASCII", "/C/NEW YORK", "/C/ART DECO"],
+        tmp_path,
+    )
+
+    assert result.files == 4
+    assert (tmp_path / "C.FEDERATION").stat().st_size == 2051
+    assert (tmp_path / "C_FAT ASCII").stat().st_size == 260
+    assert (tmp_path / "C_NEW YORK").stat().st_size == 260
+    assert (tmp_path / "C_ART DECO").stat().st_size == 260
 
 
 def test_studio_replaces_fat12_file_in_new_copy(tmp_path: Path) -> None:

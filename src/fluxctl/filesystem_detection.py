@@ -259,7 +259,7 @@ def _detect_commodore(image, layout_id: str) -> FilesystemDetection:
 
     if layout_id == "commodore_gcr_1541_170k":
         if cpm_ok:
-            cpm_name = "c64_cpm_2_2"
+            cpm_name = _metadata_name("c64_cpm_2_2", cpm_fs) if cpm_fs else "c64_cpm_2_2"
             return FilesystemDetection(
                 primary=cpm_name,
                 confidence=0.75,
@@ -292,11 +292,12 @@ def _detect_commodore(image, layout_id: str) -> FilesystemDetection:
 
     if layout_id == "commodore_gcr_1541_cpm_170k":
         if cpm_ok:
+            cpm_name = _metadata_name("c64_cpm_2_2", cpm_fs) if cpm_fs else "c64_cpm_2_2"
             return FilesystemDetection(
-                primary="c64_cpm_2_2",
+                primary=cpm_name,
                 confidence=0.75,
                 evidence=evidence,
-                regions=[FilesystemRegion("head0", "c64_cpm_2_2", ["CP/M directory-like entries detected"])],
+                regions=[FilesystemRegion("head0", cpm_name, ["CP/M directory-like entries detected"])],
                 plugin=cpm_fs,
             )
         if cbm_ok:

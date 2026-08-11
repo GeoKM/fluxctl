@@ -1537,7 +1537,7 @@ class FluxctlStudio(QMainWindow):
                 self.file_delete_button: (True, unsupported),
                 self.file_import_button: (
                     True,
-                    "Available for CBM DOS .d64/.d71 root-level PRG import. The operation writes a new image copy.",
+                    "Available for CBM DOS .d64/.d71 root-level PRG import by default. .SEQ/.USR suffixes set the corresponding type; REL import requires side-sector support. The operation writes a new image copy.",
                 ),
                 self.directory_import_button: (False, unsupported),
                 self.directory_create_button: (False, unsupported),
@@ -1549,7 +1549,7 @@ class FluxctlStudio(QMainWindow):
                 self.file_delete_button: (True, reason),
                 self.file_import_button: (
                     True,
-                    "Available for CBM DOS 1581 .d81 PRG import. The operation writes a new image copy.",
+                    "Available for CBM DOS 1581 .d81 PRG import by default. .SEQ/.USR suffixes set the corresponding type; REL import requires side-sector support. The operation writes a new image copy.",
                 ),
                 self.directory_import_button: (True, reason),
                 self.directory_create_button: (True, reason),
@@ -1646,7 +1646,7 @@ class FluxctlStudio(QMainWindow):
             name_item.setData(Qt.UserRole, entry.path)
             name_item.setData(Qt.UserRole + 1, entry.is_dir)
             self.files_table.setItem(row, 0, name_item)
-            self.files_table.setItem(row, 1, QTableWidgetItem(entry.kind))
+            self.files_table.setItem(row, 1, QTableWidgetItem(entry.file_type or entry.kind))
             self.files_table.setItem(row, 2, QTableWidgetItem(str(entry.size)))
         self.activity_label.setText(f"Listed {len(entries)} filesystem entries in {self.file_browser_path}.")
         self._append_log(f"Listed {len(entries)} filesystem entries in {self.file_browser_path}")
@@ -1782,6 +1782,36 @@ class FluxctlStudio(QMainWindow):
         if not destination_name:
             return
         destination = Path(destination_name)
+        selected_rows = [index.row() for index in self.files_table.selectionModel().selectedRows()]
+        if not selected_rows:
+            selected_rows = [self.files_table.currentRow()]
+        selected_names = [
+            self.files_table.item(row, 0).text()
+            for row in sorted(set(selected_rows))
+            if row >= 0 and self.files_table.item(row, 0) is not None
+        ]
+        export_names = [services._safe_export_name(name) for name in selected_names]
+        conflicts = [
+            destination / name
+            for name in export_names
+            if (destination / name).exists() or (destination / name).is_symlink()
+        ]
+        overwrite = False
+        if conflicts:
+            names = "\n".join(f"- {conflict.name}" for conflict in conflicts[:8])
+            if len(conflicts) > 8:
+                names += f"\n- ... and {len(conflicts) - 8} more"
+            answer = QMessageBox.question(
+                self,
+                "Overwrite exported items?",
+                "The following export targets already exist:\n\n"
+                f"{names}\n\nOverwrite them?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            overwrite = True
         layout = self._selected_layout() or None
         encoding = self._selected_encoding()
         self._run_job(
@@ -1792,6 +1822,7 @@ class FluxctlStudio(QMainWindow):
                 encoding,
                 selected_paths,
                 destination,
+                overwrite,
             ),
             self._show_export_result,
         )
@@ -1927,7 +1958,7 @@ class FluxctlStudio(QMainWindow):
             f"Current filesystem directory:\n{self.file_browser_path}\n\n"
             f"Host file to import:\n{host_file}\n\n"
             f"New image copy:\n{output}\n\n"
-            "FAT12 import requires an 8.3-compatible file name. CBM DOS import writes PRG files "
+            "FAT12 import requires an 8.3-compatible file name. CBM DOS import infers PRG, SEQ, or USR from the suffix and defaults to PRG; REL requires side-sector support. "
             "using names up to 16 ASCII characters. Existing entries are not overwritten. The original image "
             "will not be modified. Continue?"
         )

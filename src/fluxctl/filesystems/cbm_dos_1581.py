@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from ..exceptions import FilesystemError
+from .cbm_dos import CBM_FILE_TYPE_CODES
 from . import FileEntry, Filesystem, SectorImage, TrackSectorImage
 
 
@@ -322,9 +323,11 @@ class CBMDOS1581(Filesystem):
         return {(track, 0, sector) for track, sector, _data in self._iter_chain_blocks(record.start_track, record.start_sector)}
 
     def import_file(self, image_bytes: bytes, directory: str, filename: str, data: bytes) -> bytes:
-        """Return a copy with one CBM DOS 1581 PRG file imported."""
+        """Return a copy with one CBM DOS 1581 file imported."""
 
-        raw_name = self._encode_directory_name(filename)
+        raw_name, file_type = self._encode_directory_name_and_type(filename)
+        if file_type == CBM_FILE_TYPE_CODES["REL"]:
+            raise FilesystemError("CBM DOS 1581 REL import is not implemented; side-sector allocation is required")
         target_name = raw_name.replace(b"\xA0", b" ").rstrip().decode("latin-1")
         directory_start = self._directory_start_for_path(directory)
         if any(record.name.upper() == target_name.upper() for record in self._records_for_path(directory)):
@@ -349,7 +352,7 @@ class CBMDOS1581(Filesystem):
             self._mark_block_used(patched, track, sector)
 
         entry = bytearray(32)
-        entry[0] = 0x82  # closed PRG
+        entry[0] = 0x80 | file_type  # closed CBM DOS file
         entry[1] = blocks[0][0]
         entry[2] = blocks[0][1]
         entry[3:19] = raw_name
@@ -390,6 +393,8 @@ class CBMDOS1581(Filesystem):
         slot = self._root_directory_slot_for_path(path)
         if slot.record.is_dir:
             raise FilesystemError("1581 replace currently supports files only")
+        if slot.record.file_type & 0x07 == CBM_FILE_TYPE_CODES["REL"]:
+            raise FilesystemError("CBM DOS 1581 REL mutation is not implemented; side-sector allocation is required")
         blocks_needed = max(1, (len(replacement) + (LOGICAL_SECTOR_SIZE - 3)) // (LOGICAL_SECTOR_SIZE - 2))
         patched = bytearray(image_bytes)
         for track, sector, _data in self._iter_chain_blocks(slot.record.start_track, slot.record.start_sector):
@@ -424,6 +429,8 @@ class CBMDOS1581(Filesystem):
         slot = self._root_directory_slot_for_path(path)
         if slot.record.is_dir:
             raise FilesystemError("1581 directory delete is not implemented yet")
+        if slot.record.file_type & 0x07 == CBM_FILE_TYPE_CODES["REL"]:
+            raise FilesystemError("CBM DOS 1581 REL mutation is not implemented; side-sector allocation is required")
         patched = bytearray(image_bytes)
         for track, sector, _data in self._iter_chain_blocks(slot.record.start_track, slot.record.start_sector):
             self._mark_block_free(patched, track, sector)
@@ -576,9 +583,15 @@ class CBMDOS1581(Filesystem):
         raise FilesystemError("1581 root directory has no free entry slots")
 
     def _encode_directory_name(self, filename: str) -> bytes:
+        return self._encode_directory_name_and_type(filename)[0]
+
+    def _encode_directory_name_and_type(self, filename: str) -> tuple[bytes, int]:
         name = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-        if "." in name:
-            name = name.rsplit(".", 1)[0]
+        file_type = CBM_FILE_TYPE_CODES["PRG"]
+        stem, separator, suffix = name.rpartition(".")
+        if separator and stem and suffix.upper() in CBM_FILE_TYPE_CODES:
+            name = stem
+            file_type = CBM_FILE_TYPE_CODES[suffix.upper()]
         name = name.strip().upper()
         if not name:
             raise FilesystemError("Choose a non-empty 1581 file name")
@@ -591,7 +604,7 @@ class CBMDOS1581(Filesystem):
         invalid = set('/\\":*?,')
         if any(ord(char) < 32 or char in invalid for char in name):
             raise FilesystemError("1581 name contains unsupported characters")
-        return encoded.ljust(16, b"\xA0")
+        return encoded.ljust(16, b"\xA0"), file_type
 
     @staticmethod
     def _decode_header_field(raw: bytes) -> str:

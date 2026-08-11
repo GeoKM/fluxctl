@@ -24,7 +24,7 @@ from .decoding import load_builtin_decoders
 from .detection import detect_encoding, detect_layout
 from .filesystem_detection import detect_filesystem
 from .filesystems import RawSectorImage, TrackSectorImage, load_builtin_filesystems
-from .filesystems.cbm_dos import CBMDOS
+from .filesystems.cbm_dos import CBMDOS, cbm_file_type_label
 from .filesystems.cbm_dos_1581 import CBMDOS1581
 from .filesystems.cpm import CPMFilesystem, cpm_disk_parameters_for_layout
 from .filesystems.fat12 import FAT12
@@ -103,6 +103,7 @@ class FileEntryView:
     size: int
     path: str
     is_dir: bool
+    file_type: str = ""
 
 
 @dataclass(frozen=True)
@@ -1160,6 +1161,20 @@ def _safe_export_name(name: str) -> str:
 
 
 def _find_entry(filesystem, fs_path: str) -> FileEntryView:
+    # Classic CBM DOS permits '/' in root filenames, even though Studio uses
+    # '/' as its filesystem path separator. Match the complete root name
+    # before interpreting the path as a directory traversal.
+    root_name = fs_path.strip("/")
+    if root_name:
+        for entry in filesystem.list_directory("/"):
+            if entry.name.casefold() == root_name.casefold():
+                return FileEntryView(
+                    entry.name,
+                    "<DIR>" if entry.is_dir else "file",
+                    entry.size,
+                    _join_filesystem_path("/", entry.name),
+                    entry.is_dir,
+                )
     parent = _filesystem_parent(fs_path)
     name = _filesystem_basename(fs_path)
     if not name:
@@ -1182,13 +1197,14 @@ def export_filesystem_entry(
     encoding: str,
     fs_path: str,
     destination: Path,
+    overwrite: bool = False,
 ) -> ExportResult:
     """Export a selected filesystem file or directory to the host filesystem."""
 
     filesystem = _mount_filesystem(path, layout_id, encoding)
     entry = _find_entry(filesystem, fs_path)
     if entry.is_dir:
-        return _export_directory(filesystem, entry.path, destination)
+        return _export_directory(filesystem, entry.path, destination, overwrite=overwrite)
     data = filesystem.extract_file(entry.path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(data)
@@ -1201,6 +1217,7 @@ def export_filesystem_entries(
     encoding: str,
     fs_paths: list[str],
     destination_parent: Path,
+    overwrite: bool = False,
 ) -> ExportResult:
     """Export multiple selected filesystem entries into one host folder."""
 
@@ -1216,7 +1233,7 @@ def export_filesystem_entries(
         for fs_path in fs_paths:
             entry = _find_entry(filesystem, fs_path)
             if entry.is_dir:
-                directory_result = _export_directory(filesystem, entry.path, temp_path)
+                directory_result = _export_directory(filesystem, entry.path, temp_path, overwrite=overwrite)
                 files += directory_result.files
                 byte_count += directory_result.bytes
                 exported_paths.append(Path(directory_result.path).name)
@@ -1231,10 +1248,13 @@ def export_filesystem_entries(
             exported_paths.append(host_path.name)
         for name in exported_paths:
             final_path = destination_parent / name
-            if final_path.exists():
+            if (final_path.exists() or final_path.is_symlink()) and not overwrite:
                 raise ValueError(f"Export destination already exists: {final_path}")
         for child in temp_path.iterdir():
-            shutil.move(str(child), str(destination_parent / child.name))
+            final_path = destination_parent / child.name
+            if final_path.exists() or final_path.is_symlink():
+                _remove_export_target(final_path)
+            shutil.move(str(child), str(final_path))
     return ExportResult(path=str(destination_parent), files=files, bytes=byte_count)
 
 
@@ -1663,17 +1683,32 @@ def _import_1581_directory_tree(image_bytes: bytes, directory: str, host_directo
     return entries, byte_count, patched
 
 
-def _export_directory(filesystem, fs_path: str, destination_parent: Path) -> ExportResult:
+def _export_directory(
+    filesystem,
+    fs_path: str,
+    destination_parent: Path,
+    *,
+    overwrite: bool = False,
+) -> ExportResult:
     directory_name = _safe_export_name(_filesystem_basename(fs_path))
     final_path = destination_parent / directory_name
-    if final_path.exists():
+    if (final_path.exists() or final_path.is_symlink()) and not overwrite:
         raise ValueError(f"Export destination already exists: {final_path}")
     destination_parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f".{directory_name}.", dir=destination_parent) as temp_name:
         temp_path = Path(temp_name)
         files, byte_count = _export_directory_contents(filesystem, fs_path, temp_path)
+        if final_path.exists() or final_path.is_symlink():
+            _remove_export_target(final_path)
         shutil.move(str(temp_path), str(final_path))
     return ExportResult(path=str(final_path), files=files, bytes=byte_count)
+
+
+def _remove_export_target(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
 
 
 def _export_directory_contents(filesystem, fs_path: str, host_directory: Path) -> tuple[int, int]:
@@ -1732,6 +1767,9 @@ def list_files_with_info(
                 entry.size,
                 _join_filesystem_path(directory, entry.name),
                 entry.is_dir,
+                cbm_file_type_label(entry.attributes, entry.is_dir)
+                if entry.attributes is not None and filesystem.__class__.__name__ in {"CBMDOS", "CBMDOS1581"}
+                else "",
             )
             for entry in entries
         ],
