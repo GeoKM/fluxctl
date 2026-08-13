@@ -1278,6 +1278,9 @@ def test_sector_hex_inputs_are_stepper_controls() -> None:
     assert window.hex_track_input.value() == 1
     assert window.hex_head_input.value() == 1
     assert window.hex_sector_input.value() == 0
+    assert window.hex_track_input.minimumHeight() >= 52
+    assert window.hex_track_input.objectName() == "hexChsInput"
+    assert window.hex_sector_button.minimumHeight() >= 52
     window.close()
 
 

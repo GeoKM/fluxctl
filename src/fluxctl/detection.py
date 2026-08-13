@@ -11,7 +11,7 @@ from .exceptions import FluxDecodeError
 from .geohints import LayoutHint
 from .models import Bitstream, LayoutDescriptor, SCPImage
 from .plugins import registry
-from .sector.reconstruct import build_track_sectors_from_revolutions
+from .sector.reconstruct import build_track_sectors_from_revolutions, reconstruct_rx02_greaseweazle
 from .sector.models import TrackSectors
 from .filesystems import TrackSectorImage
 from .filesystems.cpm import CPMFilesystem, cpm_directory_score_for_layout, cpm_disk_parameters_for_layout
@@ -58,7 +58,7 @@ def _tracks_with_flux(image: SCPImage):
 
 def _geometry_tracks_for_encoding(image: SCPImage, encoding: str | None):
     active_tracks = _tracks_with_flux(image)
-    if encoding == "fm" and active_tracks:
+    if encoding in {"fm", "dec_rx02"} and active_tracks:
         return active_tracks
     return image.tracks
 
@@ -140,16 +140,27 @@ def _estimate_geometry(image: SCPImage, decoder: Decoder, sample_tracks: int = 6
             continue
         track_samples += 1
         try:
-            if getattr(decoder, "encoding", None) == "gcr" and hasattr(decoder, "set_track"):
-                decoder.set_track(track_flux.track)
-            track_sectors = build_track_sectors_from_revolutions(
-                track_flux.revolutions,
-                decoder,
-                cylinder=track_flux.track,
-                head=track_flux.side,
-                encoding=getattr(decoder, "encoding", None),
-                timebase_ns=image.timebase_ns,
-            )
+            if getattr(decoder, "encoding", None) == "dec_rx02":
+                track_sectors = reconstruct_rx02_greaseweazle(
+                    track_flux.revolutions,
+                    track_flux.track,
+                    track_flux.side,
+                    expected_sectors=26,
+                    timebase_ns=image.timebase_ns,
+                )
+                if track_sectors is None:
+                    continue
+            else:
+                if getattr(decoder, "encoding", None) == "gcr" and hasattr(decoder, "set_track"):
+                    decoder.set_track(track_flux.track)
+                track_sectors = build_track_sectors_from_revolutions(
+                    track_flux.revolutions,
+                    decoder,
+                    cylinder=track_flux.track,
+                    head=track_flux.side,
+                    encoding=getattr(decoder, "encoding", None),
+                    timebase_ns=image.timebase_ns,
+                )
         except FluxDecodeError:
             continue
         if not track_sectors.sectors:
@@ -644,6 +655,7 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
     fm_decoder = registry.encoding.get("fm").entry if "fm" in registry.encoding else None
     gcr_decoder = registry.encoding.get("gcr").entry if "gcr" in registry.encoding else None
     apple2_decoder = registry.encoding.get("apple2_gcr").entry if "apple2_gcr" in registry.encoding else None
+    rx02_decoder = registry.encoding.get("dec_rx02").entry if "dec_rx02" in registry.encoding else None
     mfm_bits = _estimate_bitstream_length(image, mfm_decoder) if mfm_decoder else None
     mfm_conf = _average_confidence(mfm_decoder, image) if mfm_decoder else None
     gcr_conf = _average_confidence(gcr_decoder, image) if gcr_decoder else None
@@ -652,11 +664,15 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
     mfm_geometry = _estimate_geometry(image, mfm_decoder) if mfm_decoder else {}
     fm_bits = _estimate_bitstream_length(image, fm_decoder) if fm_decoder else None
     fm_conf = _average_confidence(fm_decoder, image) if fm_decoder else None
+    rx02_geometry = {}
+    rx02_single_sided = heads_present == {0} and logical_tracks >= 70
     strong_mfm_geometry = (
         mfm_conf is not None
         and mfm_conf >= 0.9
         and int(mfm_geometry.get("tracks_with_sectors") or 0) >= 2
     )
+    if rx02_decoder is not None and (not strong_mfm_geometry or rx02_single_sided):
+        rx02_geometry = _estimate_geometry(image, rx02_decoder)
     # FM/GCR reconstruction is wasted work on large synthetic IBM MFM SCPs once
     # MFM has already produced coherent sectors on sampled tracks. Genuine FM
     # or GCR media will not satisfy this strong-MFM condition.
@@ -736,6 +752,30 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
                 else:
                     score -= 0.15
                     evidence.append("cpm_layout_directory_miss=1")
+
+        if desc.encoding == "dec_rx02":
+            geometry = rx02_geometry
+            # RX02 is a single-sided RX01/RX02 mechanism. Two recorded heads
+            # indicate a generic 8-inch MFM image, even if the RX02 decoder
+            # can find plausible 256-byte sectors in a sample track.
+            if heads_present != {0}:
+                score -= 1.0
+                evidence.append("rx02_mult head_penalty=1")
+            if not rx02_single_sided:
+                score -= 1.0
+                evidence.append("rx02_geometry_penalty=1")
+            if geometry.get("track_samples") and geometry.get("tracks_with_sectors") == 0:
+                score -= 0.5
+                evidence.append("rx02_no_sectors_penalty=1")
+            if geometry.get("sectors_per_track") == desc.sectors_per_track:
+                score += 0.3
+                evidence.append("rx02_sectors_per_track_match=1")
+            if geometry.get("sector_size") == desc.sector_size:
+                score += 0.3
+                evidence.append("rx02_sector_size_match=1")
+            if geometry.get("tracks_with_sectors", 0) >= 2:
+                score += 0.3
+                evidence.append("rx02_mixed_fm_mmfm_sectors=1")
         if desc.encoding == "gcr":
             geometry = gcr_geometry
             if strong_mfm_geometry:

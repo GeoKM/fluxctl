@@ -60,16 +60,21 @@ def _decode_rad50_name(words: List[int]) -> Optional[str]:
 
 
 class RT11Filesystem(Filesystem):
-    """Lightweight probe for RT-11 (RX02) volumes.
+    """Read normal RT-11 directory segments and file extents.
 
-    Directory starts at block 6; entries are 16-byte (8-word) structures:
-    [flags][name(2)][ext(1)][start][length][date]...  We only validate flags,
-    RAD50 name, and length to classify the volume.
+    RT-11 directory segments are two logical 512-byte blocks containing a
+    five-word header followed by fourteen-byte RAD50 directory entries.  The
+    segment header identifies the first data block; file extents then advance
+    in directory order.  Scanning for a self-consistent segment keeps this
+    useful for RX02 images whose home-block contents are incomplete.
     """
 
     def __init__(self) -> None:
         self.is_rt11 = False
         self.label: Optional[str] = None
+        self.image: SectorImage | None = None
+        self._blocks: list[bytes] = []
+        self._entries: list[tuple[str, int, int, int]] = []
 
     def probe(self, image: SectorImage) -> bool:
         # Reblock to 512-byte units (RT-11 logical blocks)
@@ -111,43 +116,96 @@ class RT11Filesystem(Filesystem):
             if lbl:
                 self.label = lbl.strip(".")
 
-        entries_ok = 0
-        empties = 0
-        total = 0
-        for dir_block in blocks[6 : min(len(blocks), 22)]:  # scan first ~16 directory blocks
-            for offset in range(0, len(dir_block), 16):
-                entry = dir_block[offset : offset + 16]
-                if len(entry) < 16:
-                    continue
-                flag = int.from_bytes(entry[0:2], "little")
-                if flag in (0x0000, 0xFFFF):
-                    empties += 1
-                    total += 1
-                    continue
-                if flag not in (1, 2, 3, 4):
-                    total += 1
-                    continue
-                name_words = [
-                    int.from_bytes(entry[2:4], "little"),
-                    int.from_bytes(entry[4:6], "little"),
-                    int.from_bytes(entry[6:8], "little"),
-                ]
-                name = _decode_rad50_name(name_words)
-                length = int.from_bytes(entry[12:14], "little")
-                if not name or length <= 0 or length > 0x7FFF:
-                    total += 1
-                    continue
-                entries_ok += 1
-                total += 1
-
-        self.is_rt11 = entries_ok >= 2 and (entries_ok + empties) >= 4
+        self.image = image
+        self._blocks = blocks
+        self._entries = self._parse_directory(blocks)
+        self.is_rt11 = len(self._entries) >= 2
         return self.is_rt11
 
     def list_directory(self, path: str = "/") -> List[FileEntry]:
-        raise FilesystemError("RT-11 directory listing not implemented")
+        if path not in {"", "/"}:
+            raise FilesystemError("RT-11 volumes do not have directories")
+        return [
+            FileEntry(name=name, is_dir=False, size=length * 512, cluster_start=start)
+            for name, start, length, _status in self._entries
+        ]
 
     def extract_file(self, path: str) -> bytes:
-        raise FilesystemError("RT-11 extraction not implemented")
+        name = path.strip("/").upper()
+        entry = next((item for item in self._entries if item[0].upper() == name), None)
+        if entry is None:
+            raise FilesystemError(f"RT-11 file not found: {path}")
+        _entry_name, start, length, _status = entry
+        end = start + length
+        if start < 0 or end > len(self._blocks):
+            raise FilesystemError(f"RT-11 file {path} extends beyond the image")
+        return b"".join(self._blocks[start:end])
+
+    @staticmethod
+    def _parse_directory(blocks: list[bytes]) -> list[tuple[str, int, int, int]]:
+        """Find RT-11 directory segments and return file extents.
+
+        A segment has a five-word header followed by seven-word entries. The
+        fifth header word gives the first data block represented by that
+        segment; file lengths then advance the data cursor in directory order.
+        Scanning is intentional: RX02 images in the wild may use a nonstandard
+        home-block arrangement, while the segment header remains self-validating.
+        """
+
+        candidates: list[tuple[int, list[tuple[str, int, int, int]]]] = []
+        for block_index in range(0, max(0, len(blocks) - 1)):
+            segment = blocks[block_index] + blocks[block_index + 1]
+            words = [int.from_bytes(segment[offset : offset + 2], "little") for offset in range(0, 10, 2)]
+            total_segments, next_segment, _highest, extra_bytes, data_start = words
+            if not (1 <= total_segments <= 3110):
+                continue
+            if (
+                next_segment > total_segments
+                or _highest > total_segments
+                or extra_bytes > 128
+                or extra_bytes % 2
+            ):
+                continue
+            if data_start >= len(blocks):
+                continue
+            entry_size = 14 + extra_bytes
+            cursor = 10
+            data_cursor = data_start
+            entries: list[tuple[str, int, int, int]] = []
+            while cursor + 2 <= len(segment):
+                status = int.from_bytes(segment[cursor : cursor + 2], "little")
+                if status == 0x0800:  # E.EOS, octal 4000
+                    break
+                if cursor + entry_size > len(segment):
+                    break
+                entry = segment[cursor : cursor + entry_size]
+                length = int.from_bytes(entry[8:10], "little")
+                if status in {0x0400, 0x0100}:  # E.PERM or E.TENT
+                    name = _decode_rad50_name(
+                        [int.from_bytes(entry[offset : offset + 2], "little") for offset in (2, 4, 6)]
+                    )
+                    if name and length and data_cursor + length <= len(blocks):
+                        entries.append((name, data_cursor, length, status))
+                if status in {0x0200, 0x0400, 0x0100}:
+                    data_cursor += length
+                cursor += entry_size
+            if len(entries) >= 2:
+                candidates.append((block_index, entries))
+        if not candidates:
+            return []
+        # Prefer the segment whose header/entries produce readable extents.
+        # Some captures contain residual directory-like bytes elsewhere; a
+        # valid segment should point at data that is not entirely zero-filled.
+        def candidate_score(candidate: tuple[int, list[tuple[str, int, int, int]]]) -> tuple[int, int]:
+            _block, entries = candidate
+            nonempty = sum(
+                1
+                for _name, start, length, _status in entries
+                if any(blocks[start + offset] for offset in range(length))
+            )
+            return nonempty, len(entries)
+
+        return max(candidates, key=candidate_score)[1]
 
     def metadata(self) -> Dict[str, Any]:
         return {"filesystem": "rt11", "label": self.label or ""}

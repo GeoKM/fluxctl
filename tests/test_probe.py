@@ -38,6 +38,8 @@ FIXTURE_IMD_1440K = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSHD-MFM-IBMPC-
 FIXTURE_RX02_IMG = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM-RT11-500K.img")
 FIXTURE_RX01_INTERCHANGE_IMG = Path("tests/fixtures/8inch/DEC/DEC-RX01-SSSD-FM-RT11_IDF-250K.img")
 FIXTURE_RX02_IMG_GENERIC = Path("tests/fixtures/8inch/DEC/DEC-RX02-DSDD-MFM.img")
+FIXTURE_RX02_SSDD_SCP = Path("tests/fixtures/8inch/DEC/DEC-RX02-SSDD-Modified_MFM-RT11_FORTRAN-500K.scp")
+FIXTURE_RX02_SSDD_IMG = Path("tests/fixtures/8inch/DEC/DEC-RX02-SSDD-Modified_MFM-RT11_FORTRAN-500K.img")
 FIXTURE_DISPLAYWRITER_IMG = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWriter-284K.img")
 FIXTURE_D64_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64CPM-170K.d64")
 FIXTURE_D71_CBM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C128-341K.d71")
@@ -230,7 +232,7 @@ def test_probe_prefers_8inch_500k_layout() -> None:
     runner = CliRunner()
     result = runner.invoke(cli.app, ["probe", str(FIXTURE_8IN_500K)])
     assert result.exit_code == 0
-    assert "generic_mfm_8inch_500k" in result.stdout
+    assert "dec_dec_rx02_rx02_250k" in result.stdout
 
 
 def test_probe_prefers_8inch_1200k_layout() -> None:
@@ -419,6 +421,17 @@ def test_probe_supports_rx02_img_generic() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload[0]["layout_id"] in {"dec_dec_rx02_rx02_250k", "generic_mfm_8inch_500k"}
+
+
+def test_probe_supports_rx02_ssdd_scp_and_img() -> None:
+    runner = CliRunner()
+    for fixture in (FIXTURE_RX02_SSDD_SCP, FIXTURE_RX02_SSDD_IMG):
+        result = runner.invoke(cli.app, ["probe", str(fixture)])
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload[0]["layout_id"] == "dec_dec_rx02_rx02_250k"
+        assert payload[0]["encoding"] == "dec_rx02"
+        assert payload[0]["filesystem"] == "rt11"
 
 
 def test_probe_supports_8inch_cpm_source_images() -> None:

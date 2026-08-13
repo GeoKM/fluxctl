@@ -5,7 +5,7 @@ import pytest
 from fluxctl.cli import _prepare_image
 from fluxctl.exceptions import FilesystemError
 from fluxctl.filesystems import RawSectorImage
-from fluxctl.filesystems.rt11 import RT11InterchangeFilesystem
+from fluxctl.filesystems.rt11 import RT11Filesystem, RT11InterchangeFilesystem
 from fluxctl.filesystem_detection import detect_filesystem
 from fluxctl.layouts.loader import load_builtin_layouts
 
@@ -20,6 +20,7 @@ FIXTURE_CPM_SRC1_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22S
 FIXTURE_CPM_SRC2_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC2-256K.img")
 FIXTURE_KAYPRO_CPM22_IMD = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-CPM22-200K.imd")
 FIXTURE_RX01_INTERCHANGE_SCP = Path("tests/fixtures/8inch/DEC/DEC-RX01-SSSD-FM-RT11_IDF-250K.scp")
+FIXTURE_RX02_SSDD_SCP = Path("tests/fixtures/8inch/DEC/DEC-RX02-SSDD-Modified_MFM-RT11_FORTRAN-500K.scp")
 
 
 def test_detects_1541_cbm_dos_with_strong_probe() -> None:
@@ -160,3 +161,23 @@ def test_extracts_nonempty_rt11_interchange_dataset_records() -> None:
     entries = filesystem.list_directory("/")
     assert [(entry.name, entry.size) for entry in entries] == [("TEST", 80)]
     assert filesystem.extract_file("/TEST") == b"A" * 80
+
+
+def test_lists_and_extracts_normal_rx02_rt11_files() -> None:
+    load_builtin_layouts()
+    for fixture in (
+        FIXTURE_RX02_SSDD_SCP,
+        FIXTURE_RX02_SSDD_SCP.with_suffix(".img"),
+    ):
+        image = _prepare_image(fixture, "dec_dec_rx02_rx02_250k", "dec_rx02")
+        filesystem = RT11Filesystem()
+
+        assert filesystem.probe(image)
+        entries = filesystem.list_directory("/")
+        names = [entry.name for entry in entries]
+        assert len(entries) == 17
+        assert "EXONL.FOR" in names
+        assert "CALEX.SAV" in names
+        content = filesystem.extract_file("/EXONL.FOR")
+        assert len(content) == 7 * 512
+        assert b"SUBROUTINE" in content
