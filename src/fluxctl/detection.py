@@ -773,6 +773,12 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
             if geometry.get("sector_size") == desc.sector_size:
                 score += 0.3
                 evidence.append("rx02_sector_size_match=1")
+            elif geometry.get("sector_size") is not None:
+                # RX01-style FM media also has 26 sectors per track, but its
+                # physical sectors are 128 bytes. Do not let that geometry
+                # masquerade as RX02's 256-byte modified-MFM format.
+                score -= 0.8
+                evidence.append(f"rx02_sector_size_mismatch={geometry['sector_size']}")
             if geometry.get("tracks_with_sectors", 0) >= 2:
                 score += 0.3
                 evidence.append("rx02_mixed_fm_mmfm_sectors=1")
