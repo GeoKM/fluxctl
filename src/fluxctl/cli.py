@@ -788,6 +788,19 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
             image.layout = layout_desc
             _apply_layout_geometry(image, layout_desc)
             return image
+        if layout_desc and layout_desc.layout_id == "wang_ois_hs32_fm_315k":
+            from .sector.reconstruct_wang import reconstruct_wang_track
+
+            scp = parse_scp(path)
+            track_data = [
+                reconstruct_wang_track(ts.revolutions, ts.track, ts.side, layout_desc.sectors_per_track)
+                for ts in scp.tracks
+                if ts.track < layout_desc.tracks and ts.side < layout_desc.sides and ts.revolutions
+            ]
+            image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
+            image.layout = layout_desc
+            _apply_layout_geometry(image, layout_desc)
+            return image
         track_data = _decode_tracks(path, layout_id, encoding=encoding)
         if layout_desc and layout_desc.layout_id.startswith("apple2_"):
             return Apple2SectorImage(track_data, layout_desc)
@@ -1433,6 +1446,34 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
     # RX02 media may be a complete 77-track single-sided image (512512 bytes)
     # or a truncated/placeholder capture produced by tools that omit empty
     # sectors.  Only the complete physical geometry is unambiguous here.
+    wang_label = data_bytes[:8] == b"SP042060" and b"Wang" in data_bytes[:64]
+    if ext == ".img" and len(data_bytes) == 77 * 16 * 256 and wang_label:
+        layout = registry.layout.get("wang_ois_hs32_fm_315k")
+        if layout is not None:
+            track_data = _sectors_from_blob(layout, data_bytes)
+            if track_data is not None:
+                image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
+                image_obj.layout = layout
+                _apply_layout_geometry(image_obj, layout)
+                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+                return [
+                    CandidateFormat(
+                        candidate_id=layout.layout_id,
+                        encoding=layout.encoding,
+                        layout_id=layout.layout_id,
+                        filesystem=fs_name,
+                        score=1.0,
+                        evidence=evidence
+                        + [
+                            "wang_geometry=77x16x256",
+                            "physical_hard_sector_count=32",
+                            "wang_label=SP042060",
+                            f"layout={layout.layout_id}",
+                        ]
+                        + fs_evidence,
+                    )
+                ]
+
     if ext == ".img" and len(data_bytes) in {77 * 26 * 256, 255872, 511872}:
         layout = registry.layout.get("dec_dec_rx02_rx02_250k")
         if layout is not None:

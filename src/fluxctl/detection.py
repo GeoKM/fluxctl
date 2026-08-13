@@ -12,6 +12,7 @@ from .geohints import LayoutHint
 from .models import Bitstream, LayoutDescriptor, SCPImage
 from .plugins import registry
 from .sector.reconstruct import build_track_sectors_from_revolutions, reconstruct_rx02_greaseweazle
+from .sector.reconstruct_wang import wang_track_score
 from .sector.models import TrackSectors
 from .filesystems import TrackSectorImage
 from .filesystems.cpm import CPMFilesystem, cpm_directory_score_for_layout, cpm_disk_parameters_for_layout
@@ -58,6 +59,10 @@ def _tracks_with_flux(image: SCPImage):
 
 def _geometry_tracks_for_encoding(image: SCPImage, encoding: str | None):
     active_tracks = _tracks_with_flux(image)
+    if encoding == "wang_fm":
+        # SCP Splice captures retain empty opposite-head placeholders.  Wang
+        # OIS HS32 is single-sided, so only the recorded head is geometry.
+        return [track for track in active_tracks if track.side == 0]
     if encoding in {"fm", "dec_rx02"} and active_tracks:
         return active_tracks
     return image.tracks
@@ -643,6 +648,28 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
 
     if not registry.layout:
         return None
+
+    wang_layout = registry.layout.get("wang_ois_hs32_fm_315k")
+    if wang_layout is not None:
+        useful = [
+            track
+            for track in image.tracks
+            if track.side == 0 and track.track < 77 and any(rev.interval_ns for rev in track.revolutions)
+        ]
+        if len(useful) >= 4 and len(image.tracks) >= 154:
+            sample_scores = [wang_track_score(track.revolutions, track.track) for track in useful[:4]]
+            if sum(score >= 8 for score in sample_scores) >= 3:
+                return LayoutCandidate(
+                    layout=wang_layout,
+                    score=1.0,
+                    evidence=[
+                        "wang_hs32_crc_sectors=" + ",".join(str(score) for score in sample_scores),
+                        "wang_physical_tracks=77",
+                        "wang_logical_sectors=16",
+                        "wang_splice_windows=2",
+                        "wang_rpm_nominal=360",
+                    ],
+                )
 
     active_tracks = _tracks_with_flux(image)
     default_geometry_tracks = active_tracks or image.tracks

@@ -576,6 +576,15 @@ def build_track_sectors_from_revolutions(
         if rx02_track is None:
             raise FluxDecodeError("RX02 sector reconstruction unavailable or failed")
         return rx02_track
+    if effective_encoding == "wang_fm":
+        from .reconstruct_wang import reconstruct_wang_track
+
+        return reconstruct_wang_track(
+            revolutions,
+            track=cylinder,
+            head=head,
+            expected_sectors=expected_sectors or 16,
+        )
 
     for rev in revolutions:
         if not getattr(rev, "interval_ns", None):
@@ -647,4 +656,5 @@ __all__ = [
     "reconstruct_ibm_greaseweazle",
     "reconstruct_mfm_greaseweazle",
     "reconstruct_rx02_greaseweazle",
+    "reconstruct_wang_track",
 ]

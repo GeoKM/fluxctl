@@ -149,6 +149,7 @@ def load_builtin_filesystems() -> List[PluginInfo]:
     from .ldos import LDOSTRSDOS6Filesystem
     from .prodos import ProDOSFilesystem
     from .apple_dos import AppleDOS33Filesystem
+    from .wang_ois import WangOISFilesystem
 
     registry.register_filesystem(
         "fat12",
@@ -256,6 +257,15 @@ def load_builtin_filesystems() -> List[PluginInfo]:
             version="0.1",
             entry=AppleDOS33Filesystem(),
             description="Apple II DOS 3.3 VTOC and catalog reader",
+        ),
+    )
+    registry.register_filesystem(
+        "wang_ois",
+        PluginInfo(
+            name="Wang OIS Filesystem",
+            version="0.1",
+            entry=WangOISFilesystem(),
+            description="Wang OIS installation-package catalog reader",
         ),
     )
     registry.register_filesystem(
