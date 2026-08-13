@@ -87,6 +87,7 @@ Use these as the baseline known fixtures.
 | IBM DisplayWriter | `IBM-6580-SSDD-FM-DisplayWriter-284K.scp`, `.imd`, `.img` | Mixed FM geometry, standard-label entries, document extraction disabled with a clear message. |
 | DEC RT-11 RX02 | `DEC-RX02-DSDD-MFM-RT11-500K.scp`, `.imd`, `.img` | Probe metadata, no listing/export claims, clear unsupported behavior. |
 | DEC RT-11 Interchange RX01 | `DEC-RX01-SSSD-FM-RT11_IDF-250K.scp`, `.imd`, `.img` | Probe as 77-track, one-sided, 26 x 128-byte FM RX01 media. Export nonempty `HDR1` datasets as fixed-length EBCDIC record streams. This fixture's `DATA` label is empty, so verify the separately named `DATA.RESIDUAL.RAW` forensic export and its JSON missing-sector manifest. |
+| Wang OIS package disk | `Wang-OIS100-HS32-FM-PeripheralsII-315K.scp`, `.img` | Probe as 77 x 16 x 256-byte `wang_ois` media. Navigate `/PRINT`, view and export files such as `/INSTALL` and `/PRINT/T300/OBJ`, recursively export `/PRINT/T407`, and verify selected-file allocation highlighting. Mutation remains disabled. |
 
 ## Files Panel and Directory Workflows
 

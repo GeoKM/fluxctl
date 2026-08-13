@@ -18,6 +18,7 @@ format-specific code to safely extract or modify file data.
 | DisplayWriter | Yes | Label directory only | No | No | No | The reader lists IBM standard-label `HDR1` records from track 0. Actual DisplayWriter document extraction is not implemented. |
 | RT-11 | Yes | No | No | No | No | Probe and volume label metadata exist. Directory listing and extraction are not implemented. |
 | RT-11 Interchange (RX01/IBM 3740) | Yes | Active `HDR1` dataset labels | Yes for nonempty labels | No | No | Exports fixed-length EBCDIC record streams from the `HDR1` start through its first-unused address. Labelled-empty datasets expose a separately named raw residual extent and JSON manifest for forensic recovery. |
+| Wang OIS package disks | Yes | Yes | Yes | Yes | No | Read-only support for the hierarchical catalog on 315K OIS installation media. File prologues, allocation-block starts, sector EOF counts, and final-sector byte counts are honoured. User-document/archive formats still need separate fixtures and modelling. |
 | Raw sectors | Not a filesystem | N/A | Sector dump/export | N/A | Sector patch helpers only | Raw sector operations do not understand filesystem allocation or directory structures. |
 
 ## Fluxctl Studio Function Matrix
@@ -42,6 +43,7 @@ opened and probed. Write/manipulation actions always create a new image copy.
 | DisplayWriter | Yes | Label entries only | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
 | RT-11 | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
 | RT-11 Interchange RX01/IBM 3740 | Yes | Active labels and labelled-empty raw recovery extents | No | Yes | Yes | Nonempty datasets; raw residual extent where labelled empty | No | No | No | No | No | No | No | Physical map only |
+| Wang OIS 315K `.img`/decoded `.scp` | Yes | Package catalog files and directories | Yes | Yes | Yes | Files and directories | No | No | No | No | No | No | Allocation extent overlay | Physical map |
 
 Notes:
 
@@ -92,6 +94,10 @@ Known list-without-extract cases:
   Studio exposes a clearly named `.RESIDUAL.RAW` sector-for-sector recovery
   export plus a JSON manifest; it does not claim this residual payload is a
   valid logical file.
+- **Wang OIS package disks**: lists the package's actual hierarchical catalog
+  and exports its file extents. The reader is intentionally limited to the
+  catalog structure established on 315K OIS installation media; Wang archive
+  document catalogs are not yet claimed as compatible.
 
 ## Mutation Safety
 
@@ -121,5 +127,6 @@ Currently disabled mutation:
 - CP/M replace, directory import, and directory creation.
 - DisplayWriter writes.
 - RT-11 writes.
+- Wang OIS writes.
 - `.scp` and `.imd` filesystem-level writes, until a safe container rewrite path
   is designed for each target.

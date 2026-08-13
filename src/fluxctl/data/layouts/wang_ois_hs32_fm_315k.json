@@ -1,0 +1,31 @@
+{
+  "schema_version": "layout.v1",
+  "layout_id": "wang_ois_hs32_fm_315k",
+  "name": "Wang OIS/100 HS32 315K FM",
+  "encoding": "wang_fm",
+  "rpm_nominal": 360,
+  "sides": 1,
+  "tracks": 77,
+  "sectors_per_track": 16,
+  "sector_size": 256,
+  "gap3_hint": null,
+  "id_rules": {
+    "cylinder_field": "track_index",
+    "head_field": "side_index",
+    "sector_number_base": 0
+  },
+  "crc": {
+    "type": "wang_crc16_8005",
+    "poly": 32773,
+    "init": 0,
+    "refin": false,
+    "refout": false,
+    "xorout": 0,
+    "sync_bits": "11"
+  },
+  "address_marks": {
+    "sync_bits": "11",
+    "header": "track,sector",
+    "data": "256 bytes"
+  }
+}

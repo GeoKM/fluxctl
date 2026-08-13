@@ -23,6 +23,7 @@ def load_builtin_decoders() -> List[PluginInfo]:
     from . import apple2 as _apple2  # noqa: F401
     from . import fm as _fm  # noqa: F401
     from . import rx02 as _rx02  # noqa: F401
+    from . import wang as _wang  # noqa: F401
 
     return list(registry.encoding.values())
 
@@ -33,3 +34,4 @@ __all__ = ["Decoder"]
 from . import gcr  # noqa: E402,F401
 from . import apple2  # noqa: E402,F401
 from . import rx02  # noqa: E402,F401
+from . import wang  # noqa: E402,F401
