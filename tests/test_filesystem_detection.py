@@ -21,6 +21,7 @@ FIXTURE_CPM_SRC2_IMG = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22S
 FIXTURE_KAYPRO_CPM22_IMD = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-MFM-CPM22-200K.imd")
 FIXTURE_RX01_INTERCHANGE_SCP = Path("tests/fixtures/8inch/DEC/DEC-RX01-SSSD-FM-RT11_IDF-250K.scp")
 FIXTURE_RX02_SSDD_SCP = Path("tests/fixtures/8inch/DEC/DEC-RX02-SSDD-Modified_MFM-RT11_FORTRAN-500K.scp")
+FIXTURE_RX01_CPM_SCP = Path("tests/fixtures/8inch/CPM/CPM-RX01-SSSD-FM-STATPAK311-256K.scp")
 
 
 def test_detects_1541_cbm_dos_with_strong_probe() -> None:
@@ -181,3 +182,15 @@ def test_lists_and_extracts_normal_rx02_rt11_files() -> None:
         content = filesystem.extract_file("/EXONL.FOR")
         assert len(content) == 7 * 512
         assert b"SUBROUTINE" in content
+
+
+def test_lists_and_extracts_rx01_cpm_from_scp() -> None:
+    load_builtin_layouts()
+    image = _prepare_image(FIXTURE_RX01_CPM_SCP, "dec_fm_rx01_250k", "fm")
+    detection = detect_filesystem(image, path_name=FIXTURE_RX01_CPM_SCP.name)
+
+    assert detection.primary == "cpm"
+    assert detection.plugin is not None
+    assert "MANNWHIT.BAS" in {entry.name for entry in detection.plugin.list_directory("/")}
+    content = detection.plugin.extract_file("/MANNWHIT.BAS")
+    assert len(content) == 5888

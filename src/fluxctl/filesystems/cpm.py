@@ -72,7 +72,11 @@ STANDARD_26_SECTOR_SKEW = (
 
 
 def cpm_disk_parameters_for_layout(layout_id: str) -> CPMDiskParameters | None:
-    if layout_id in {"generic_fm_8inch_cpm_256k", "dec_dec_rx02_rx02_250k"}:
+    if layout_id in {
+        "generic_fm_8inch_cpm_256k",
+        "dec_fm_rx01_250k",
+        "dec_dec_rx02_rx02_250k",
+    }:
         return CPMDiskParameters(
             reserved_tracks=2,
             sectors_per_track=26,
