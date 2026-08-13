@@ -251,6 +251,74 @@ def reconstruct_mfm_greaseweazle(
     )
 
 
+def reconstruct_rx02_greaseweazle(
+    revolutions: Sequence[RevolutionFlux],
+    track: int,
+    head: int,
+    expected_sectors: Optional[int] = 26,
+    timebase_ns: float = 25.0,
+) -> Optional[TrackSectors]:
+    """Decode a DEC RX02 track using Greaseweazle's mixed FM/MMFM codec.
+
+    RX02 keeps FM-style ID fields but stores each 256-byte data field using
+    DEC's modified MFM encoding.  Its ID size code is therefore ``N=0`` even
+    though the decoded payload is 256 bytes; the public Sector model records
+    the logical payload size (256 bytes), not the physical ID code.
+    """
+
+    try:
+        import greaseweazle.codec.codec  # noqa: F401
+        from greaseweazle.codec.ibm.ibm import IBMTrack_FixedDef
+        from greaseweazle.flux import Flux
+    except Exception:
+        return None
+
+    flux = _greaseweazle_flux_from_revolutions(Flux, revolutions, timebase_ns)
+    if flux is None:
+        return None
+
+    config = IBMTrack_FixedDef("dec.rx02")
+    config.secs = expected_sectors or 26
+    # RX02's ID fields use N=0; the codec expands the MMFM data to 256 bytes.
+    config.sz = [0] * config.secs
+    config.rate = 250
+    config.rpm = 360
+    config.img_bps = 256
+    config.finalise()
+    codec = config.mk_track(track, head)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            codec.decode_flux(flux)
+    except Exception:
+        return None
+
+    sectors: list[Sector] = []
+    for area in getattr(codec.raw, "sectors", []):
+        idam = area.idam
+        dam = area.dam
+        data = bytes(dam.data or b"")
+        if not data:
+            continue
+        sectors.append(
+            Sector(
+                cylinder=int(idam.c),
+                head=int(idam.h),
+                sector_id=int(idam.r),
+                size_code=1 if len(data) == 256 else max(0, (len(data) // 128).bit_length() - 1),
+                data=data,
+                crc_ok=idam.crc == 0 and dam.crc == 0,
+                confidence=1.0,
+                deleted=getattr(dam, "mark", 0xFD) == 0xF9,
+                source_revolutions=[rev.index for rev in revolutions if getattr(rev, "interval_ns", None)],
+            )
+        )
+    if not sectors:
+        return None
+    missing = max((expected_sectors or len(sectors)) - len({s.sector_id for s in sectors}), 0)
+    weak = sum(1 for sector in sectors if not sector.crc_ok)
+    return TrackSectors(track=track, head=head, sectors=sorted(sectors, key=lambda s: s.sector_id), weak=weak, missing=missing)
+
+
 def reconstruct_track(
     bitstream: Bitstream, cylinder: int = 0, head: int = 0, expected_sectors: Optional[int] = None
 ) -> TrackSectors:
@@ -497,6 +565,18 @@ def build_track_sectors_from_revolutions(
         return decode_apple2_revolutions(
             revolutions, cylinder=cylinder, head=head
         )
+    if effective_encoding == "dec_rx02":
+        rx02_track = reconstruct_rx02_greaseweazle(
+            revolutions,
+            cylinder,
+            head,
+            expected_sectors=expected_sectors,
+            timebase_ns=timebase_ns or 25.0,
+        )
+        if rx02_track is None:
+            raise FluxDecodeError("RX02 sector reconstruction unavailable or failed")
+        return rx02_track
+
     for rev in revolutions:
         if not getattr(rev, "interval_ns", None):
             continue
@@ -566,4 +646,5 @@ __all__ = [
     "merge_track_sectors",
     "reconstruct_ibm_greaseweazle",
     "reconstruct_mfm_greaseweazle",
+    "reconstruct_rx02_greaseweazle",
 ]

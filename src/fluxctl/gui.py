@@ -692,14 +692,17 @@ class FluxctlStudio(QMainWindow):
         self.hex_title_label = QLabel("No hex data loaded")
         self.hex_title_label.setObjectName("filePath")
         self.hex_track_input = QSpinBox()
+        self.hex_track_input.setObjectName("hexChsInput")
         self.hex_track_input.setRange(0, 999)
         self.hex_track_input.setValue(0)
         self.hex_track_input.setToolTip("Track number")
         self.hex_head_input = QSpinBox()
+        self.hex_head_input.setObjectName("hexChsInput")
         self.hex_head_input.setRange(0, 1)
         self.hex_head_input.setValue(0)
         self.hex_head_input.setToolTip("Head number")
         self.hex_sector_input = QSpinBox()
+        self.hex_sector_input.setObjectName("hexChsInput")
         self.hex_sector_input.setRange(0, 99)
         self.hex_sector_input.setValue(1)
         self.hex_sector_input.setToolTip("Sector ID")
@@ -710,14 +713,18 @@ class FluxctlStudio(QMainWindow):
         ):
             input_widget.valueChanged.connect(self._auto_view_sector_hex)
         self.hex_sector_button = QPushButton("View Sector Hex")
+        self.hex_sector_button.setObjectName("hexSectorButton")
         self.hex_sector_button.clicked.connect(self.view_sector_hex)
         hex_controls = QHBoxLayout()
-        hex_controls.addWidget(QLabel("Track"))
-        hex_controls.addWidget(self.hex_track_input)
-        hex_controls.addWidget(QLabel("Head"))
-        hex_controls.addWidget(self.hex_head_input)
-        hex_controls.addWidget(QLabel("Sector"))
-        hex_controls.addWidget(self.hex_sector_input)
+        for label_text, input_widget in (
+            ("Track", self.hex_track_input),
+            ("Head", self.hex_head_input),
+            ("Sector", self.hex_sector_input),
+        ):
+            label = QLabel(label_text)
+            label.setObjectName("hexChsLabel")
+            hex_controls.addWidget(label)
+            hex_controls.addWidget(input_widget)
         hex_controls.addWidget(self.hex_sector_button)
         self.hex_text = QTextEdit()
         self.hex_text.setReadOnly(True)
@@ -843,6 +850,29 @@ class FluxctlStudio(QMainWindow):
             QLabel#filePath { color: #9ee6b8; font-weight: 600; padding: 4px 8px; }
             QPushButton { background: #243348; border: 1px solid #40536c; border-radius: 6px; padding: 8px 10px; }
             QPushButton:hover { background: #2f435f; }
+            QSpinBox#hexChsInput {
+                min-height: 52px;
+                min-width: 92px;
+                font-size: 18px;
+                font-weight: 600;
+                padding: 4px 8px;
+            }
+            QSpinBox#hexChsInput::up-button,
+            QSpinBox#hexChsInput::down-button {
+                width: 30px;
+                height: 26px;
+            }
+            QLabel#hexChsLabel {
+                font-size: 16px;
+                font-weight: 600;
+                padding-left: 6px;
+            }
+            QPushButton#hexSectorButton {
+                min-height: 52px;
+                font-size: 16px;
+                padding-left: 16px;
+                padding-right: 16px;
+            }
             QPushButton:disabled {
                 background: #151b25;
                 border: 1px solid #253142;

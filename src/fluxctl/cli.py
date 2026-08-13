@@ -1430,6 +1430,40 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
                         )
                     ]
 
+    # RX02 media may be a complete 77-track single-sided image (512512 bytes)
+    # or a truncated/placeholder capture produced by tools that omit empty
+    # sectors.  Only the complete physical geometry is unambiguous here.
+    if ext == ".img" and len(data_bytes) in {77 * 26 * 256, 255872, 511872}:
+        layout = registry.layout.get("dec_dec_rx02_rx02_250k")
+        if layout is not None:
+            track_data = _sectors_from_blob(layout, data_bytes) if len(data_bytes) == 77 * 26 * 256 else None
+            if track_data is not None:
+                image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
+                image_obj.layout = layout
+                _apply_layout_geometry(image_obj, layout)
+                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+                return [
+                    CandidateFormat(
+                        candidate_id=layout.layout_id,
+                        encoding=layout.encoding,
+                        layout_id=layout.layout_id,
+                        filesystem=fs_name or LAYOUT_FILESYSTEM_HINTS.get(layout.layout_id),
+                        score=1.0,
+                        evidence=evidence + [f"layout={layout.layout_id}", *fs_evidence],
+                    )
+                ]
+            if len(data_bytes) in {255872, 511872}:
+                return [
+                    CandidateFormat(
+                        candidate_id=layout.layout_id,
+                        encoding=layout.encoding,
+                        layout_id=layout.layout_id,
+                        filesystem="rt11",
+                        score=0.98,
+                        evidence=evidence + [f"layout={layout.layout_id}", "rx02_truncated_flat_geometry=1"],
+                    )
+                ]
+
     if ext == ".img" and "displaywriter" in path.stem.lower():
         lid = "ibm_displaywriter_fm_284k"
         layout = registry.layout.get(lid)
