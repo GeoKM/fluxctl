@@ -78,6 +78,28 @@ def detect_filesystem(image, *, path_name: str = "") -> FilesystemDetection:
     if layout_id.startswith("commodore_"):
         return _detect_commodore(image, layout_id)
 
+    if layout_id.startswith("wang_ois_"):
+        wang = registry.filesystem.get("wang_ois")
+        if wang and wang.entry.probe(image):
+            return FilesystemDetection(
+                primary="wang_ois",
+                confidence=0.99,
+                evidence=[f"layout={layout_id}", "wang_ois_catalog_probe=1"],
+                regions=[
+                    FilesystemRegion(
+                        "disk",
+                        "wang_ois",
+                        ["Wang OIS catalog prologue and root-node chain detected"],
+                    )
+                ],
+                plugin=wang.entry,
+            )
+        return FilesystemDetection(
+            primary=None,
+            confidence=0.0,
+            evidence=[f"layout={layout_id}", "no_supported_wang_ois_filesystem_probe"],
+        )
+
     cpm = registry.filesystem.get("cpm")
     if layout_id.startswith("tandy_"):
         if cpm and cpm.entry.probe(image):
