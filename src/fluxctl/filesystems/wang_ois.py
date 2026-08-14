@@ -51,6 +51,7 @@ class WangOISFilesystem(Filesystem):
         self._data = b""
         self._catalog_block = 0
         self._catalog_base = 0
+        self._catalog_pointer_unit = "allocation_block"
         self._roots: list[WangOISCatalogEntry] = []
         self._paths: dict[str, WangOISCatalogEntry] = {}
         self._package_id = ""
@@ -61,6 +62,7 @@ class WangOISFilesystem(Filesystem):
         self._roots = []
         self._paths = {}
         self._package_id = ""
+        self._catalog_pointer_unit = "allocation_block"
         if getattr(image, "bytes_per_sector", 0) != _SECTOR_SIZE:
             return False
         try:
@@ -74,17 +76,35 @@ class WangOISFilesystem(Filesystem):
         # 22-23. The catalog extent itself begins with a typed "Catalog"
         # prologue, which prevents a same-sized unrelated image from matching.
         catalog_block = int.from_bytes(data[22:24], "little")
-        catalog_base = catalog_block * _ALLOCATION_BLOCK_SIZE
-        if not 0 < catalog_base <= len(data) - _CATALOG_RECORD_SIZE:
-            return False
-        if data[catalog_base + 1 : catalog_base + 8] != b"Catalog":
+        catalog_base = 0
+        for unit, multiplier in (
+            ("allocation_block", _ALLOCATION_BLOCK_SIZE),
+            ("sector", _SECTOR_SIZE),
+            ("double_allocation_block", _ALLOCATION_BLOCK_SIZE * 2),
+        ):
+            candidate_base = catalog_block * multiplier
+            if (
+                0 < candidate_base <= len(data) - _CATALOG_RECORD_SIZE
+                and data[candidate_base + 1 : candidate_base + 8] == b"Catalog"
+            ):
+                catalog_base = candidate_base
+                self._catalog_pointer_unit = unit
+                break
+        if not catalog_base:
             return False
 
         self._data = data
         self._catalog_block = catalog_block
         self._catalog_base = catalog_base
         try:
-            roots = self._read_sibling_chain(0, _CATALOG_RECORD_SIZE, set())
+            # The catalog header holds the first root-node pointer.  Earlier
+            # package disks happen to use (0, 48), but later OIS releases may
+            # start their tree at another record in the catalog extent.
+            catalog_header = data[catalog_base : catalog_base + _CATALOG_RECORD_SIZE]
+            root_pointer = (catalog_header[31], catalog_header[34])
+            if root_pointer == (0, 0):
+                raise FilesystemError("Wang OIS package catalog has no root pointer")
+            roots = self._read_sibling_chain(*root_pointer, set())
             if not roots or not any(entry.is_dir for entry in roots):
                 raise FilesystemError("Wang OIS package catalog has no root directory nodes")
             self._roots = roots
@@ -148,6 +168,7 @@ class WangOISFilesystem(Filesystem):
             "filesystem": "wang_ois",
             "package_id": self._package_id,
             "catalog_allocation_block": self._catalog_block,
+            "catalog_pointer_unit": self._catalog_pointer_unit,
             "catalog_entries": len(self._paths),
             "files": len(files),
             "read_only": True,
@@ -167,6 +188,9 @@ class WangOISFilesystem(Filesystem):
                 raise FilesystemError("Wang OIS catalog pointer loop detected")
             seen.add(pointer)
             record = self._catalog_record(*pointer)
+            if all(byte in {0x00, 0x80} for byte in record[:16]):
+                # Catalog chains use an empty record as their terminator.
+                break
             entry = self._parse_record(record, *pointer)
             if entry.is_dir:
                 child = (record[27], record[29])
@@ -207,7 +231,7 @@ class WangOISFilesystem(Filesystem):
             entry.sector_count = record[29]
             entry.bytes_in_last_sector = record[37]
             entry.has_prologue = bool(record[39] & 0x01)
-            if entry.sector_count == 0 or entry.bytes_in_last_sector > _SECTOR_SIZE:
+            if entry.bytes_in_last_sector > _SECTOR_SIZE:
                 raise FilesystemError(f"Wang OIS file {name} has an invalid extent")
             start = entry.start_block * _ALLOCATION_BLOCK_SIZE
             allocation = (entry.sector_count + int(entry.has_prologue)) * _SECTOR_SIZE

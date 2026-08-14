@@ -1446,8 +1446,29 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
     # RX02 media may be a complete 77-track single-sided image (512512 bytes)
     # or a truncated/placeholder capture produced by tools that omit empty
     # sectors.  Only the complete physical geometry is unambiguous here.
-    wang_label = data_bytes[:8] == b"SP042060" and b"Wang" in data_bytes[:64]
-    if ext == ".img" and len(data_bytes) == 77 * 16 * 256 and wang_label:
+    wang_catalog_block = int.from_bytes(data_bytes[22:24], "little") if len(data_bytes) >= 24 else 0
+    wang_catalog_base = 0
+    wang_catalog_unit = ""
+    for unit, multiplier in (
+        ("allocation_block", 1024),
+        ("sector", 256),
+        ("double_allocation_block", 2048),
+    ):
+        candidate_base = wang_catalog_block * multiplier
+        if (
+            len(data_bytes) == 77 * 16 * 256
+            and 0 < candidate_base <= len(data_bytes) - 48
+            and data_bytes[candidate_base + 1 : candidate_base + 8] == b"Catalog"
+        ):
+            wang_catalog_base = candidate_base
+            wang_catalog_unit = unit
+            break
+    wang_catalog = (
+        len(data_bytes) == 77 * 16 * 256
+        and 0 < wang_catalog_base <= len(data_bytes) - 48
+        and data_bytes[wang_catalog_base + 1 : wang_catalog_base + 8] == b"Catalog"
+    )
+    if ext == ".img" and wang_catalog:
         layout = registry.layout.get("wang_ois_hs32_fm_315k")
         if layout is not None:
             track_data = _sectors_from_blob(layout, data_bytes)
@@ -1467,7 +1488,9 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
                         + [
                             "wang_geometry=77x16x256",
                             "physical_hard_sector_count=32",
-                            "wang_label=SP042060",
+                            f"wang_label={data_bytes[:8].rstrip(bytes([0])).decode('ascii', errors='replace')}",
+                            f"wang_catalog_block={wang_catalog_block}",
+                            f"wang_catalog_pointer_unit={wang_catalog_unit}",
                             f"layout={layout.layout_id}",
                         ]
                         + fs_evidence,
