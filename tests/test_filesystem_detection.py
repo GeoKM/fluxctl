@@ -22,6 +22,8 @@ FIXTURE_KAYPRO_CPM22_IMD = Path("tests/fixtures/5.25inch/CPM/KayproII-CPM-SSDD-M
 FIXTURE_RX01_INTERCHANGE_SCP = Path("tests/fixtures/8inch/DEC/DEC-RX01-SSSD-FM-RT11_IDF-250K.scp")
 FIXTURE_RX02_SSDD_SCP = Path("tests/fixtures/8inch/DEC/DEC-RX02-SSDD-Modified_MFM-RT11_FORTRAN-500K.scp")
 FIXTURE_RX01_CPM_SCP = Path("tests/fixtures/8inch/CPM/CPM-RX01-SSSD-FM-STATPAK311-256K.scp")
+FIXTURE_SEIKO_IMG = Path("tests/fixtures/8inch/Seiko/Seiko-8300-DSDD-FM+MFM-CPM22-1000K.img")
+FIXTURE_SEIKO_SCP = Path("tests/fixtures/8inch/Seiko/Seiko-8300-DSDD-FM+MFM-CPM22-1000K.scp")
 
 
 def test_detects_1541_cbm_dos_with_strong_probe() -> None:
@@ -126,6 +128,26 @@ def test_detects_kaypro_cpm_before_rt11_false_positive() -> None:
     assert detection.plugin is not None
     names = [entry.name for entry in detection.plugin.list_directory("/")]
     assert "STAT.COM" in names
+
+
+def test_detects_seiko_8300_catalog_for_flat_and_flux_images() -> None:
+    load_builtin_layouts()
+    for fixture in (FIXTURE_SEIKO_IMG, FIXTURE_SEIKO_SCP):
+        image = _prepare_image(fixture, "luxor_mfm_1000_program_994k", "mfm")
+        detection = detect_filesystem(image, path_name="unrelated-name.img")
+
+        assert detection.primary == "seiko_8300_cpm"
+        assert detection.plugin is not None
+        names = [entry.name for entry in detection.plugin.list_directory("/")]
+        assert "PATCH" in names
+        patch = next(entry for entry in detection.plugin.list_directory("/") if entry.name == "PATCH")
+        assert patch.size == 0
+        assert patch.cluster_start == 0
+        assert detection.plugin.metadata()["read_only"] is True
+        assert detection.plugin.metadata()["catalog_fields_mapped"] is True
+        assert detection.plugin.metadata()["catalog_offsets_monotonic"] is True
+        assert detection.plugin.metadata()["allocation_mapping_status"] == "unproven"
+        assert detection.plugin.metadata()["file_sizes_verified"] is False
 
 
 def test_detects_rx01_rt11_interchange_labels_without_claiming_residual_data() -> None:

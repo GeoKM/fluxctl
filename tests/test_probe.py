@@ -85,6 +85,7 @@ FIXTURE_TANDY_CPM22_SCP = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-
 FIXTURE_TANDY_CPMPLUS_DSK = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-CPMPlus-156K.dsk")
 FIXTURE_TANDY_CPMPLUS_IMD = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-CPMPlus-156K.imd")
 FIXTURE_TANDY_CPMPLUS_SCP = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-CPMPlus-156K.scp")
+FIXTURE_SEIKO_SCP = Path("tests/fixtures/8inch/Seiko/Seiko-8300-DSDD-FM+MFM-CPM22-1000K.scp")
 
 
 def test_probe_includes_gcr_candidates() -> None:
@@ -101,6 +102,16 @@ def test_probe_prefers_720k_layout() -> None:
     assert result.exit_code == 0
     assert "ibm_mfm_720k" in result.stdout
     assert "ibm_mfm_360k" not in result.stdout
+
+
+def test_probe_prefers_seiko_luxor_mixed_layout_and_catalog() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["probe", str(FIXTURE_SEIKO_SCP)])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload[0]["layout_id"] == "luxor_mfm_1000_program_994k"
+    assert payload[0]["filesystem"] == "seiko_8300_cpm"
+    assert "track_override_geometry_match=1/7" in payload[0]["evidence"]
 
 
 def test_probe_prefers_1440k_layout() -> None:

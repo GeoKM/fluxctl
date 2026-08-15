@@ -100,6 +100,52 @@ def detect_filesystem(image, *, path_name: str = "") -> FilesystemDetection:
             evidence=[f"layout={layout_id}", "no_supported_wang_ois_filesystem_probe"],
         )
 
+    if layout_id == "luxor_mfm_1000_program_994k":
+        seiko = registry.filesystem.get("seiko_8300_cpm")
+        if seiko and seiko.entry.probe(image):
+            return FilesystemDetection(
+                primary="seiko_8300_cpm",
+                confidence=0.96,
+                evidence=[
+                    f"layout={layout_id}",
+                    "seiko_8300_ddr1_catalog_probe=1",
+                    "seiko_8300_read_only_catalog=1",
+                ],
+                regions=[
+                    FilesystemRegion(
+                        "disk",
+                        "seiko_8300_cpm",
+                        ["EBCDIC DDR1 labels and Seiko 8300 catalog records detected"],
+                    )
+                ],
+                plugin=seiko.entry,
+            )
+        dataset = registry.filesystem.get("seiko_8300_ebcdic_dataset")
+        if dataset and dataset.entry.probe(image):
+            return FilesystemDetection(
+                primary="seiko_8300_ebcdic_dataset",
+                confidence=0.94,
+                evidence=[
+                    f"layout={layout_id}",
+                    "seiko_8300_ddr1_labels=1",
+                    "seiko_8300_ebcdic_three_sector_records=1",
+                    "seiko_8300_read_only_dataset=1",
+                ],
+                regions=[
+                    FilesystemRegion(
+                        "disk",
+                        "seiko_8300_ebcdic_dataset",
+                        ["EBCDIC DDR1 labels and fixed-cadence dataset headers detected"],
+                    )
+                ],
+                plugin=dataset.entry,
+            )
+        return FilesystemDetection(
+            primary=None,
+            confidence=0.0,
+            evidence=[f"layout={layout_id}", "no_supported_seiko_8300_filesystem_probe"],
+        )
+
     cpm = registry.filesystem.get("cpm")
     if layout_id.startswith("tandy_"):
         if cpm and cpm.entry.probe(image):

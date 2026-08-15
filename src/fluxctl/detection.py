@@ -138,6 +138,7 @@ def _estimate_geometry(image: SCPImage, decoder: Decoder, sample_tracks: int = 6
     sector_sizes: list[int] = []
     min_sector_ids: list[int] = []
     max_sector_ids: list[int] = []
+    track_sector_sizes: dict[str, list[int]] = {}
     track_samples = 0
     tracks_with_sectors = 0
     for track_flux in _tracks_with_flux(image):
@@ -185,6 +186,9 @@ def _estimate_geometry(image: SCPImage, decoder: Decoder, sample_tracks: int = 6
         else:
             sector_counts.append(len(track_sectors.sectors))
         sector_sizes.extend([sector.size for sector in track_sectors.sectors if sector.data])
+        track_sector_sizes[f"{track_flux.track}.{track_flux.side}"] = sorted(
+            {sector.size for sector in track_sectors.sectors if sector.data}
+        )
         if len(sector_counts) >= sample_tracks:
             break
 
@@ -196,6 +200,8 @@ def _estimate_geometry(image: SCPImage, decoder: Decoder, sample_tracks: int = 6
     if sector_sizes:
         geometry["sector_size"] = Counter(sector_sizes).most_common(1)[0][0]
         geometry["sector_size_set"] = sorted(set(sector_sizes))
+    if track_sector_sizes:
+        geometry["track_sector_sizes"] = track_sector_sizes
     if min_sector_ids:
         geometry["min_sector_id"] = Counter(min_sector_ids).most_common(1)[0][0]
     if max_sector_ids:
@@ -203,6 +209,60 @@ def _estimate_geometry(image: SCPImage, decoder: Decoder, sample_tracks: int = 6
     if track_samples:
         geometry["track_samples"] = track_samples
         geometry["tracks_with_sectors"] = tracks_with_sectors
+    return geometry
+
+
+def _apply_track_override_geometry_bonus(
+    desc: LayoutDescriptor, geometry: dict, evidence: list[str]
+) -> float:
+    """Reward layouts whose declared per-track sizes match decoded sectors."""
+
+    profiles = geometry.get("track_sector_sizes")
+    if not desc.track_overrides or not profiles:
+        return 0.0
+
+    override_matches = 0
+    base_matches = 0
+    for key, observed_sizes in profiles.items():
+        track_text, head_text = key.split(".", 1)
+        track = int(track_text)
+        head = int(head_text)
+        override = desc._match_override(track, head)
+        expected_size = int(override.get("sector_size", desc.sector_size)) if override else desc.sector_size
+        if observed_sizes == [expected_size]:
+            if override and expected_size != desc.sector_size:
+                override_matches += 1
+            elif expected_size == desc.sector_size:
+                base_matches += 1
+
+    if override_matches == 0 or base_matches == 0:
+        return 0.0
+    evidence.append(
+        f"track_override_geometry_match={override_matches}/{override_matches + base_matches}"
+    )
+    return 0.45
+
+
+def _augment_mfm_mixed_geometry(image: SCPImage, geometry: dict) -> dict:
+    """Add an FM track-override sample to otherwise MFM geometry hints."""
+
+    # A normal MFM disk can occasionally produce plausible FM sectors.  The
+    # Luxor program format is specifically 26 x 256-byte MFM data sectors with
+    # one 26 x 128-byte FM track, so only augment geometry for that signature.
+    if geometry.get("sectors_per_track") != 26 or geometry.get("sector_size") != 256:
+        return geometry
+    fm_plugin = registry.encoding.get("fm")
+    if fm_plugin is None:
+        return geometry
+    fm_geometry = _estimate_geometry(image, fm_plugin.entry, sample_tracks=2)
+    fm_profiles = fm_geometry.get("track_sector_sizes", {})
+    if "0.0" in fm_profiles and fm_profiles["0.0"] == [128]:
+        profiles = dict(geometry.get("track_sector_sizes", {}))
+        profiles.update({key: value for key, value in fm_profiles.items() if key == "0.0"})
+        geometry["track_sector_sizes"] = profiles
+        geometry["sector_size_set"] = sorted(
+            set(geometry.get("sector_size_set", [])) | {128}
+        )
     return geometry
 
 
@@ -406,6 +466,8 @@ def detect_layout(
     step = infer_track_step(track_ids)
     logical_tracks = logical_track_count(track_ids, step)
     geometry = _estimate_geometry(image, plugin.entry)
+    if encoding == "mfm":
+        geometry = _augment_mfm_mixed_geometry(image, geometry)
     bitstream_len = _estimate_bitstream_length(image, plugin.entry)
     flux_median = _estimate_flux_median(image)
     decoder_conf = _average_confidence(plugin.entry, image)
@@ -457,6 +519,7 @@ def detect_layout(
                 evidence.append(f"sector_size_mismatch={observed_size}")
 
         if desc.encoding == "mfm":
+            score += _apply_track_override_geometry_bonus(desc, geometry, evidence)
             score += _apply_tandy_mfm_bonus(desc, geometry, logical_tracks, heads_present, evidence)
             score += _apply_xdf_mfm_bonus(desc, geometry, logical_tracks, heads_present, evidence)
 
@@ -689,6 +752,8 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
     apple2_conf = _average_confidence(apple2_decoder, image) if apple2_decoder else None
     flux_median = _estimate_flux_median(image)
     mfm_geometry = _estimate_geometry(image, mfm_decoder) if mfm_decoder else {}
+    if mfm_decoder:
+        mfm_geometry = _augment_mfm_mixed_geometry(image, mfm_geometry)
     fm_bits = _estimate_bitstream_length(image, fm_decoder) if fm_decoder else None
     fm_conf = _average_confidence(fm_decoder, image) if fm_decoder else None
     rx02_geometry = {}
@@ -762,6 +827,7 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
                 else:
                     score -= 0.1
                     evidence.append(f"sector_size_mismatch={observed_size}")
+            score += _apply_track_override_geometry_bonus(desc, geometry, evidence)
             score += _apply_tandy_mfm_bonus(desc, geometry, logical_tracks, heads_present, evidence)
             if (
                 ("cpm" in desc.layout_id or _is_modelled_cpm_layout(desc))

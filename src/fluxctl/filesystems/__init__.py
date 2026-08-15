@@ -144,6 +144,7 @@ def load_builtin_filesystems() -> List[PluginInfo]:
     from .cpm import CPMFilesystem
     from .rt11 import RT11Filesystem, RT11InterchangeFilesystem
     from .displaywriter import DisplaywriterFS
+    from .seiko_8300 import Seiko8300CPM, Seiko8300EBCDICDataset
     from .trsdos import TRSDOS13Filesystem
     from .newdos80 import NEWDOS80Filesystem
     from .ldos import LDOSTRSDOS6Filesystem
@@ -212,6 +213,24 @@ def load_builtin_filesystems() -> List[PluginInfo]:
             version="0.1",
             entry=DisplaywriterFS(),
             description="IBM Displaywriter mixed-sector FM format probe",
+        ),
+    )
+    registry.register_filesystem(
+        "seiko_8300_cpm",
+        PluginInfo(
+            name="Seiko 8300 CP/M Catalog",
+            version="0.1",
+            entry=Seiko8300CPM(),
+            description="Read-only Seiko 8300 EBCDIC CP/M catalog probe",
+        ),
+    )
+    registry.register_filesystem(
+        "seiko_8300_ebcdic_dataset",
+        PluginInfo(
+            name="Seiko EBCDIC Indexed Dataset",
+            version="0.1",
+            entry=Seiko8300EBCDICDataset(),
+            description="Read-only Seiko-family EBCDIC indexed dataset reader",
         ),
     )
     registry.register_filesystem(
