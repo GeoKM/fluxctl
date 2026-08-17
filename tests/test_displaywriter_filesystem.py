@@ -6,11 +6,38 @@ from typer.testing import CliRunner
 from fluxctl import cli
 from fluxctl.cli import _prepare_image
 from fluxctl.exceptions import FilesystemError
+from fluxctl.filesystems import TrackSectorImage
 from fluxctl.filesystems.displaywriter import DisplaywriterFS
 from fluxctl.layouts.loader import load_builtin_layouts
+from fluxctl.sector.models import Sector, TrackSectors
 
 
 FIXTURE_DISPLAYWRITER = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWriter-284K.scp")
+
+
+def _displaywriter_2d_image() -> TrackSectorImage:
+    """Minimal 2D label geometry: FM index track plus a second head."""
+
+    def sector(track: int, head: int, sector_id: int, size: int, data: bytes = b"") -> Sector:
+        return Sector(track, head, sector_id, 1, data.ljust(size, b"\x40"), True, 1.0)
+
+    index = [sector(0, 0, sector_id, 128) for sector_id in range(1, 27)]
+    index[4] = sector(0, 0, 5, 128, "ERMAP".encode("cp037"))
+    index[6] = sector(0, 0, 7, 128, "VOL1DYSAN".encode("cp037"))
+    index[7] = sector(0, 0, 8, 128, "HDR1LEGK1".encode("cp037"))
+    data_track = [sector(0, 1, sector_id, 256) for sector_id in range(1, 27)]
+    return TrackSectorImage(
+        [TrackSectors(0, 0, index), TrackSectors(0, 1, data_track)],
+        bytes_per_sector=256,
+    )
+
+
+def test_displaywriter_accepts_double_sided_2d_label_geometry() -> None:
+    load_builtin_layouts()
+    fs = DisplaywriterFS()
+
+    assert fs.probe(_displaywriter_2d_image())
+    assert fs.metadata()["volume_label"] == "DYSAN"
 
 
 def test_displaywriter_lists_wpe_container_and_metadata() -> None:

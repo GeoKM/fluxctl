@@ -923,6 +923,7 @@ LAYOUT_FILESYSTEM_HINTS: dict[str, str] = {
     "generic_mfm_8inch_500k": "rt11",
     "dec_dec_rx02_rx02_250k": "rt11",
     "ibm_displaywriter_fm_284k": "displaywriter",
+    "ibm_displaywriter_mfm_985k": "displaywriter",
     "commodore_gcr_1541_cpm_170k": "cpm",
     "commodore_gcr_1571_341k": "cbm_dos",
     "commodore_mfm_1581_800k": "cbm_dos",
@@ -1538,6 +1539,36 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
                         + fs_evidence,
                     )
                 ]
+
+    # IBM Displaywriter diskette 2D uses 26 x 128-byte index sectors on
+    # track 0 side 0, then 26 x 256-byte sectors on both sides.
+    if ext == ".img" and len(data_bytes) == 1021696:
+        layout = registry.layout.get("ibm_displaywriter_mfm_985k")
+        if layout is not None:
+            track_data = _sectors_from_blob(layout, data_bytes)
+            if track_data is not None:
+                image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
+                image_obj.layout = layout
+                _apply_layout_geometry(image_obj, layout)
+                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+                if fs_name == "displaywriter":
+                    return [
+                        CandidateFormat(
+                            candidate_id=layout.layout_id,
+                            encoding=layout.encoding,
+                            layout_id=layout.layout_id,
+                            filesystem=fs_name,
+                            score=1.0,
+                            evidence=evidence
+                            + [
+                                "displaywriter_2d_geometry=77x2x26",
+                                "displaywriter_track0_head0=26x128",
+                                "displaywriter_data_tracks=26x256",
+                                f"layout={layout.layout_id}",
+                            ]
+                            + fs_evidence,
+                        )
+                    ]
 
     if ext == ".img" and len(data_bytes) in {77 * 26 * 256, 255872, 511872}:
         layout = registry.layout.get("dec_dec_rx02_rx02_250k")

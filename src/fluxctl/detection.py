@@ -102,6 +102,41 @@ def _average_confidence(decoder: Decoder, image: SCPImage, sample_tracks: int = 
     return sum(confidences) / len(confidences)
 
 
+def _displaywriter_2d_label_probe(
+    image: SCPImage,
+    fm_decoder: Decoder | None,
+    logical_tracks: int,
+    heads_present: set[int],
+) -> bool:
+    """Recognise IBM 2D interchange labels without using fixture names."""
+
+    if fm_decoder is None or logical_tracks != 77 or heads_present != {0, 1}:
+        return False
+    track = next(
+        (item for item in image.tracks if item.track == 0 and item.side == 0 and item.revolutions),
+        None,
+    )
+    if track is None:
+        return False
+    try:
+        decoded = build_track_sectors_from_revolutions(
+            track.revolutions,
+            fm_decoder,
+            cylinder=0,
+            head=0,
+            expected_sectors=26,
+            encoding="fm",
+            timebase_ns=image.timebase_ns,
+        )
+    except FluxDecodeError:
+        return False
+    labels = [sector.data[:128].decode("cp037", errors="replace") for sector in decoded.sectors]
+    has_vol1 = any(label.startswith("VOL1") for label in labels)
+    has_hdr1 = any(label.startswith("HDR1") for label in labels)
+    volume = next((label[4:10].strip() for label in labels if label.startswith("VOL1")), "")
+    return has_vol1 and has_hdr1 and volume != "SEIKO"
+
+
 def detect_encoding(
     image: SCPImage, path: Optional[Path] = None, hint: LayoutHint | None = None
 ) -> Optional[EncodingCandidate]:
@@ -477,11 +512,19 @@ def detect_layout(
     bitstream_len = _estimate_bitstream_length(image, plugin.entry)
     flux_median = _estimate_flux_median(image)
     decoder_conf = _average_confidence(plugin.entry, image)
+    displaywriter_2d_labels = _displaywriter_2d_label_probe(
+        image,
+        registry.encoding.get("fm").entry if registry.encoding.get("fm") else None,
+        logical_tracks,
+        heads_present,
+    )
 
     best: Optional[LayoutCandidate] = None
     for desc in layouts:
         expected_entries = desc.tracks * desc.sides
         observed_entries = len(geometry_tracks)
+        if desc.layout_id == "ibm_displaywriter_mfm_985k" and not displaywriter_2d_labels:
+            continue
         entries_diff = abs(expected_entries - observed_entries)
         score = 1.0 - (entries_diff / max(expected_entries, observed_entries, 1))
         expected_cylinders = desc.tracks
@@ -826,6 +869,12 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
         and apple2_geometry.get("sectors_per_track") == 16
         and apple2_geometry.get("sector_size") == 256
     )
+    displaywriter_2d_labels = _displaywriter_2d_label_probe(
+        image,
+        fm_decoder,
+        logical_tracks,
+        heads_present,
+    )
     fm_ratio = None
     if fm_bits is not None and mfm_bits is not None and mfm_bits > 0:
         fm_ratio = fm_bits / mfm_bits
@@ -833,6 +882,8 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
     best: Optional[LayoutCandidate] = None
     for desc in registry.layout.values():
         if desc.encoding not in registry.encoding:
+            continue
+        if desc.layout_id == "ibm_displaywriter_mfm_985k" and not displaywriter_2d_labels:
             continue
         geometry_tracks = _geometry_tracks_for_encoding(image, desc.encoding)
         track_ids = [track.track for track in geometry_tracks]
