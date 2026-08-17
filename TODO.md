@@ -76,6 +76,15 @@
   PDRIVE geometries, FXDE continuation records, and nonstandard directory sizes.
 - Keep `docs/filesystem_capabilities.md` updated whenever filesystem listing,
   extraction/export, or copy-only mutation support changes.
+- Add read-only Wang OIS system/software-disk support. The 315K HS32 geometry
+  is now identified and mapped in the logical 16x256-byte view, but system
+  disks such as ACMS80228 do not match the supported package catalog. Wang's
+  documented standard VTOC uses 2 KiB blocks and begins at block 4 with FDAV,
+  FDX1, FDX2, and FDR structures; ACMS80228 has executable/system data there.
+  Obtain a known-good system-volume VTOC/module-table sample, prove file
+  extents against physical sectors, then enable listing, selected-file
+  overlays, and export. Do not infer file extents from embedded program
+  strings. See `docs/wang_ois_system_disk_research.md`.
 - Extend copy-only file and directory manipulation beyond the currently enabled
   writers:
   - CBM DOS 1541/1571 `.d64/.d71`: add directory-safe replace/delete/import
