@@ -100,7 +100,25 @@ def detect_filesystem(image, *, path_name: str = "") -> FilesystemDetection:
             evidence=[f"layout={layout_id}", "no_supported_wang_ois_filesystem_probe"],
         )
 
-    if layout_id == "luxor_mfm_1000_program_994k":
+    if layout_id in {"ibm_displaywriter_mfm_985k", "luxor_mfm_1000_program_994k"}:
+        displaywriter = registry.filesystem.get("displaywriter")
+        if displaywriter and displaywriter.entry.probe(image):
+            metadata = displaywriter.entry.metadata()
+            # Seiko media shares the IBM label family, so retain the known
+            # Seiko volume exception while allowing other labelled volumes to
+            # use the Displaywriter/IBM interchange interpretation.
+            if layout_id == "ibm_displaywriter_mfm_985k" or metadata.get("volume_label") != "SEIKO":
+                return FilesystemDetection(
+                    primary="displaywriter",
+                    confidence=0.98,
+                    evidence=[
+                        f"layout={layout_id}",
+                        "ibm_displaywriter_2d_geometry=1" if layout_id == "ibm_displaywriter_mfm_985k" else "displaywriter_label_probe=1",
+                        "ibm_ermap_vol1_hdr1_labels=1",
+                    ],
+                    regions=[FilesystemRegion("disk", "displaywriter", ["IBM ERMAP/VOL1/HDR1 interchange records detected"])],
+                    plugin=displaywriter.entry,
+                )
         seiko = registry.filesystem.get("seiko_8300_cpm")
         if seiko and seiko.entry.probe(image):
             return FilesystemDetection(

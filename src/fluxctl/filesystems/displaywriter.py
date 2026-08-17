@@ -23,9 +23,10 @@ class DisplaywriterFS(Filesystem):
     """Detect Displaywriter mixed-sector FM 8-inch format.
 
     Characteristics (per preservation reports):
-    - Single-sided FM
-    - Track 0: 26 sectors, 128 bytes
-    - Tracks 1-76: 15 sectors, 256 bytes
+    - Original 1D media: single-sided FM, 26 x 128-byte index sectors, then
+      15 x 256-byte data sectors.
+    - 2D media: two sides and 77 tracks, with 26 x 128-byte FM index sectors
+      on track 0 side 0 and 26 x 256-byte MFM sectors elsewhere.
     Track 0 carries IBM standard labels plus DisplayWriter control slots in
     EBCDIC. The user document catalogue inside the WPE container is not fully
     decoded yet, so this reader exposes WPE as a virtual container with raw
@@ -65,6 +66,13 @@ class DisplaywriterFS(Filesystem):
             return False
         self.image = image
         self._labels = self._read_track0_labels(image)
+        # Mixed-sector geometry alone also matches several Seiko/IBM-labelled
+        # disks. Require IBM interchange control records before claiming the
+        # Displaywriter interpretation.
+        label_kinds = {label.kind for label in self._labels}
+        if "VOL1" not in label_kinds or "HDR1" not in label_kinds:
+            self._labels = []
+            return False
         self._container_name = self._first_hdr1_name() or "WPE"
         self._container_block_len = self._first_hdr1_block_len()
         self._volume_label = self._read_volume_label()
