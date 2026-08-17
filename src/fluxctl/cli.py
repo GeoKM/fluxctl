@@ -788,7 +788,10 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
             image.layout = layout_desc
             _apply_layout_geometry(image, layout_desc)
             return image
-        if layout_desc and layout_desc.layout_id == "wang_ois_hs32_fm_315k":
+        if layout_desc and layout_desc.layout_id in {
+            "wang_ois_hs32_fm_315k",
+            "wang_ois_hs32_fm_315k_128",
+        }:
             from .sector.reconstruct_wang import reconstruct_wang_track
 
             scp = parse_scp(path)
@@ -797,6 +800,13 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
                 for ts in scp.tracks
                 if ts.track < layout_desc.tracks and ts.side < layout_desc.sides and ts.revolutions
             ]
+            if not any(track.sectors for track in track_data):
+                # Preserve the detected physical layout even when this Wang
+                # capture uses a framing variant that the sector decoder does
+                # not yet understand.
+                image = RawSectorImage(path.read_bytes(), bytes_per_sector=layout_desc.sector_size)
+                image.layout = layout_desc
+                return image
             image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
             image.layout = layout_desc
             _apply_layout_geometry(image, layout_desc)
@@ -1491,6 +1501,38 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
                             f"wang_label={data_bytes[:8].rstrip(bytes([0])).decode('ascii', errors='replace')}",
                             f"wang_catalog_block={wang_catalog_block}",
                             f"wang_catalog_pointer_unit={wang_catalog_unit}",
+                            f"layout={layout.layout_id}",
+                        ]
+                        + fs_evidence,
+                    )
+                ]
+
+    # Wang HS32 media has 32 physical hard-sector windows, but the OIS disk
+    # format exposes them as 16 logical 256-byte sectors per track.  Keep the
+    # logical view for flat images so filesystem readers and sector mapping
+    # address the same units as Wang software.  The physical count remains in
+    # the evidence for callers that need to distinguish HS32 media.
+    if ext == ".img" and len(data_bytes) == 77 * 32 * 128:
+        layout = registry.layout.get("wang_ois_hs32_fm_315k")
+        if layout is not None:
+            track_data = _sectors_from_blob(layout, data_bytes)
+            if track_data is not None:
+                image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
+                image_obj.layout = layout
+                _apply_layout_geometry(image_obj, layout)
+                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+                return [
+                    CandidateFormat(
+                        candidate_id=layout.layout_id,
+                        encoding=layout.encoding,
+                        layout_id=layout.layout_id,
+                        filesystem=fs_name,
+                        score=0.65,
+                        evidence=evidence
+                        + [
+                            "wang_geometry=77x16x256_logical",
+                            "physical_hard_sector_count=32",
+                            "wang_catalog_probe_deferred=1",
                             f"layout={layout.layout_id}",
                         ]
                         + fs_evidence,

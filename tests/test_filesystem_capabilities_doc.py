@@ -24,7 +24,7 @@ def test_filesystem_capabilities_documents_current_studio_media() -> None:
         "Tandy/TRS-80 `.dsk`/`.dmk`/`.imd`/`.scp`",
         "DisplayWriter",
         "RT-11",
-        "Wang OIS 315K `.img`/decoded `.scp`",
+            "Wang OIS 315K package `.img`/decoded `.scp`",
     ]
 
     for row in expected_rows:

@@ -5,6 +5,8 @@ from fluxctl.decoding.wang import wang_crc16
 from fluxctl.layouts.loader import load_builtin_layouts
 from fluxctl.cli import _prepare_image
 from fluxctl.filesystem_detection import detect_filesystem
+from fluxctl.detection import detect_layout_any
+from fluxctl.models import RevolutionFlux, SCPImage, TrackFlux
 from fluxctl import studio_services as services
 
 
@@ -162,3 +164,44 @@ def test_wang_layout_detection_wins_over_generic_filesystem_false_positives() ->
     assert detection.primary == "wang_ois"
     assert detection.confidence == 0.99
     assert "wang_ois_catalog_probe=1" in detection.evidence
+
+
+def test_wang_hs32_flat_image_uses_logical_256_byte_sectors_without_catalog(tmp_path: Path) -> None:
+    image_path = tmp_path / "wang-hs32.img"
+    data = bytearray(77 * 32 * 128)
+    data[:8] = b"21/08/80"
+    image_path.write_bytes(data)
+
+    candidates = _probe_flat_image(image_path)
+
+    assert candidates
+    assert candidates[0].layout_id == "wang_ois_hs32_fm_315k"
+    assert candidates[0].filesystem is None
+    assert "wang_geometry=77x16x256_logical" in candidates[0].evidence
+
+
+def test_wang_scp_with_empty_head_placeholder_gets_provisional_geometry() -> None:
+    tracks = [
+        TrackFlux(
+            track=track,
+            side=0,
+            revolutions=[RevolutionFlux(index=0, interval_ns=[200_000_000])],
+        )
+        for track in range(77)
+    ]
+    tracks.extend(TrackFlux(track=track, side=1) for track in range(77))
+    image = SCPImage(
+        path=Path("capture.scp"),
+        version=37,
+        revolutions_per_track=2,
+        timebase_ns=25.0,
+        tracks=tracks,
+    )
+
+    load_builtin_layouts()
+    candidate = detect_layout_any(image, image.path)
+
+    assert candidate is not None
+    assert candidate.layout.layout_id == "wang_ois_hs32_fm_315k_128"
+    assert candidate.score == 0.65
+    assert "wang_empty_head1_placeholders=1" in candidate.evidence

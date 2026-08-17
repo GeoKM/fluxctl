@@ -452,6 +452,12 @@ def detect_layout(
 ) -> Optional[LayoutCandidate]:
     """Pick the most likely layout for an image and encoding."""
 
+    # Wang hard-sector captures need the format-specific selector.  The
+    # generic scorer only sees FM timing and can replace a provisional Wang
+    # result with an RX01/Xerox layout after encoding detection succeeds.
+    if encoding == "wang_fm":
+        return detect_layout_any(image, path, hint=hint)
+
     layouts = [desc for desc in registry.layout.values() if desc.encoding == encoding]
     if not layouts:
         return None
@@ -713,6 +719,7 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
         return None
 
     wang_layout = registry.layout.get("wang_ois_hs32_fm_315k")
+    wang_128_layout = registry.layout.get("wang_ois_hs32_fm_315k_128")
     if wang_layout is not None:
         useful = [
             track
@@ -733,6 +740,40 @@ def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = Non
                         "wang_rpm_nominal=360",
                     ],
                 )
+            # Some SuperCard Pro captures contain the second-side placeholder
+            # tracks but no recorded head-1 flux.  When Wang CRC framing is
+            # not recognised, retain the physical identification as a
+            # provisional result rather than misclassifying the disk as RX01.
+            # The flat counterpart of this capture is serialized as 32 x 128
+            # byte sectors, so use the explicit physical-sector layout.
+            if wang_128_layout is not None:
+                active = [track for track in useful if track.revolutions]
+                side_one = [track for track in image.tracks if track.side == 1]
+                side_one_empty = side_one and all(
+                    not any(rev.interval_ns for rev in track.revolutions)
+                    for track in side_one
+                )
+                durations = [
+                    sum(rev.interval_ns) / 1_000_000
+                    for track in active[:4]
+                    for rev in track.revolutions
+                    if rev.interval_ns
+                ]
+                duration_match = durations and all(180.0 <= value <= 220.0 for value in durations)
+                if len(active) >= 70 and side_one_empty and duration_match:
+                    return LayoutCandidate(
+                        layout=wang_128_layout,
+                        score=0.65,
+                        evidence=[
+                            "wang_hs32_crc_unverified=1",
+                            "wang_physical_tracks=77",
+                            "wang_physical_sectors=32",
+                            "wang_physical_sector_size=128",
+                            "wang_empty_head1_placeholders=1",
+                            "wang_revolution_timing=200ms",
+                            "wang_filesystem_probe_deferred=1",
+                        ],
+                    )
 
     active_tracks = _tracks_with_flux(image)
     default_geometry_tracks = active_tracks or image.tracks
