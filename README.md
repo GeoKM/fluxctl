@@ -201,6 +201,14 @@ The GUI uses the same fluxctl package and CLI command paths as terminal
 workflows. Outputs such as converted images, QC reports, and provenance sidecars
 therefore follow the same behavior documented above.
 
+Long-running Studio operations are shown in the Jobs & Logs tab with an elapsed
+time indicator and a cancellation control. Cancellation is cooperative: an
+operation that is already inside a non-interruptible decoder may finish in the
+background, but its result is discarded. Starting a newer operation or opening
+another image likewise prevents an older result from replacing current-screen
+data. Window layout, mode, map view, format selections, and common browsing or
+Greaseweazle settings are saved with the operating system's application settings.
+
 For SCP inputs, `convert` auto-detects the likely layout when `--layout` is not
 provided. Pass `--layout` when you want to force a specific interpretation or
 when a damaged/ambiguous capture cannot be identified confidently.
