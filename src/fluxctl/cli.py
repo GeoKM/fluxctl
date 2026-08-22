@@ -754,7 +754,7 @@ def _filesystem_probe_payload(detection: FilesystemDetection) -> tuple[Optional[
     return detection.primary, evidence
 
 
-def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
+def _legacy_prepare_image(path: Path, layout_id: Optional[str], encoding: str):
     layout_desc = ensure_layout_loaded(layout_id) if layout_id else None
     ext = path.suffix.lower()
 
@@ -845,6 +845,12 @@ def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
         image.layout = layout_desc
         return image
     return RawSectorImage(path.read_bytes())
+
+
+def _prepare_image(path: Path, layout_id: Optional[str], encoding: str):
+    from .application.image_operations import prepare_image
+
+    return prepare_image(path, layout_id, encoding)
 
 
 def _apply_layout_geometry(image: TrackSectorImage, layout: LayoutDescriptor) -> None:
