@@ -13,8 +13,7 @@ from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QAbstractItemView, QFileDialog, QMessageBox
 
 from fluxctl import studio_services as services
-from fluxctl.gui import FluxctlStudio
-from fluxctl.gui import DiskMapWidget
+from fluxctl.gui import DiskMapWidget, FluxctlStudio, Job
 from fluxctl.reports.map import DiskMap, SectorMapEntry
 
 
@@ -529,6 +528,44 @@ def test_studio_styles_disabled_actions_distinctly() -> None:
     window.close()
 
 
+def test_studio_exposes_job_progress_and_cancellation_controls() -> None:
+    window = FluxctlStudio()
+
+    assert window.job_progress.minimum() == 0
+    assert window.job_progress.maximum() == 0
+    assert window.job_cancel_button.text() == "Cancel Job"
+    assert window.job_status_label.text().startswith("Running doctor") or window.job_status_label.text() == "No active jobs"
+
+    window.close()
+
+
+def test_job_cancellation_discards_result() -> None:
+    events: list[str] = []
+    finished: list[object] = []
+    job = Job(lambda: events.append("finished"))
+    job.signals.cancelled.connect(lambda: events.append("cancelled"))
+    job.signals.finished.connect(finished.append)
+
+    job.cancel()
+    job.run()
+
+    assert events == ["finished", "cancelled"]
+    assert finished == []
+
+
+def test_stale_job_result_is_discarded() -> None:
+    window = FluxctlStudio()
+    applied: list[object] = []
+    stale_job = Job(lambda: None)
+    window._job_generation = 2
+
+    window._finish_job(stale_job, 1, "old probe", object(), applied.append)
+
+    assert applied == []
+    assert "Discarded stale result from old probe." in window.log.toPlainText()
+    window.close()
+
+
 def test_simple_mode_uses_sidebar_summary_and_larger_file_area() -> None:
     window = FluxctlStudio()
 
@@ -979,7 +1016,7 @@ def test_advanced_panel_shows_doctor_summary_without_image() -> None:
 
     window._show_doctor(
         {
-            "version": "0.3.2",
+            "version": "0.3.3",
             "overall": "ok",
             "checks": [{"name": "layouts", "status": "ok", "detail": "114 loaded", "suggestion": ""}],
         }
@@ -1308,6 +1345,7 @@ def test_sector_hex_stepper_refreshes_immediately(monkeypatch) -> None:
 
 def test_cbm_sector_hex_input_uses_logical_track_numbers(monkeypatch) -> None:
     window = FluxctlStudio()
+    window.mode.setCurrentIndex(0)
     window.current_path = Path("/tmp/example.d64")
     window.current_summary = services.ImageSummary(
         path="/tmp/example.d64",

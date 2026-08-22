@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import math
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -11,7 +13,7 @@ from . import studio_services as services
 
 
 try:  # pragma: no cover - exercised only when GUI dependencies are installed.
-    from PySide6.QtCore import QObject, QRunnable, QStandardPaths, Qt, QThreadPool, Signal, Slot
+    from PySide6.QtCore import QObject, QRunnable, QSettings, QStandardPaths, Qt, QThreadPool, Signal, Slot, QTimer
     from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
     from PySide6.QtWidgets import (
         QApplication,
@@ -31,6 +33,7 @@ try:  # pragma: no cover - exercised only when GUI dependencies are installed.
         QMainWindow,
         QMessageBox,
         QPushButton,
+        QProgressBar,
         QSpinBox,
         QStackedWidget,
         QTableWidget,
@@ -51,6 +54,8 @@ except ImportError as exc:  # pragma: no cover - import guard.
 class JobSignals(QObject):
     finished = Signal(object)
     failed = Signal(str)
+    cancelled = Signal()
+    progress = Signal(int)
 
 
 class Job(QRunnable):
@@ -58,17 +63,36 @@ class Job(QRunnable):
         super().__init__()
         self.fn = fn
         self.signals = JobSignals()
+        self.cancel_event = threading.Event()
+        self.started_at = time.monotonic()
+
+    def cancel(self) -> None:
+        """Request cooperative cancellation; the result will be discarded."""
+
+        self.cancel_event.set()
+
+    @property
+    def cancelled_requested(self) -> bool:
+        return self.cancel_event.is_set()
 
     @Slot()
     def run(self) -> None:
         try:
+            self.signals.progress.emit(0)
             result = self.fn()
+            if self.cancelled_requested:
+                self.signals.cancelled.emit()
+                return
             try:
+                self.signals.progress.emit(100)
                 self.signals.finished.emit(result)
             except RuntimeError:
                 pass
         except Exception as exc:  # pragma: no cover - GUI error transport.
             try:
+                if self.cancelled_requested:
+                    self.signals.cancelled.emit()
+                    return
                 self.signals.failed.emit(str(exc))
             except RuntimeError:
                 pass
@@ -450,8 +474,15 @@ class FluxctlStudio(QMainWindow):
         super().__init__()
         self.setWindowTitle("Fluxctl Studio")
         self.resize(1440, 900)
+        self.settings = QSettings("GeoKM", "FluxctlStudio")
         self.thread_pool = QThreadPool.globalInstance()
         self.active_jobs: set[Job] = set()
+        self.current_job: Optional[Job] = None
+        self._job_generation = 0
+        self._job_started_at = 0.0
+        self._job_timer = QTimer(self)
+        self._job_timer.setInterval(250)
+        self._job_timer.timeout.connect(self._update_job_elapsed)
         self.current_path: Optional[Path] = None
         self.current_summary = None
         self.file_browser_path = "/"
@@ -463,6 +494,7 @@ class FluxctlStudio(QMainWindow):
         self.greaseweazle_formats = services.greaseweazle_formats()
         self._advanced_hex_dump: Optional[services.HexDumpView] = None
         self._build_ui()
+        self._restore_settings()
         self._apply_style()
         self._update_hardware_controls()
         self._update_filesystem_write_actions()
@@ -556,6 +588,18 @@ class FluxctlStudio(QMainWindow):
         self.jobs_page = QWidget()
         jobs_layout = QVBoxLayout(self.jobs_page)
         jobs_layout.setContentsMargins(8, 8, 8, 8)
+        job_controls = QHBoxLayout()
+        self.job_status_label = QLabel("No active jobs")
+        self.job_progress = QProgressBar()
+        self.job_progress.setRange(0, 0)
+        self.job_progress.setVisible(False)
+        self.job_cancel_button = QPushButton("Cancel Job")
+        self.job_cancel_button.setEnabled(False)
+        self.job_cancel_button.clicked.connect(self.cancel_current_job)
+        job_controls.addWidget(self.job_status_label)
+        job_controls.addWidget(self.job_progress, 1)
+        job_controls.addWidget(self.job_cancel_button)
+        jobs_layout.addLayout(job_controls)
         jobs_layout.addWidget(self.log)
 
         self.main_tabs = QTabWidget()
@@ -1014,28 +1058,150 @@ class FluxctlStudio(QMainWindow):
     def _append_log(self, text: str) -> None:
         self.log.append(text)
 
+    def _restore_settings(self) -> None:
+        """Restore non-destructive UI preferences from the platform settings store."""
+
+        geometry = self.settings.value("window/geometry")
+        state = self.settings.value("window/state")
+        if geometry:
+            self.restoreGeometry(geometry)
+        if state:
+            self.restoreState(state)
+        self._restore_combo(self.mode, "mode", 0)
+        self._restore_combo(self.map_view, "map_view", 0)
+        self._restore_combo(self.layout_combo, "layout", 0)
+        self._restore_combo(self.encoding_combo, "encoding", 0)
+        self._restore_combo(self.export_combo, "export", 0)
+        self._restore_combo(self.dump_mode_combo, "dump_mode", 0)
+        self._restore_combo(self.greaseweazle_drive_combo, "greaseweazle/drive", 0)
+        self._restore_combo(self.greaseweazle_format_combo, "greaseweazle/format", 0)
+        self.greaseweazle_tracks_input.setText(str(self.settings.value("greaseweazle/tracks", "")))
+        self.greaseweazle_revs_input.setText(str(self.settings.value("greaseweazle/revs", "")))
+        self.file_browser_path = str(self.settings.value("files/directory", "/")) or "/"
+        self.advanced_file_browser_path = str(self.settings.value("advanced/directory", "/")) or "/"
+        self._set_file_browser_path(self.file_browser_path)
+
+    def _restore_combo(self, combo: QComboBox, key: str, default_index: int) -> None:
+        value = self.settings.value(key)
+        if value is None:
+            combo.setCurrentIndex(default_index)
+            return
+        index = combo.findData(value)
+        if index < 0:
+            index = combo.findText(str(value))
+        combo.setCurrentIndex(index if index >= 0 else default_index)
+
+    def _save_settings(self) -> None:
+        self.settings.setValue("window/geometry", self.saveGeometry())
+        self.settings.setValue("window/state", self.saveState())
+        for combo, key in (
+            (self.mode, "mode"),
+            (self.map_view, "map_view"),
+            (self.layout_combo, "layout"),
+            (self.encoding_combo, "encoding"),
+            (self.export_combo, "export"),
+            (self.dump_mode_combo, "dump_mode"),
+            (self.greaseweazle_drive_combo, "greaseweazle/drive"),
+            (self.greaseweazle_format_combo, "greaseweazle/format"),
+        ):
+            self.settings.setValue(key, combo.currentData() or combo.currentText())
+        self.settings.setValue("greaseweazle/tracks", self.greaseweazle_tracks_input.text())
+        self.settings.setValue("greaseweazle/revs", self.greaseweazle_revs_input.text())
+        self.settings.setValue("files/directory", self.file_browser_path)
+        self.settings.setValue("advanced/directory", self.advanced_file_browser_path)
+        self.settings.sync()
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        self._save_settings()
+        for job in tuple(self.active_jobs):
+            job.cancel()
+        super().closeEvent(event)
+
+    def _update_job_elapsed(self) -> None:
+        if self.current_job is None or self.current_job not in self.active_jobs:
+            return
+        elapsed = time.monotonic() - self._job_started_at
+        label = self.job_status_label.text().split(" (")[0]
+        self.job_status_label.setText(f"{label} ({elapsed:.1f}s)")
+
+    def _set_job_finished_state(self) -> None:
+        self._job_timer.stop()
+        self.current_job = None
+        self.job_cancel_button.setEnabled(False)
+        self.job_progress.setVisible(False)
+        self.job_status_label.setText("No active jobs")
+
+    def cancel_current_job(self) -> None:
+        job = self.current_job
+        if job is None or job not in self.active_jobs:
+            return
+        job.cancel()
+        self.job_cancel_button.setEnabled(False)
+        self.activity_label.setText("Cancellation requested; finishing the current operation...")
+        self.job_status_label.setText("Cancellation requested")
+        self._append_log("Cancellation requested for the active job.")
+
     def _run_job(self, label: str, fn: Callable[[], object], done: Callable[[object], None]) -> None:
+        self._job_generation += 1
+        generation = self._job_generation
         self.summary_labels["status"].setText("running")
         self.activity_label.setText(f"Running {label}...")
         self._append_log(f"$ {label}")
         job = Job(fn)
         self.active_jobs.add(job)
-        job.signals.finished.connect(lambda result, current_job=job: self._finish_job(current_job, label, result, done))
-        job.signals.failed.connect(lambda message, current_job=job: self._fail_job(current_job, label, message))
+        self.current_job = job
+        self._job_started_at = time.monotonic()
+        self.job_status_label.setText(f"Running {label}")
+        self.job_progress.setRange(0, 0)
+        self.job_progress.setVisible(True)
+        self.job_cancel_button.setEnabled(True)
+        self._job_timer.start()
+        job.signals.progress.connect(lambda value, current_job=job: self._show_job_progress(current_job, value))
+        job.signals.finished.connect(
+            lambda result, current_job=job: self._finish_job(current_job, generation, label, result, done)
+        )
+        job.signals.failed.connect(lambda message, current_job=job: self._fail_job(current_job, generation, label, message))
+        job.signals.cancelled.connect(lambda current_job=job: self._cancelled_job(current_job, generation, label))
         self.thread_pool.start(job)
 
-    def _finish_job(self, job: Job, label: str, result: object, done: Callable[[object], None]) -> None:
+    def _show_job_progress(self, job: Job, value: int) -> None:
+        if job is not self.current_job:
+            return
+        self.job_progress.setRange(0, 100)
+        self.job_progress.setValue(value)
+
+    def _finish_job(self, job: Job, generation: int, label: str, result: object, done: Callable[[object], None]) -> None:
         self.active_jobs.discard(job)
+        if job is self.current_job:
+            self._set_job_finished_state()
+        if generation != self._job_generation:
+            self._append_log(f"Discarded stale result from {label}.")
+            return
         self.activity_label.setText(f"Finished {label}.")
         if self.summary_labels["status"].text() == "running":
             self.summary_labels["status"].setText("ready")
         done(result)
 
-    def _fail_job(self, job: Job, label: str, message: str) -> None:
+    def _fail_job(self, job: Job, generation: int, label: str, message: str) -> None:
         self.active_jobs.discard(job)
+        if job is self.current_job:
+            self._set_job_finished_state()
+        if generation != self._job_generation:
+            self._append_log(f"Discarded stale error from {label}: {message}")
+            return
         self.summary_labels["status"].setText("error")
         self.activity_label.setText(f"{label} failed: {message}")
         self._append_log(f"Error: {message}")
+
+    def _cancelled_job(self, job: Job, generation: int, label: str) -> None:
+        self.active_jobs.discard(job)
+        if job is self.current_job:
+            self._set_job_finished_state()
+        if generation != self._job_generation:
+            return
+        self.summary_labels["status"].setText("ready")
+        self.activity_label.setText(f"Cancelled {label}.")
+        self._append_log(f"Cancelled {label}.")
 
     def open_image(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
