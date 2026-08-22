@@ -181,12 +181,26 @@ def test_convert_dialog_defaults_output_next_to_source(monkeypatch, tmp_path) ->
         return ("converted.img", "")
 
     monkeypatch.setattr(QFileDialog, "getSaveFileName", fake_save)
-    monkeypatch.setattr(window, "_run_cli", lambda args: captured.setdefault("args", args))
+    def fake_run_job(_label, fn, _done):
+        captured["operation"] = fn
+
+    monkeypatch.setattr(window, "_run_job", fake_run_job)
+    monkeypatch.setattr(
+        "fluxctl.gui.convert_image",
+        lambda *args, **kwargs: captured.setdefault("args", args),
+    )
 
     window.convert_dialog()
 
     assert captured["default_name"] == str(tmp_path / "disk-converted.img")
-    assert captured["args"][5] == str(tmp_path / "converted.img")
+    captured["operation"]()
+    assert captured["args"] == (
+        source,
+        tmp_path / "converted.img",
+        "raw",
+        "",
+        "",
+    )
     window.close()
 
 
@@ -213,22 +227,25 @@ def test_convert_dialog_can_choose_raw_for_amiga_scp(monkeypatch, tmp_path) -> N
         "getSaveFileName",
         lambda _parent, _title, default_name, _filter: (default_name, ""),
     )
-    monkeypatch.setattr(window, "_run_cli", lambda args: captured.setdefault("args", args))
+    def fake_run_job(_label, fn, _done):
+        captured["operation"] = fn
+
+    monkeypatch.setattr(window, "_run_job", fake_run_job)
+    monkeypatch.setattr(
+        "fluxctl.gui.convert_image",
+        lambda *args, **kwargs: captured.setdefault("args", args),
+    )
 
     window.convert_dialog()
 
-    assert captured["args"] == [
-        "convert",
-        str(source),
-        "--to",
+    captured["operation"]()
+    assert captured["args"] == (
+        source,
+        tmp_path / "amiga-converted.img",
         "raw",
-        "--out",
-        str(tmp_path / "amiga-converted.img"),
-        "--layout",
         "amiga_mfm_880k",
-        "--encoding",
         "mfm",
-    ]
+    )
     window.close()
 
 
@@ -257,7 +274,14 @@ def test_convert_dialog_warns_for_amiga_imd_target(monkeypatch, tmp_path) -> Non
         "getSaveFileName",
         lambda _parent, _title, default_name, _filter: (default_name, ""),
     )
-    monkeypatch.setattr(window, "_run_cli", lambda args: captured.setdefault("args", args))
+    def fake_run_job(_label, fn, _done):
+        captured["operation"] = fn
+
+    monkeypatch.setattr(window, "_run_job", fake_run_job)
+    monkeypatch.setattr(
+        "fluxctl.gui.convert_image",
+        lambda *args, **kwargs: captured.setdefault("args", args),
+    )
 
     window.convert_dialog()
 
@@ -265,8 +289,14 @@ def test_convert_dialog_warns_for_amiga_imd_target(monkeypatch, tmp_path) -> Non
         "IMD will store decoded Amiga sectors only. It will not preserve Amiga physical track "
         "encoding. Use ADF for native Amiga images or SCP for preservation."
     ]
-    assert captured["args"][3] == "imd"
-    assert captured["args"][5] == str(tmp_path / "amiga-converted.imd")
+    captured["operation"]()
+    assert captured["args"] == (
+        source,
+        tmp_path / "amiga-converted.imd",
+        "imd",
+        "amiga_mfm_880k",
+        "mfm",
+    )
     window.close()
 
 
