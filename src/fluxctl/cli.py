@@ -142,13 +142,9 @@ def main(ctx: typer.Context) -> None:
 
 
 def _get_decoder(encoding: str):
-    load_builtin_decoders()
-    if encoding == "mfm":
-        return mfm_decoder
-    plugin = registry.encoding.get(encoding)
-    if plugin:
-        return plugin.entry
-    raise FluxDecodeError(f"Unknown encoding '{encoding}'")
+    from .application.image_operations import get_decoder
+
+    return get_decoder(encoding)
 
 
 def _status_check(name: str, status: str, detail: str, suggestion: str = "") -> dict[str, str]:
@@ -1004,16 +1000,9 @@ def _default_bytes_per_sector(extension: str) -> int:
 
 
 def _track_in_range(range_expr: str, track: int) -> bool:
-    if "-" in range_expr:
-        start, end = range_expr.split("-", 1)
-        try:
-            return int(start) <= track <= int(end)
-        except ValueError:
-            return False
-    try:
-        return track == int(range_expr)
-    except ValueError:
-        return False
+    from .application.image_operations import track_in_range
+
+    return track_in_range(range_expr, track)
 
 
 def _parse_write_sector_spec(write_sector: str) -> tuple[int, Optional[int], int, bytes]:
@@ -1102,16 +1091,9 @@ def _expected_bytes_for_layout(layout: LayoutDescriptor) -> int:
 
 
 def _prefix_track_count_for_size(layout: LayoutDescriptor, data_len: int) -> Optional[int]:
-    if layout.sides != 1 or not layout.track_sectors or layout.sector_size <= 0:
-        return None
-    offset = 0
-    for idx, sectors in enumerate(layout.track_sectors):
-        offset += sectors * layout.sector_size
-        if offset == data_len:
-            return idx + 1
-        if offset > data_len:
-            return None
-    return None
+    from .application.image_operations import prefix_track_count_for_size
+
+    return prefix_track_count_for_size(layout, data_len)
 
 
 def _layout_data_distance(layout: LayoutDescriptor, data_len: int) -> int:
