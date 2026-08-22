@@ -29,7 +29,12 @@ from .application.filesystem_operations import (
     replace_file_with_copy,
     replace_flat_sector_bytes_with_copy,
 )
-from .application.report_operations import build_disk_map_for_image, build_qc_for_image
+from .application.report_operations import (
+    build_disk_map_for_image,
+    build_qc_for_image,
+    export_disk_map_svg,
+    export_qc_json,
+)
 
 
 try:  # pragma: no cover - exercised only when GUI dependencies are installed.
@@ -2579,11 +2584,18 @@ class FluxctlStudio(QMainWindow):
         filename, _ = QFileDialog.getSaveFileName(self, "Save QC JSON", "qc.json", "JSON (*.json);;All files (*)")
         if not filename:
             return
-        args = ["qc", str(self.current_path), "--json-out", filename, "--encoding", self._selected_encoding()]
         layout = self._selected_layout()
-        if layout:
-            args.extend(["--layout", layout])
-        self._run_cli(args)
+        output = Path(filename)
+        self._run_job(
+            "export QC JSON",
+            lambda: export_qc_json(
+                self.current_path,
+                output,
+                layout or None,
+                self._selected_encoding(),
+            ),
+            lambda result: self._show_report_export_result("QC JSON", result),
+        )
 
     def svg_export_dialog(self) -> None:
         if not self._require_image():
@@ -2591,11 +2603,23 @@ class FluxctlStudio(QMainWindow):
         filename, _ = QFileDialog.getSaveFileName(self, "Save SVG disk map", "map.svg", "SVG (*.svg);;All files (*)")
         if not filename:
             return
-        args = ["visualize", str(self.current_path), "--format", "svg", "--out", filename, "--encoding", self._selected_encoding()]
         layout = self._selected_layout()
-        if layout:
-            args.extend(["--layout", layout])
-        self._run_cli(args)
+        output = Path(filename)
+        self._run_job(
+            "export SVG map",
+            lambda: export_disk_map_svg(
+                self.current_path,
+                output,
+                layout or None,
+                self._selected_encoding(),
+            ),
+            lambda result: self._show_report_export_result("SVG map", result),
+        )
+
+    def _show_report_export_result(self, label: str, result: object) -> None:
+        self.summary_labels["status"].setText("ready")
+        self.activity_label.setText(f"Wrote {label} to {result}")
+        self._append_log(f"Wrote {label} to {result}")
 
     def extract_dialog(self) -> None:
         if not self._require_image():
