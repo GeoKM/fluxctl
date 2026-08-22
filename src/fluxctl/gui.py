@@ -11,6 +11,21 @@ from typing import Callable, Optional
 
 from . import studio_services as services
 from .application.command_operations import run_fluxctl_command
+from .application.filesystem_operations import (
+    create_directory_with_copy,
+    delete_filesystem_entry_with_copy,
+    export_filesystem_entries,
+    export_filesystem_entry,
+    file_allocation_for_image,
+    file_hex_dump,
+    import_directory_with_copy,
+    import_file_with_copy,
+    list_files,
+    list_files_with_info,
+    replace_file_bytes_with_copy,
+    replace_file_with_copy,
+    replace_flat_sector_bytes_with_copy,
+)
 from .application.report_operations import build_disk_map_for_image, build_qc_for_image
 
 
@@ -1589,7 +1604,7 @@ class FluxctlStudio(QMainWindow):
             if self.current_path is not None:
                 layout = self._selected_layout() or None
                 encoding = self._selected_encoding()
-                entries = services.list_files(self.current_path, layout, encoding, self.advanced_file_browser_path)
+                entries = list_files(self.current_path, layout, encoding, self.advanced_file_browser_path)
                 for entry in sorted(entries, key=lambda item: (not item.is_dir, item.name.upper())):
                     label = f"{entry.name}/" if entry.is_dir else entry.name
                     self.file_path_input.addItem(label, {"path": entry.path, "is_dir": entry.is_dir})
@@ -1834,7 +1849,7 @@ class FluxctlStudio(QMainWindow):
         directory = self.file_browser_path
         self._run_job(
             f"extract --list {directory}",
-            lambda: services.list_files_with_info(self.current_path, layout, encoding, directory),
+            lambda: list_files_with_info(self.current_path, layout, encoding, directory),
             self._show_files,
         )
 
@@ -1932,7 +1947,7 @@ class FluxctlStudio(QMainWindow):
             self._clear_file_map_highlight()
             return
         try:
-            allocation = services.file_allocation_for_image(
+            allocation = file_allocation_for_image(
                 self.current_path,
                 self._selected_layout() or None,
                 self._selected_encoding(),
@@ -1962,7 +1977,7 @@ class FluxctlStudio(QMainWindow):
         encoding = self._selected_encoding()
         self._run_job(
             f"hex file {file_path}",
-            lambda: services.file_hex_dump(self.current_path, layout, encoding, file_path, max_bytes=65536),
+            lambda: file_hex_dump(self.current_path, layout, encoding, file_path, max_bytes=65536),
             self._show_hex_dump,
         )
 
@@ -1984,7 +1999,7 @@ class FluxctlStudio(QMainWindow):
             encoding = self._selected_encoding()
             self._run_job(
                 f"export {file_path}",
-                lambda: services.export_filesystem_entry(self.current_path, layout, encoding, file_path, destination),
+                lambda: export_filesystem_entry(self.current_path, layout, encoding, file_path, destination),
                 self._show_export_result,
             )
             return
@@ -2030,7 +2045,7 @@ class FluxctlStudio(QMainWindow):
         encoding = self._selected_encoding()
         self._run_job(
             f"export {len(selected_paths)} selected item(s)",
-            lambda: services.export_filesystem_entries(
+            lambda: export_filesystem_entries(
                 self.current_path,
                 layout,
                 encoding,
@@ -2091,7 +2106,7 @@ class FluxctlStudio(QMainWindow):
         encoding = self._selected_encoding()
         self._run_job(
             f"replace {file_path} with copy",
-            lambda: services.replace_file_with_copy(
+            lambda: replace_file_with_copy(
                 self.current_path,
                 layout,
                 encoding,
@@ -2145,7 +2160,7 @@ class FluxctlStudio(QMainWindow):
         encoding = self._selected_encoding()
         self._run_job(
             f"delete {entry_path} with copy",
-            lambda: services.delete_filesystem_entry_with_copy(
+            lambda: delete_filesystem_entry_with_copy(
                 self.current_path,
                 layout,
                 encoding,
@@ -2182,7 +2197,7 @@ class FluxctlStudio(QMainWindow):
         encoding = self._selected_encoding()
         self._run_job(
             f"import file {host_file.name} with copy",
-            lambda: services.import_file_with_copy(
+            lambda: import_file_with_copy(
                 self.current_path,
                 layout,
                 encoding,
@@ -2221,7 +2236,7 @@ class FluxctlStudio(QMainWindow):
         encoding = self._selected_encoding()
         self._run_job(
             f"import directory {host_directory.name} with copy",
-            lambda: services.import_directory_with_copy(
+            lambda: import_directory_with_copy(
                 self.current_path,
                 layout,
                 encoding,
@@ -2258,7 +2273,7 @@ class FluxctlStudio(QMainWindow):
         encoding = self._selected_encoding()
         self._run_job(
             f"mkdir {name} with copy",
-            lambda: services.create_directory_with_copy(
+            lambda: create_directory_with_copy(
                 self.current_path,
                 layout,
                 encoding,
@@ -2421,7 +2436,7 @@ class FluxctlStudio(QMainWindow):
         encoding = self._selected_encoding()
         self._run_job(
             f"dump file {file_path}",
-            lambda: services.file_hex_dump(self.current_path, layout, encoding, file_path),
+            lambda: file_hex_dump(self.current_path, layout, encoding, file_path),
             self._show_advanced_hex_dump,
         )
 
@@ -2510,7 +2525,7 @@ class FluxctlStudio(QMainWindow):
                 return
             self._run_job(
                 f"save edited file hex {dump.file_path}",
-                lambda: services.replace_file_bytes_with_copy(
+                lambda: replace_file_bytes_with_copy(
                     self.current_path,
                     layout,
                     encoding,
@@ -2530,7 +2545,7 @@ class FluxctlStudio(QMainWindow):
                 return
             self._run_job(
                 f"save edited sector hex T{dump.track} H{dump.head} S{dump.sector}",
-                lambda: services.replace_flat_sector_bytes_with_copy(
+                lambda: replace_flat_sector_bytes_with_copy(
                     self.current_path,
                     layout,
                     dump.track,
