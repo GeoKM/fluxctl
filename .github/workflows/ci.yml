@@ -70,7 +70,10 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install Fluxctl and all test-time integrations
-        run: python -m pip install -e ".[gui,greaseweazle]" pytest
+        run: |
+          python -m pip install -e ".[gui,greaseweazle]" pytest
+          git clone --depth 1 https://github.com/keirf/Greaseweazle.git ../greaseweazle
+          python -m pip install -e ../greaseweazle
       - name: Build native acceleration
         run: cargo build --manifest-path native/fluxctl_native/Cargo.toml --release
       - name: Verify installation
