@@ -74,6 +74,23 @@ Use `fluxctl COMMAND --help` for command-specific examples.
 
 app = typer.Typer(add_completion=False, help=APP_HELP)
 provenance_app = typer.Typer(help="Inspect provenance records")
+
+DOCTOR_EXAMPLES = """Examples:
+  fluxctl doctor
+  fluxctl doctor --json
+  fluxctl doctor --hxcfe ~/src/HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build/hxcfe"""
+
+CONVERT_EXAMPLES = """Examples:
+  fluxctl convert disk.scp --layout ibm_mfm_720k --to raw --out disk.img
+  fluxctl convert disk.img --layout ibm_mfm_720k --to imd --out disk.imd
+  fluxctl convert c64.scp --layout commodore_gcr_1541_170k --to g64 --out disk.g64
+  fluxctl convert c128.scp --layout commodore_gcr_1571_341k --to d71 --out disk.d71
+  fluxctl convert 1581.scp --layout commodore_mfm_1581_800k --to d81 --out disk.d81"""
+
+ROUNDTRIP_EXAMPLES = """Examples:
+  fluxctl roundtrip disk.scp --layout amiga_mfm_880k --to adf
+  fluxctl roundtrip disk.adf --to raw --back-to adf
+  fluxctl roundtrip disk.img --layout amiga_mfm_880k --to adf --back-to raw"""
 app.add_typer(provenance_app, name="provenance")
 
 
@@ -358,7 +375,7 @@ def _maybe_hxc_hint(path: Path, hxcfe: Optional[Path]) -> LayoutHint | None:
     return metadata.to_layout_hint()
 
 
-@app.command()
+@app.command(epilog=DOCTOR_EXAMPLES)
 @_handle_cli_errors
 def doctor(
     hxcfe: Optional[Path] = typer.Option(None, "--hxcfe", help="Optional hxcfe binary path to validate"),
@@ -366,10 +383,6 @@ def doctor(
 ) -> None:
     """Check the local fluxctl installation and optional acceleration helpers.
 
-    Examples:
-    fluxctl doctor
-    fluxctl doctor --json
-    fluxctl doctor --hxcfe ~/src/HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build/hxcfe
     """
 
     report = _doctor_report(hxcfe)
@@ -2252,7 +2265,7 @@ def visualize(
         write_provenance(record, prov_target, overwrite=force)
 
 
-@app.command()
+@app.command(epilog=CONVERT_EXAMPLES)
 @_handle_cli_errors
 def convert(
     path: Path = typer.Argument(..., exists=True, readable=True),
@@ -2265,12 +2278,6 @@ def convert(
 ):
     """Convert SCP, IMD, TRS-80 DSK/DMK, or flat sector images to a supported output format.
 
-    Examples:
-    fluxctl convert disk.scp --layout ibm_mfm_720k --to raw --out disk.img
-    fluxctl convert disk.img --layout ibm_mfm_720k --to imd --out disk.imd
-    fluxctl convert c64.scp --layout commodore_gcr_1541_170k --to g64 --out disk.g64
-    fluxctl convert c128.scp --layout commodore_gcr_1571_341k --to d71 --out disk.d71
-    fluxctl convert 1581.scp --layout commodore_mfm_1581_800k --to d81 --out disk.d81
     """
 
     prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
@@ -2307,7 +2314,7 @@ def convert(
     typer.echo(f"Wrote {out}")
 
 
-@app.command()
+@app.command(epilog=ROUNDTRIP_EXAMPLES)
 @_handle_cli_errors
 def roundtrip(
     path: Path = typer.Argument(..., exists=True, readable=True),
@@ -2326,10 +2333,6 @@ def roundtrip(
 ):
     """Verify sector-level losslessness through a conversion round trip.
 
-    Examples:
-    fluxctl roundtrip disk.scp --layout amiga_mfm_880k --to adf
-    fluxctl roundtrip disk.adf --to raw --back-to adf
-    fluxctl roundtrip disk.img --layout amiga_mfm_880k --to adf --back-to raw
     """
 
     back_exporter = back_to or _infer_roundtrip_back_exporter(path)
