@@ -30,7 +30,7 @@ def test_detects_1541_cbm_dos_with_strong_probe() -> None:
     load_builtin_layouts()
     image = _prepare_image(FIXTURE_D64, "commodore_gcr_1541_170k", "gcr")
 
-    detection = detect_filesystem(image, path_name="wrong-cpm-name.d64")
+    detection = detect_filesystem(image)
 
     assert detection.primary == "cbm_dos"
     assert detection.confidence > 0.9
@@ -41,7 +41,7 @@ def test_detects_1571_gcr_as_cbm_dos_family_with_regions() -> None:
     load_builtin_layouts()
     image = _prepare_image(FIXTURE_D71, "commodore_gcr_1571_341k", "gcr")
 
-    detection = detect_filesystem(image, path_name="wrong-cpm-name.d71")
+    detection = detect_filesystem(image)
 
     assert detection.primary == "cbm_dos_1571"
     assert [region.filesystem for region in detection.regions] == [
@@ -54,7 +54,7 @@ def test_detects_c64_cpm_from_directory_not_filename() -> None:
     load_builtin_layouts()
     image = _prepare_image(FIXTURE_D64_CPM, "commodore_gcr_1541_170k", "gcr")
 
-    detection = detect_filesystem(image, path_name="definitely-not-cpm.d64")
+    detection = detect_filesystem(image)
 
     assert detection.primary == "c64_cpm_2_2"
     assert detection.regions[0].filesystem == "c64_cpm_2_2"
@@ -66,7 +66,7 @@ def test_detects_35_track_d64_as_cbm_dos_not_cpm() -> None:
     load_builtin_layouts()
     image = _prepare_image(FIXTURE_DISK_DISECTOR_D64, "commodore_gcr_1541_170k", "gcr")
 
-    detection = detect_filesystem(image, path_name="disk-disector.d64")
+    detection = detect_filesystem(image)
 
     assert detection.primary == "cbm_dos"
     assert detection.plugin is not None
@@ -80,7 +80,7 @@ def test_reports_incomplete_cbm_dos_directory_chain_for_damaged_scp() -> None:
     load_builtin_layouts()
     image = _prepare_image(FIXTURE_DISK_DISECTOR_SCP, "commodore_gcr_1541_170k", "gcr")
 
-    detection = detect_filesystem(image, path_name=FIXTURE_DISK_DISECTOR_SCP.name)
+    detection = detect_filesystem(image)
 
     assert detection.primary == "cbm_dos"
     assert detection.plugin is None
@@ -92,7 +92,7 @@ def test_detects_c128_cpm_from_directory_not_filename() -> None:
     load_builtin_layouts()
     image = _prepare_image(FIXTURE_D71_CPM, "commodore_gcr_1571_341k", "gcr")
 
-    detection = detect_filesystem(image, path_name="plain-cbm-dos-name.d71")
+    detection = detect_filesystem(image)
 
     assert detection.primary == "c128_cpm_3_0"
     assert detection.regions[0].region == "disk"
@@ -110,7 +110,7 @@ def test_detects_8inch_cpm_source_images_from_directory_records() -> None:
 
     for fixture, expected_name in expected_names.items():
         image = _prepare_image(fixture, "generic_fm_8inch_cpm_256k", "fm")
-        detection = detect_filesystem(image, path_name="not-from-name.img")
+        detection = detect_filesystem(image)
 
         assert detection.primary == "cpm"
         assert detection.plugin is not None
@@ -122,7 +122,7 @@ def test_detects_kaypro_cpm_before_rt11_false_positive() -> None:
     load_builtin_layouts()
     image = _prepare_image(FIXTURE_KAYPRO_CPM22_IMD, "kaypro_mfm_ssdd_40_200k", "mfm")
 
-    detection = detect_filesystem(image, path_name="not-rt11.imd")
+    detection = detect_filesystem(image)
 
     assert detection.primary == "cpm"
     assert detection.plugin is not None
@@ -134,7 +134,7 @@ def test_detects_seiko_8300_catalog_for_flat_and_flux_images() -> None:
     load_builtin_layouts()
     for fixture in (FIXTURE_SEIKO_IMG, FIXTURE_SEIKO_SCP):
         image = _prepare_image(fixture, "luxor_mfm_1000_program_994k", "mfm")
-        detection = detect_filesystem(image, path_name="unrelated-name.img")
+        detection = detect_filesystem(image)
 
         assert detection.primary == "seiko_8300_cpm"
         assert detection.plugin is not None
@@ -154,7 +154,7 @@ def test_detects_rx01_rt11_interchange_labels_without_claiming_residual_data() -
     load_builtin_layouts()
     image = _prepare_image(FIXTURE_RX01_INTERCHANGE_SCP, "dec_fm_rx01_250k", "fm")
 
-    detection = detect_filesystem(image, path_name="interchange-disk.scp")
+    detection = detect_filesystem(image)
 
     assert detection.primary == "rt11_interchange"
     assert detection.plugin is not None
@@ -209,7 +209,7 @@ def test_lists_and_extracts_normal_rx02_rt11_files() -> None:
 def test_lists_and_extracts_rx01_cpm_from_scp() -> None:
     load_builtin_layouts()
     image = _prepare_image(FIXTURE_RX01_CPM_SCP, "dec_fm_rx01_250k", "fm")
-    detection = detect_filesystem(image, path_name=FIXTURE_RX01_CPM_SCP.name)
+    detection = detect_filesystem(image)
 
     assert detection.primary == "cpm"
     assert detection.plugin is not None

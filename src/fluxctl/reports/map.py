@@ -129,34 +129,6 @@ def _sector_id_base(layout: LayoutDescriptor | None, decoded: list[Sector]) -> i
     return 1
 
 
-def _estimate_sectors_per_track(image: SCPImage) -> int:
-    """Estimate expected sectors per track using filename hints and counts.
-
-    The heuristic mirrors the QC module: if the filename contains a capacity
-    hint like ``180K`` or ``1.44M`` we convert that to an approximate sectors
-    per track based on the number of decoded tracks. When no hint is available
-    the mapper falls back to a conservative value of 9.
-    """
-
-    if not image.tracks:
-        return 0
-    track_total = len(image.tracks)
-    # Lightweight capacity hint: look for ``180K`` or ``1.44M`` style markers.
-    for token in image.path.name.replace("-", " ").split():
-        if token.endswith("K") or token.endswith("M"):
-            numeric = token[:-1]
-            unit = token[-1].lower()
-            try:
-                value = float(numeric)
-            except ValueError:
-                continue
-            capacity_bytes = value * (1024 ** (1 if unit == "k" else 2))
-            estimated = int(round(capacity_bytes / (track_total * 512)))
-            if estimated > 0:
-                return estimated
-    return 9
-
-
 def _classify_sector(sector: Sector) -> str:
     """Classify a sector into good/weak/bad buckets."""
 
@@ -178,11 +150,15 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
     * ``weak``: ``crc_ok`` but confidence < ``0.7``
     * ``bad``: missing data or CRC failure
 
-    Tracks with fewer sectors than the maximum observed are padded with
-    ``"bad"`` entries so that renderers can draw consistent rows/rings.
+    With a selected layout, missing expected sector IDs are represented as
+    ``"bad"`` entries. Without one, each row contains only structurally
+    decoded sectors, preserving zoned and otherwise unusual track geometry.
     """
 
-    expected_sectors = layout.sectors_per_track if layout else _estimate_sectors_per_track(image)
+    # Without a selected layout, render only sectors supported by decoded
+    # structure. Guessing an expected count would turn unknown sectors into
+    # false errors on unusual or renamed media.
+    expected_sectors = layout.sectors_per_track if layout else 0
     track_states: List[List[str]] = []
     track_ids: List[Tuple[int, int]] = []
     track_confidence: List[float] = []

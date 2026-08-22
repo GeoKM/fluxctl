@@ -59,7 +59,7 @@ def test_woz2_decodes_all_apple_ii_tracks_and_matches_canonical_po() -> None:
 def test_apple_ii_scp_auto_detection_and_decode_are_complete() -> None:
     load_builtin_decoders()
     load_builtin_layouts()
-    candidate = detect_layout_any(parse_scp(FIXTURE_SCP), FIXTURE_SCP)
+    candidate = detect_layout_any(parse_scp(FIXTURE_SCP))
 
     assert candidate is not None
     assert candidate.layout.layout_id == "apple2_gcr_nofs_140_140k"

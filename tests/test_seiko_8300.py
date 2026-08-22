@@ -38,7 +38,7 @@ def _seiko_dataset_image() -> TrackSectorImage:
 
 def test_detects_seiko_ebcdic_indexed_dataset_without_claiming_cpm() -> None:
     load_builtin_filesystems()
-    detection = detect_filesystem(_seiko_dataset_image(), path_name="unrelated.img")
+    detection = detect_filesystem(_seiko_dataset_image())
 
     assert detection.primary == "seiko_8300_ebcdic_dataset"
     assert detection.plugin is not None

@@ -36,6 +36,7 @@ from .filesystems.cpm import cpm_directory_score_for_layout
 from .imd import load_imd_image
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
 from .models import Bitstream, CandidateFormat, LayoutDescriptor, ProvenanceRecord
+from .output import atomic_write_bytes, atomic_write_text, validate_output_path
 from .plugins import registry
 from .provenance import write_provenance
 from .reports.map import build_disk_map, build_disk_map_from_tracksectors, render_ascii, render_svg
@@ -86,6 +87,21 @@ def _handle_cli_errors(func):
             raise typer.Exit(code=1)
 
     return wrapper
+
+
+def _validate_outputs(
+    paths: Sequence[Path],
+    *,
+    force: bool,
+    source_paths: Sequence[Path] = (),
+) -> None:
+    """Preflight a command's complete output set before writing any file."""
+
+    resolved = [path.expanduser().resolve(strict=False) for path in paths]
+    if len(set(resolved)) != len(resolved):
+        raise FluxctlError("Output paths must be distinct")
+    for path in paths:
+        validate_output_path(path, overwrite=force, source_paths=source_paths)
 
 
 @app.callback(invoke_without_command=True)
@@ -327,7 +343,7 @@ def _resolve_encoding_for_compare(path: Path, encoding: str) -> str:
     if path.suffix.lower() != ".scp":
         return "mfm"
     load_builtin_decoders()
-    candidate = detect_encoding(parse_scp(path), path=path)
+    candidate = detect_encoding(parse_scp(path))
     if candidate is None:
         raise FluxDecodeError("Unable to infer encoding for SCP input; specify --encoding-a/--encoding-b")
     return candidate.encoding
@@ -391,26 +407,6 @@ def _image_bytes_for_compare(path: Path, layout_id: Optional[str], encoding: str
         "encoding": resolved_encoding,
         "layout": layout_id or "",
     }
-
-
-def _detect_cpm_variant(image) -> Optional[str]:
-    """Lightweight CP/M flavor heuristic based on known system filenames."""
-
-    try:
-        sectors = []
-        for idx, data in enumerate(image.iter_sectors()):
-            if idx >= 512:
-                break
-            sectors.append(data)
-    except Exception:
-        return None
-
-    joined = b"".join(sectors)
-    if b"BOOTV3" in joined or b"BIOS3" in joined:
-        return "c128_cpm_3_0"
-    if b"BOOT " in joined or b"CPM+SYS" in joined:
-        return "c64_cpm_2_2"
-    return None
 
 
 def _detect_amiga_fs(image) -> Optional[str]:
@@ -483,9 +479,9 @@ def info(
         track.side for track in scp.tracks if any(rev.interval_ns for rev in track.revolutions)
     }
     hxc_hint = _maybe_hxc_hint(path, hxcfe)
-    encoding_candidate = detect_encoding(scp, path=path, hint=hxc_hint)
+    encoding_candidate = detect_encoding(scp, hint=hxc_hint)
     layout_candidate = (
-        detect_layout(scp, encoding_candidate.encoding, path, hint=hxc_hint)
+        detect_layout(scp, encoding_candidate.encoding, hint=hxc_hint)
         if encoding_candidate
         else None
     )
@@ -541,7 +537,7 @@ def probe(
     hxc_hint = _maybe_hxc_hint(path, hxcfe)
     candidates: list[CandidateFormat] = []
 
-    encoding_candidate = detect_encoding(image, path=path, hint=hxc_hint)
+    encoding_candidate = detect_encoding(image, hint=hxc_hint)
     if encoding_candidate is None:
         candidates.append(
             CandidateFormat(
@@ -556,9 +552,7 @@ def probe(
         typer.echo(json.dumps([c.__dict__ for c in candidates], indent=2))
         raise typer.Exit(code=2)
 
-    layout_candidate = detect_layout(
-        image, encoding_candidate.encoding, path, hint=hxc_hint
-    )
+    layout_candidate = detect_layout(image, encoding_candidate.encoding, hint=hxc_hint)
     if layout_candidate:
         filesystem: Optional[str]
         filesystem_evidence: list[str] = []
@@ -568,7 +562,7 @@ def probe(
                 filesystem, filesystem_evidence = fast_result
             else:
                 image_obj = _prepare_image(path, layout_candidate.layout.layout_id, encoding_candidate.encoding)
-                detection = _filesystem_detection_for_image(image_obj, path)
+                detection = _filesystem_detection_for_image(image_obj)
                 filesystem, filesystem_evidence = _filesystem_probe_payload(detection)
         except Exception:
             filesystem = None
@@ -621,7 +615,7 @@ def _fast_scp_filesystem_probe(
     image_obj = TrackSectorImage(tracks, bytes_per_sector=layout.sector_size)
     image_obj.layout = layout
     _apply_layout_geometry(image_obj, layout)
-    detection = _filesystem_detection_for_image(image_obj, path)
+    detection = _filesystem_detection_for_image(image_obj)
     filesystem, evidence = _filesystem_probe_payload(detection)
     if filesystem:
         evidence = [*evidence, "filesystem_probe_scope=first_cylinder"]
@@ -729,8 +723,8 @@ def _detect_filesystem(image) -> Optional[Filesystem]:
     return detection.plugin
 
 
-def _filesystem_detection_for_image(image, path: Optional[Path] = None) -> FilesystemDetection:
-    return detect_filesystem(image, path_name=path.name if path else "")
+def _filesystem_detection_for_image(image) -> FilesystemDetection:
+    return detect_filesystem(image)
 
 
 def _filesystem_probe_payload(detection: FilesystemDetection) -> tuple[Optional[str], list[str]]:
@@ -1223,16 +1217,16 @@ def _sectors_from_blob(
     return tracks
 
 
-def _filesystem_name_for_image(image, path: Optional[Path] = None) -> Optional[str]:
-    detection = _filesystem_detection_for_image(image, path)
+def _filesystem_name_for_image(image) -> Optional[str]:
+    detection = _filesystem_detection_for_image(image)
     if detection.primary:
         return detection.primary
     layout_id = getattr(getattr(image, "layout", None), "layout_id", None)
     return LAYOUT_FILESYSTEM_HINTS.get(layout_id) if layout_id else None
 
 
-def _filesystem_evidence_for_image(image, path: Optional[Path] = None) -> tuple[Optional[str], list[str]]:
-    detection = _filesystem_detection_for_image(image, path)
+def _filesystem_evidence_for_image(image) -> tuple[Optional[str], list[str]]:
+    detection = _filesystem_detection_for_image(image)
     if detection.primary:
         return _filesystem_probe_payload(detection)
     layout_id = getattr(getattr(image, "layout", None), "layout_id", None)
@@ -1290,7 +1284,6 @@ def _track_sector_profile(tracks: list[TrackSectors]) -> tuple[dict[int, int], d
 
 
 def _tandy_candidate_for_tracks(
-    path: Path,
     tracks: list[TrackSectors],
     geom,
     evidence: list[str],
@@ -1316,7 +1309,7 @@ def _tandy_candidate_for_tracks(
     if layout is None:
         return None
     image_obj = _image_from_tracks(tracks, geom, layout)
-    fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+    fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj)
     layout_evidence = evidence + [f"layout={layout_id}"]
     if fs_name:
         layout_evidence.append(f"filesystem={fs_name}")
@@ -1343,7 +1336,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
             return []
         tracks, metadata = load_apple2_tracks(path)
         image_obj = Apple2SectorImage(tracks, layout)
-        fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+        fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj)
         good = sum(1 for ts in tracks for sector in ts.sectors if sector.data and sector.crc_ok)
         total = layout.tracks * layout.sectors_per_track
         return [
@@ -1368,7 +1361,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
             for order_name, order in (("po", APPLE2_PO_ORDER), ("do", APPLE2_DO_ORDER)):
                 tracks = tracks_from_apple2_sector_image(path.read_bytes(), order)
                 image_obj = Apple2SectorImage(tracks, layout)
-                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj)
                 if fs_name in {"prodos", "apple_dos_3_3"}:
                     return [
                         CandidateFormat(
@@ -1409,7 +1402,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
             f"size={size}",
             f"geom={imd_geom.tracks}x{imd_geom.heads}x{imd_geom.spt}x{imd_geom.sector_size}",
         ]
-        imd_filesystem_name = _filesystem_name_for_image(imd_image, path) if imd_image else None
+        imd_filesystem_name = _filesystem_name_for_image(imd_image) if imd_image else None
         data_bytes = bytes(data)
     elif ext in {".dsk", ".dmk"}:
         imd_tracks, imd_geom, imd_meta = load_trs80_image(path)
@@ -1422,10 +1415,10 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
             f"size={imd_total_bytes}",
             f"geom={imd_geom.tracks}x{imd_geom.heads}x{imd_geom.spt}x{imd_geom.sector_size}",
         ]
-        tandy_candidate = _tandy_candidate_for_tracks(path, imd_tracks, imd_geom, evidence)
+        tandy_candidate = _tandy_candidate_for_tracks(imd_tracks, imd_geom, evidence)
         if tandy_candidate:
             return [tandy_candidate]
-        imd_filesystem_name = _filesystem_name_for_image(imd_image, path) if imd_image else None
+        imd_filesystem_name = _filesystem_name_for_image(imd_image) if imd_image else None
         data_bytes = _flatten_track_container(imd_tracks, imd_geom, sector_base)
     else:
         data_bytes = path.read_bytes()
@@ -1439,7 +1432,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
                 try:
                     tracks = tracks_from_apple2_sector_image(data_bytes, order)
                     image_obj = Apple2SectorImage(tracks, layout)
-                    fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+                    fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj)
                 except Exception:
                     continue
                 if fs_name in {"prodos", "apple_dos_3_3"}:
@@ -1487,7 +1480,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
                 image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
                 image_obj.layout = layout
                 _apply_layout_geometry(image_obj, layout)
-                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj)
                 return [
                     CandidateFormat(
                         candidate_id=layout.layout_id,
@@ -1521,7 +1514,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
                 image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
                 image_obj.layout = layout
                 _apply_layout_geometry(image_obj, layout)
-                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj)
                 return [
                     CandidateFormat(
                         candidate_id=layout.layout_id,
@@ -1550,7 +1543,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
                 image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
                 image_obj.layout = layout
                 _apply_layout_geometry(image_obj, layout)
-                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj)
                 if fs_name == "displaywriter":
                     return [
                         CandidateFormat(
@@ -1578,7 +1571,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
                 image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
                 image_obj.layout = layout
                 _apply_layout_geometry(image_obj, layout)
-                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj, path)
+                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj)
                 return [
                     CandidateFormat(
                         candidate_id=layout.layout_id,
@@ -1601,24 +1594,9 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
                     )
                 ]
 
-    if ext == ".img" and "displaywriter" in path.stem.lower():
-        lid = "ibm_displaywriter_fm_284k"
-        layout = registry.layout.get(lid)
-        fs_name = LAYOUT_FILESYSTEM_HINTS.get(lid)
-        return [
-            CandidateFormat(
-                candidate_id=lid,
-                encoding=layout.encoding if layout else None,
-                layout_id=lid,
-                filesystem=fs_name,
-                score=1.0,
-                evidence=evidence + [f"layout={lid}"] + ([f"filesystem={fs_name}"] if fs_name else []),
-            )
-        ]
-
     ext_for_layouts = ext
     if ext == ".imd" and imd_geom:
-        tandy_candidate = _tandy_candidate_for_tracks(path, imd_tracks or [], imd_geom, evidence)
+        tandy_candidate = _tandy_candidate_for_tracks(imd_tracks or [], imd_geom, evidence)
         if tandy_candidate:
             return [tandy_candidate]
         if imd_filesystem_name == "displaywriter":
@@ -1664,7 +1642,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
         if imd_geom.sector_size == 512 and imd_geom.spt in {15, 16} and imd_geom.heads == 2 and imd_geom.tracks >= 77:
             lid = "ibm_mfm_8inch_1200k" if registry.layout.get("ibm_mfm_8inch_1200k") else "ibm_mfm_1200k"
             layout = registry.layout.get(lid)
-            fs_name, fs_evidence = _filesystem_evidence_for_image(imd_image, path) if imd_image else (None, [])
+            fs_name, fs_evidence = _filesystem_evidence_for_image(imd_image) if imd_image else (None, [])
             return [
                 CandidateFormat(
                     candidate_id=lid,
@@ -1704,7 +1682,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
         image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
         image_obj.layout = layout
         _apply_layout_geometry(image_obj, layout)
-        filesystem_name, filesystem_evidence = _filesystem_evidence_for_image(image_obj, path)
+        filesystem_name, filesystem_evidence = _filesystem_evidence_for_image(image_obj)
         layout_evidence = evidence + [f"layout={layout.layout_id}"]
         if filesystem_name:
             layout_evidence.append(f"filesystem={filesystem_name}")
@@ -1752,7 +1730,7 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
     if imd_geom and imd_geom.spt and imd_geom.heads:
         fallback_image.set_geometry(imd_geom.spt, imd_geom.heads)
 
-    fallback_fs, fallback_fs_evidence = _filesystem_evidence_for_image(fallback_image, path)
+    fallback_fs, fallback_fs_evidence = _filesystem_evidence_for_image(fallback_image)
     fallback_evidence = evidence + ([f"filesystem={fallback_fs}"] if fallback_fs else [])
     fallback_evidence.extend(fallback_fs_evidence)
     fallback_candidate = CandidateFormat(
@@ -1804,10 +1782,10 @@ def _prepare_convert_payload(path: Path, to: str, layout: Optional[str], encodin
     if path.suffix.lower() == ".scp":
         if layout_desc is None:
             scp_image = parse_scp(path)
-            encoding_candidate = detect_encoding(scp_image, path=path)
+            encoding_candidate = detect_encoding(scp_image)
             if encoding_candidate is None:
                 raise FluxDecodeError("Unable to auto-detect SCP encoding; pass --layout and --encoding")
-            layout_candidate = detect_layout(scp_image, encoding_candidate.encoding, path)
+            layout_candidate = detect_layout(scp_image, encoding_candidate.encoding)
             if layout_candidate is None:
                 raise FluxDecodeError("Unable to auto-detect SCP layout; pass --layout explicitly")
             layout_desc = layout_candidate.layout
@@ -1924,6 +1902,7 @@ def compare(
     encoding_b: str = typer.Option("auto", "--encoding-b", help="Encoding for input B (mfm, fm, gcr, apple2_gcr, auto for SCP)"),
     json_out: Optional[Path] = typer.Option(None, "--json-out", help="Write compare report to JSON"),
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar for --json-out"),
+    force: bool = typer.Option(False, "--force", help="Replace existing report and provenance outputs"),
 ):
     """Compare two images by content; SCP inputs are decoded before comparison.
 
@@ -1963,9 +1942,9 @@ def compare(
             typer.echo(f"First difference at offset {diff}")
 
     if json_out:
-        json_out.parent.mkdir(parents=True, exist_ok=True)
-        json_out.write_text(json.dumps(report, indent=2), encoding="utf-8")
         prov_target = prov_out or json_out.with_suffix(json_out.suffix + ".provenance.json")
+        _validate_outputs([json_out, prov_target], force=force, source_paths=[a, b])
+        atomic_write_text(json_out, json.dumps(report, indent=2), overwrite=force, source_paths=[a, b])
         record = ProvenanceRecord(
             tool_name="fluxctl",
             tool_version=__version__,
@@ -1992,7 +1971,7 @@ def compare(
                 f"decoded_sha256_b={sha_b}",
             ],
         )
-        write_provenance(record, prov_target)
+        write_provenance(record, prov_target, overwrite=force)
         typer.echo(f"Wrote compare report to {json_out}")
 
     raise typer.Exit(code=0 if identical else 1)
@@ -2071,6 +2050,7 @@ def qc(
     json_out: Optional[Path] = typer.Option(None, "--json-out", help="Write QC results to a JSON file"),
     text_out: Optional[Path] = typer.Option(None, "--text-out", help="Write QC results to a text file"),
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Override provenance output path"),
+    force: bool = typer.Option(False, "--force", help="Replace existing report and provenance outputs"),
 ):
     """Assess image quality and emit QC reports."""
     load_builtin_decoders()
@@ -2081,7 +2061,7 @@ def qc(
         scp = parse_scp(path)
         hxc_hint = _maybe_hxc_hint(path, hxcfe)
         if selected_encoding == "auto":
-            encoding_candidate = detect_encoding(scp, path=path, hint=hxc_hint)
+            encoding_candidate = detect_encoding(scp, hint=hxc_hint)
             if encoding_candidate is None:
                 raise FluxDecodeError("Unable to infer encoding; specify --encoding")
             selected_encoding = encoding_candidate.encoding
@@ -2089,7 +2069,7 @@ def qc(
         decoder = _get_decoder(selected_encoding)
         layout_desc = ensure_layout_loaded(layout) if layout else None
         if layout_desc is None:
-            layout_candidate = detect_layout(scp, selected_encoding, path, hint=hxc_hint)
+            layout_candidate = detect_layout(scp, selected_encoding, hint=hxc_hint)
             layout_desc = layout_candidate.layout if layout_candidate else None
         track_step = infer_track_step([track.track for track in scp.tracks])
         report = build_qc_report(scp, decoder, layout=layout_desc, track_step=track_step)
@@ -2113,13 +2093,15 @@ def qc(
         report = build_qc_report_from_tracks(tracks, layout=layout_desc, track_step=1)
         scp = None
 
-    targets: list[Path] = []
-    if json_out:
-        write_qc_report_json(report, json_out)
-        targets.append(json_out)
-    if text_out:
-        write_qc_report_text(report, text_out, layout=layout_desc)
-        targets.append(text_out)
+    targets = [target for target in (json_out, text_out) if target is not None]
+    prov_target = None
+    if targets:
+        prov_target = prov_out or targets[0].with_suffix(targets[0].suffix + ".provenance.json")
+        _validate_outputs([*targets, prov_target], force=force, source_paths=[path])
+        if json_out:
+            write_qc_report_json(report, json_out, overwrite=force)
+        if text_out:
+            write_qc_report_text(report, text_out, layout=layout_desc, overwrite=force)
     if not targets:
         if scp is not None:
             track_ids = [track.track for track in scp.tracks]
@@ -2156,7 +2138,7 @@ def qc(
             typer.echo("Note: Suspect sectors detected. Use --text-out or --json-out for details.")
     if targets:
         target_path = targets[0]
-        prov_target = prov_out or target_path.with_suffix(target_path.suffix + ".provenance.json")
+        assert prov_target is not None
         record = ProvenanceRecord(
             tool_name="fluxctl",
             tool_version=__version__,
@@ -2174,7 +2156,7 @@ def qc(
             plugins={"decoder": selected_encoding},
             decoder=selected_encoding,
         )
-        write_provenance(record, prov_target)
+        write_provenance(record, prov_target, overwrite=force)
 
 
 @app.command()
@@ -2186,6 +2168,7 @@ def visualize(
     encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding (mfm, fm, gcr, apple2_gcr)"),
     layout: Optional[str] = typer.Option(None, "--layout", help="Layout identifier for flat images"),
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar path"),
+    force: bool = typer.Option(False, "--force", help="Replace existing visualization and provenance outputs"),
 ):
     """Render a disk map in ASCII or SVG form."""
 
@@ -2204,15 +2187,15 @@ def visualize(
         if layout_desc is None:
             # Fast-path: many captures (e.g., Amiga) are MFM even when encoding
             # detection leans GCR. Try MFM layout detection first.
-            layout_candidate = detect_layout(image, "mfm", path)
+            layout_candidate = detect_layout(image, "mfm")
             if layout_candidate:
                 layout_desc = layout_candidate.layout
                 selected_encoding = layout_desc.encoding
             else:
-                encoding_candidate = detect_encoding(image, path=path)
+                encoding_candidate = detect_encoding(image)
                 if encoding_candidate:
                     selected_encoding = encoding_candidate.encoding
-                layout_candidate = detect_layout(image, selected_encoding, path)
+                layout_candidate = detect_layout(image, selected_encoding)
                 if layout_candidate:
                     layout_desc = layout_candidate.layout
                     selected_encoding = layout_desc.encoding
@@ -2232,11 +2215,14 @@ def visualize(
         disk_map = build_disk_map_from_tracksectors(tracks)
 
     output_path: Optional[Path] = None
+    prov_target: Optional[Path] = None
+    if out is not None:
+        prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
+        _validate_outputs([out, prov_target], force=force, source_paths=[path])
     if format_lower == "ascii":
         ascii_map = render_ascii(disk_map)
         if out:
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(ascii_map, encoding="utf-8")
+            atomic_write_text(out, ascii_map, overwrite=force, source_paths=[path])
             output_path = out
         else:
             typer.echo(ascii_map)
@@ -2244,13 +2230,12 @@ def visualize(
         if out is None:
             raise typer.BadParameter("--out is required for SVG output")
         svg_map = render_svg(disk_map)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(svg_map, encoding="utf-8")
+        atomic_write_text(out, svg_map, overwrite=force, source_paths=[path])
         typer.echo(f"Wrote SVG visualization to {out}")
         output_path = out
 
     if output_path:
-        prov_target = prov_out or output_path.with_suffix(output_path.suffix + ".provenance.json")
+        assert prov_target is not None
         record = ProvenanceRecord(
             tool_name="fluxctl",
             tool_version=__version__,
@@ -2264,7 +2249,7 @@ def visualize(
             decoder=encoding,
             encoder=None,
         )
-        write_provenance(record, prov_target)
+        write_provenance(record, prov_target, overwrite=force)
 
 
 @app.command()
@@ -2276,6 +2261,7 @@ def convert(
     layout: Optional[str] = typer.Option(None, "--layout", help="Layout ID for SCP reconstruction or flat image geometry"),
     encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding for SCP sources"),
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar output"),
+    force: bool = typer.Option(False, "--force", help="Replace existing image and provenance outputs"),
 ):
     """Convert SCP, IMD, TRS-80 DSK/DMK, or flat sector images to a supported output format.
 
@@ -2287,10 +2273,11 @@ def convert(
     fluxctl convert 1581.scp --layout commodore_mfm_1581_800k --to d81 --out disk.d81
     """
 
+    prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
+    _validate_outputs([out, prov_target], force=force, source_paths=[path])
     result = _prepare_convert_payload(path, to, layout, encoding)
     exported = result.payload
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(exported)
+    atomic_write_bytes(out, exported, overwrite=force, source_paths=[path])
 
     provenance = ProvenanceRecord(
         tool_name="fluxctl",
@@ -2311,8 +2298,7 @@ def convert(
         decoder=result.encoding,
         encoder=to,
     )
-    prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
-    write_provenance(provenance, prov_target)
+    write_provenance(provenance, prov_target, overwrite=force)
 
     if _is_lossy(result.track_data, result.exporter_metadata):
         typer.secho(
@@ -2336,6 +2322,7 @@ def roundtrip(
     work_dir: Optional[Path] = typer.Option(None, "--work-dir", help="Keep intermediate images in this directory"),
     json_out: Optional[Path] = typer.Option(None, "--json-out", help="Write round-trip report to JSON"),
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar for --json-out"),
+    force: bool = typer.Option(False, "--force", help="Replace existing retained images, report, and provenance outputs"),
 ):
     """Verify sector-level losslessness through a conversion round trip.
 
@@ -2353,15 +2340,30 @@ def roundtrip(
     try:
         first_path = base_dir / f"{path.stem}-to-{to}{_exporter_suffix(to)}"
         final_path = base_dir / f"{path.stem}-roundtrip-{back_exporter}{_exporter_suffix(back_exporter)}"
+        prov_target = (prov_out or json_out.with_suffix(json_out.suffix + ".provenance.json")) if json_out else None
+        retained_outputs = [first_path, final_path] if work_dir is not None else []
+        report_outputs = [output for output in (json_out, prov_target) if output is not None]
+        _validate_outputs([*retained_outputs, *report_outputs], force=force, source_paths=[path])
+        intermediate_overwrite = force if work_dir is not None else False
 
         first = _prepare_convert_payload(path, to, layout, encoding)
-        first_path.write_bytes(first.payload)
+        atomic_write_bytes(
+            first_path,
+            first.payload,
+            overwrite=intermediate_overwrite,
+            source_paths=[path],
+        )
 
         resolved_layout = first.layout_id or layout
         original_bytes, original_meta = _image_bytes_for_compare(path, resolved_layout, first.encoding)
         first_bytes, first_meta = _image_bytes_for_compare(first_path, resolved_layout, first.encoding)
         second = _prepare_convert_payload(first_path, back_exporter, resolved_layout, first.encoding)
-        final_path.write_bytes(second.payload)
+        atomic_write_bytes(
+            final_path,
+            second.payload,
+            overwrite=intermediate_overwrite,
+            source_paths=[path],
+        )
         final_bytes, final_meta = _image_bytes_for_compare(final_path, resolved_layout, first.encoding)
 
         original_sha = hashlib.sha256(original_bytes).hexdigest()
@@ -2421,9 +2423,8 @@ def roundtrip(
                 typer.echo(f"Round-trip first difference at decoded offset {final_diff}")
 
         if json_out:
-            json_out.parent.mkdir(parents=True, exist_ok=True)
-            json_out.write_text(json.dumps(report, indent=2), encoding="utf-8")
-            prov_target = prov_out or json_out.with_suffix(json_out.suffix + ".provenance.json")
+            atomic_write_text(json_out, json.dumps(report, indent=2), overwrite=force, source_paths=[path])
+            assert prov_target is not None
             record = ProvenanceRecord(
                 tool_name="fluxctl",
                 tool_version=__version__,
@@ -2452,7 +2453,7 @@ def roundtrip(
                     f"roundtrip_match={int(roundtrip_match)}",
                 ],
             )
-            write_provenance(record, prov_target)
+            write_provenance(record, prov_target, overwrite=force)
             typer.echo(f"Wrote round-trip report to {json_out}")
 
         if not roundtrip_match:
@@ -2472,6 +2473,7 @@ def extract(
     file_path: Optional[str] = typer.Option(None, "--path", help="Filesystem path to extract"),
     out: Optional[Path] = typer.Option(None, "--out", help="Destination for extracted data"),
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar path"),
+    force: bool = typer.Option(False, "--force", help="Replace existing extracted data and provenance outputs"),
 ):
     """Detect filesystem, list directories, or extract a file."""
 
@@ -2485,10 +2487,10 @@ def extract(
         load_builtin_layouts()
         if path.suffix.lower() == ".scp":
             scp = parse_scp(path)
-            encoding_candidate = detect_encoding(scp, path=path)
+            encoding_candidate = detect_encoding(scp)
             if encoding_candidate:
                 selected_encoding = encoding_candidate.encoding
-                layout_candidate = detect_layout(scp, selected_encoding, path)
+                layout_candidate = detect_layout(scp, selected_encoding)
                 if layout_candidate:
                     selected_layout = layout_candidate.layout.layout_id
         else:
@@ -2499,7 +2501,7 @@ def extract(
                 selected_encoding = primary.encoding or selected_encoding
 
     image_obj = _prepare_image(path, selected_layout, selected_encoding)
-    detection = _filesystem_detection_for_image(image_obj, path)
+    detection = _filesystem_detection_for_image(image_obj)
     filesystem = detection.plugin
 
     if filesystem is None:
@@ -2519,8 +2521,9 @@ def extract(
             typer.echo("No filesystem detected; provide --out to dump raw sectors")
             return
         raw_bytes = b"".join(image_obj.iter_sectors())
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(raw_bytes)
+        prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
+        _validate_outputs([out, prov_target], force=force, source_paths=[path])
+        atomic_write_bytes(out, raw_bytes, overwrite=force, source_paths=[path])
         typer.echo(f"No filesystem detected; wrote raw sector dump to {out}")
         record = ProvenanceRecord(
             tool_name="fluxctl",
@@ -2535,8 +2538,7 @@ def extract(
             decoder=selected_encoding,
             encoder=None,
         )
-        prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
-        write_provenance(record, prov_target)
+        write_provenance(record, prov_target, overwrite=force)
         return
 
     if list_only or file_path is None:
@@ -2549,10 +2551,10 @@ def extract(
 
     assert out is not None  # guarded above
     content = filesystem.extract_file(file_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(content)
-    typer.echo(f"Extracted {file_path} to {out}")
     prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
+    _validate_outputs([out, prov_target], force=force, source_paths=[path])
+    atomic_write_bytes(out, content, overwrite=force, source_paths=[path])
+    typer.echo(f"Extracted {file_path} to {out}")
     record = ProvenanceRecord(
         tool_name="fluxctl",
         tool_version=__version__,
@@ -2566,7 +2568,7 @@ def extract(
         decoder=selected_encoding,
         encoder=None,
     )
-    write_provenance(record, prov_target)
+    write_provenance(record, prov_target, overwrite=force)
 
 
 @app.command()
@@ -2591,6 +2593,7 @@ def patch(
     ),
     out: Path = typer.Option(..., "--out", help="Destination raw image path"),
     prov_out: Optional[Path] = typer.Option(None, "--prov-out", help="Provenance sidecar output"),
+    force: bool = typer.Option(False, "--force", help="Replace existing image, provenance, and patch-log outputs"),
 ):
     """Patch one full sector and export a raw image.
 
@@ -2599,6 +2602,9 @@ def patch(
     sector 1.
     """
 
+    prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
+    patchlog_target = out.with_suffix(out.suffix + ".patchlog.json")
+    _validate_outputs([out, prov_target, patchlog_target], force=force, source_paths=[path])
     layout_desc = ensure_layout_loaded(layout)
     load_builtin_exporters()
     track_data = _decode_tracks(path, layout)
@@ -2614,8 +2620,7 @@ def patch(
     image_obj = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
     _apply_layout_geometry(image_obj, layout_desc)
     exported = exporter.export(image_obj)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(exported)
+    atomic_write_bytes(out, exported, overwrite=force, source_paths=[path])
     exporter_metadata = exporter.metadata()
 
     provenance = ProvenanceRecord(
@@ -2633,9 +2638,12 @@ def patch(
         decoder=layout_desc.encoding,
         encoder=exporter_info.name,
     )
-    write_provenance(provenance, prov_out or out.with_suffix(out.suffix + ".provenance.json"))
-    out.with_suffix(out.suffix + ".patchlog.json").write_text(
-        json.dumps({"patched": write_sector}, indent=2), encoding="utf-8"
+    write_provenance(provenance, prov_target, overwrite=force)
+    atomic_write_text(
+        patchlog_target,
+        json.dumps({"patched": write_sector}, indent=2),
+        overwrite=force,
+        source_paths=[path],
     )
     typer.echo(f"Patched image written to {out}")
 

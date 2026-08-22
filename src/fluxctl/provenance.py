@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .models import ProvenanceRecord
+from .output import atomic_write_text
 
 
-def write_provenance(record: ProvenanceRecord, path: Path) -> Path:
+def write_provenance(record: ProvenanceRecord, path: Path, *, overwrite: bool = False) -> Path:
     """Serialise ``record`` to ``path`` as JSON.
 
     A timestamp is injected if one has not been provided by the caller. The
@@ -22,6 +23,5 @@ def write_provenance(record: ProvenanceRecord, path: Path) -> Path:
     if payload.get("output_path"):
         payload["output_path"] = str(payload["output_path"])
     payload["timestamp"] = record.timestamp or datetime.now(timezone.utc).isoformat()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    atomic_write_text(path, json.dumps(payload, indent=2), overwrite=overwrite)
     return path

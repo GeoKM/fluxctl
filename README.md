@@ -142,6 +142,19 @@ fluxctl dump disk.scp --layout ibm_mfm_720k --track 0 --side 0 --sector 1
 fluxctl patch disk.scp --layout ibm_mfm_720k --write-sector 0:0:1:DEADBEEF... --out patched.img
 ```
 
+### Safe output handling
+
+Commands that create user-visible files refuse to overwrite an existing path
+by default. `compare`, `qc`, `visualize`, `convert`, `roundtrip`, `extract`, and
+`patch` accept `--force` when replacement is intentional. Fluxctl writes each
+file to a temporary file in the destination directory and publishes it only
+after the complete output has been flushed, so an interrupted write does not
+leave a partially written destination.
+
+Fluxctl also checks all known outputs, including provenance and patch-log
+sidecars, before starting a command. An input image can never be used as its own
+output path, even with `--force`.
+
 ### Health checks and troubleshooting
 
 Use `fluxctl doctor` when a conversion, decode, or optional helper path behaves

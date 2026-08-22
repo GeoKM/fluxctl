@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Iterable, Optional
 
 from .decoding import Decoder
@@ -137,12 +136,10 @@ def _displaywriter_2d_label_probe(
     return has_vol1 and has_hdr1 and volume != "SEIKO"
 
 
-def detect_encoding(
-    image: SCPImage, path: Optional[Path] = None, hint: LayoutHint | None = None
-) -> Optional[EncodingCandidate]:
+def detect_encoding(image: SCPImage, hint: LayoutHint | None = None) -> Optional[EncodingCandidate]:
     """Return the best matching decoder based on layout scoring and confidence."""
 
-    layout_candidate = detect_layout_any(image, path or Path(""), hint=hint)
+    layout_candidate = detect_layout_any(image, hint=hint)
     if layout_candidate:
         return EncodingCandidate(
             encoding=layout_candidate.layout.encoding,
@@ -483,7 +480,7 @@ def _estimate_flux_median(image: SCPImage, sample_tracks: int = 3) -> Optional[f
 
 
 def detect_layout(
-    image: SCPImage, encoding: str, path: Path, hint: LayoutHint | None = None
+    image: SCPImage, encoding: str, hint: LayoutHint | None = None
 ) -> Optional[LayoutCandidate]:
     """Pick the most likely layout for an image and encoding."""
 
@@ -491,7 +488,7 @@ def detect_layout(
     # generic scorer only sees FM timing and can replace a provisional Wang
     # result with an RX01/Xerox layout after encoding detection succeeds.
     if encoding == "wang_fm":
-        return detect_layout_any(image, path, hint=hint)
+        return detect_layout_any(image, hint=hint)
 
     layouts = [desc for desc in registry.layout.values() if desc.encoding == encoding]
     if not layouts:
@@ -755,7 +752,7 @@ def _probe_generic_cpm_filesystem(image: SCPImage, decoder: Decoder, desc: Layou
     return CPMFilesystem().probe(image_view)
 
 
-def detect_layout_any(image: SCPImage, path: Path, hint: LayoutHint | None = None) -> Optional[LayoutCandidate]:
+def detect_layout_any(image: SCPImage, hint: LayoutHint | None = None) -> Optional[LayoutCandidate]:
     """Pick the most likely layout across all encodings."""
 
     if not registry.layout:
