@@ -3,7 +3,8 @@
 fluxctl is organised around plugins:
 - **Decoders** convert flux revolutions to bitstreams (MFM, GCR).
 - **Sector reconstruction** turns bitstreams into sector models.
-- **Filesystems** interpret sector images (FAT12, Amiga OFS).
+- **Filesystems** interpret sector images (FAT12, Amiga OFS/FFS, CBM DOS,
+  CP/M, Apple II, Tandy, RT-11, DisplayWriter, Seiko, and Wang readers).
 - **Exporters** serialise images (raw, IMD, ADF).
 - **Reports** provide QC summaries and visual maps.
 

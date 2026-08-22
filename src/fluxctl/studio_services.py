@@ -1,6 +1,7 @@
 """Application services shared by Fluxctl Studio and future frontends."""
 from __future__ import annotations
 
+from functools import lru_cache
 import json
 import shlex
 import shutil
@@ -40,6 +41,36 @@ from .reports.map import (
 )
 from .reports.qc import DiskQCReport, build_qc_report, build_qc_report_from_tracks
 from .scp import parse_scp
+
+
+@lru_cache(maxsize=8)
+def _prepare_image_cached(
+    path: str,
+    modified_ns: int,
+    changed_ns: int,
+    size: int,
+    layout_id: str,
+    encoding: str,
+):
+    """Cache one reconstructed image snapshot for repeated Studio views."""
+
+    del modified_ns, changed_ns, size
+    return _prepare_image(Path(path), layout_id or None, encoding)
+
+
+def _prepare_image_for_studio(path: Path, layout_id: Optional[str], encoding: str):
+    """Reconstruct from a metadata-keyed cache, invalidating changed files."""
+
+    resolved = path.expanduser().resolve()
+    stat = resolved.stat()
+    return _prepare_image_cached(
+        str(resolved),
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+        stat.st_size,
+        layout_id or "",
+        encoding,
+    )
 
 
 @dataclass(frozen=True)
@@ -754,7 +785,7 @@ def summarize_image(path: Path, hxcfe: Optional[Path] = None) -> ImageSummary:
         if layout:
             fs_name = ""
             try:
-                image_obj = _prepare_image(path, layout.layout.layout_id, layout.layout.encoding)
+                image_obj = _prepare_image_for_studio(path, layout.layout.layout_id, layout.layout.encoding)
                 fs_detection = detect_filesystem(image_obj)
                 fs_name = fs_detection.primary or ""
                 fs_evidence = [
@@ -818,7 +849,7 @@ def build_qc_for_image(path: Path, layout_id: Optional[str], encoding: str = "mf
         decoder = _get_decoder(selected_encoding)
         return build_qc_report(image, decoder, layout=layout)
 
-    image_obj = _prepare_image(path, layout_id, encoding)
+    image_obj = _prepare_image_for_studio(path, layout_id, encoding)
     if not isinstance(image_obj, TrackSectorImage):
         raise ValueError("Image could not be reconstructed into sector tracks")
     layout = ensure_layout_loaded(layout_id) if layout_id else None
@@ -837,7 +868,7 @@ def build_disk_map_for_image(
     load_builtin_layouts()
     load_builtin_filesystems()
     if map_view == "bam":
-        image_obj = _prepare_image(path, layout_id, encoding)
+        image_obj = _prepare_image_for_studio(path, layout_id, encoding)
         layout = ensure_layout_loaded(layout_id) if layout_id else None
         max_tracks = (
             _prefix_track_count_for_size(layout, path.stat().st_size)
@@ -857,7 +888,7 @@ def build_disk_map_for_image(
         disk_map = build_disk_map(image, decoder, layout=layout)
         if map_view == "logical" and layout and layout.layout_id == "commodore_gcr_1541_170k":
             try:
-                image_obj = _prepare_image(path, layout.layout_id, layout.encoding)
+                image_obj = _prepare_image_for_studio(path, layout.layout_id, layout.encoding)
                 detection = detect_filesystem(image_obj)
                 if detection.primary == "c64_cpm_2_2":
                     allocated = (
@@ -870,7 +901,7 @@ def build_disk_map_for_image(
                 pass
         return disk_map
 
-    image_obj = _prepare_image(path, layout_id, encoding)
+    image_obj = _prepare_image_for_studio(path, layout_id, encoding)
     if not isinstance(image_obj, TrackSectorImage):
         raise ValueError("Image could not be reconstructed into sector tracks")
     disk_map = build_disk_map_from_tracksectors(image_obj.tracks)
@@ -1028,7 +1059,7 @@ def sector_hex_dump(
 ) -> HexDumpView:
     """Return a hex dump for one decoded physical sector."""
 
-    image = _prepare_image(path, layout_id, encoding)
+    image = _prepare_image_for_studio(path, layout_id, encoding)
     if not isinstance(image, TrackSectorImage):
         raise ValueError("Image could not be reconstructed into sector tracks")
     try:
@@ -1057,7 +1088,7 @@ def sector_list(
 ) -> TextView:
     """Return a decoded sector listing for one physical track/head row."""
 
-    image = _prepare_image(path, layout_id, encoding)
+    image = _prepare_image_for_studio(path, layout_id, encoding)
     if not isinstance(image, TrackSectorImage):
         raise ValueError("Image could not be reconstructed into sector tracks")
     selected = None
@@ -1091,7 +1122,7 @@ def file_hex_dump(
     """Return a hex dump for one filesystem file."""
 
     load_builtin_filesystems()
-    image = _prepare_image(path, layout_id, encoding)
+    image = _prepare_image_for_studio(path, layout_id, encoding)
     filesystem = detect_filesystem(image).plugin
     if filesystem is None:
         raise ValueError("No supported filesystem is available")
@@ -1115,7 +1146,7 @@ def file_allocation_for_image(
     """Return sector addresses occupied by a filesystem file when supported."""
 
     load_builtin_filesystems()
-    image = _prepare_image(path, layout_id, encoding)
+    image = _prepare_image_for_studio(path, layout_id, encoding)
     filesystem = detect_filesystem(image).plugin
     if filesystem is None:
         raise ValueError("No supported filesystem is available")
@@ -1131,7 +1162,7 @@ def file_allocation_for_image(
 
 def _mount_filesystem(path: Path, layout_id: Optional[str], encoding: str):
     load_builtin_filesystems()
-    image = _prepare_image(path, layout_id, encoding)
+    image = _prepare_image_for_studio(path, layout_id, encoding)
     filesystem = detect_filesystem(image).plugin
     if filesystem is None:
         raise ValueError("No supported filesystem is available")
@@ -1736,7 +1767,7 @@ def list_files_with_info(
     """Return directory entries and filesystem label/header text for display."""
 
     load_builtin_filesystems()
-    image = _prepare_image(path, layout_id, encoding)
+    image = _prepare_image_for_studio(path, layout_id, encoding)
     filesystem = detect_filesystem(image).plugin
     if filesystem is None:
         return FileListView([])

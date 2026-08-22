@@ -6,19 +6,26 @@ format-specific code to safely extract or modify file data.
 
 ## Current Capability Matrix
 
+This is the user-facing capability reference for the CLI and Fluxctl Studio.
+The regression test `tests/test_filesystem_capabilities_doc.py` checks that the
+document includes every current blank-image preset and the major media families;
+format-specific behavior remains deliberately explicit below rather than being
+inferred from filenames.
+
 | Filesystem | Detect | List files | Extract/export files | Directory traversal | Copy-only mutation | Main limitations |
 | --- | --- | --- | --- | --- | --- | --- |
 | FAT12 | Yes | Yes | Yes | Yes | Yes for flat `.img` | Uses 8.3 ASCII names for import/create. Delete supports files and empty directories. Replacement/import/write actions currently require flat `.img` containers. |
 | CBM DOS 1541/1571 | Yes | Yes | Yes | Root only | Root file import, replace, and scratch/delete for `.d64`/`.d71` | Directory import and directory creation are pending. Import infers `.PRG`, `.SEQ`, and `.USR`; unknown suffixes default to PRG. REL import is pending because side-sector allocation is required. |
-| CBM DOS 1581 | Yes | Yes | Yes | Yes | File and directory mutation for `.d81` | Real 1581 BAM allocation exists for file and directory writes. File import does not overwrite entries. |
+| CBM DOS 1581 | Yes | Yes | Yes | Yes | Root-file replace/delete; file import, directory import, and directory creation for `.d81` | Real 1581 BAM allocation exists for file and directory writes. Replace/delete are still root-file-only; REL side-sector mutation is not implemented. |
 | Amiga OFS/FFS | Yes | Yes | Yes | Yes | No | Reader supports file/directory export. `.adf` mutation is pending because allocation bitmap, block checksums, file headers, and directory hash chains must be updated correctly. |
 | Apple ProDOS | Yes | Yes | Yes | Yes | No | Read-only 140K Apple II support across WOZ, NIB, PO, DO, flat IMG, and decoded SCP. Seedling, sapling, tree, and data-fork extraction are supported. |
 | Apple DOS 3.3 | Yes | Yes | Yes | Root only | No | Reads the 16-sector VTOC/catalog and T/S lists. Extracted size is sector-granular because DOS 3.3 catalog entries do not store an exact byte EOF. |
 | CP/M variants | Yes | Yes | Yes for modelled DPBs and Commodore GCR translations | Root only | Root file import and delete for modelled flat `.img` | Modelled formats include CP/M 26-sector 256K FM, Osborne 1, Kaypro II, Tandy Model 4 CP/M 2.2/Plus, C64 CP/M 2.2 GCR, and C128 CP/M 3 GCR. Commodore GCR and mixed-sector CP/M Plus media are read-only. |
 | DisplayWriter | Yes | Label directory only | No | No | No | The reader lists IBM standard-label `HDR1` records from track 0. Actual DisplayWriter document extraction is not implemented. |
-| RT-11 | Yes | No | No | No | No | Probe and volume label metadata exist. Directory listing and extraction are not implemented. |
+| RT-11 | Yes | Yes | Yes | Root only | No | Read-only RAD50 directory and extent reader. Directory entries are flat; filesystem mutation is not implemented. |
 | RT-11 Interchange (RX01/IBM 3740) | Yes | Active `HDR1` dataset labels | Yes for nonempty labels | No | No | Exports fixed-length EBCDIC record streams from the `HDR1` start through its first-unused address. Labelled-empty datasets expose a separately named raw residual extent and JSON manifest for forensic recovery. |
 | Wang OIS package disks | Yes | Yes | Yes | Yes | No | Read-only support for the hierarchical catalog on 315K OIS installation media. File prologues, allocation-block starts, sector EOF counts, and final-sector byte counts are honoured. Wang system/software disks and user-document/archive volumes are separate formats and still need their own VTOC/file-table modelling. |
+| Seiko 8300 catalog/dataset readers | Yes | Yes | No | Root only | No | Read-only EBCDIC catalog/header readers for Seiko-family mixed-density media. Catalog fields and record headers are exposed, but physical allocation and file extents remain unproven. |
 | Raw sectors | Not a filesystem | N/A | Sector dump/export | N/A | Sector patch helpers only | Raw sector operations do not understand filesystem allocation or directory structures. |
 
 ## Fluxctl Studio Function Matrix
@@ -41,10 +48,11 @@ opened and probed. Write/manipulation actions always create a new image copy.
 | CP/M variants | Yes | Yes | Root only | Yes | Yes for modelled CP/M DPBs and Commodore GCR translations | Files for modelled DPBs and Commodore GCR | No | Modelled flat `.img` only | Modelled flat `.img` only | No | No | Osborne 1, Kaypro II, and Tandy Model 4 CP/M 2.2 `.img` | Allocation-block overlay for modelled DPBs and Commodore GCR | Filesystem logical map |
 | Tandy/TRS-80 `.dsk`/`.dmk`/`.imd`/`.scp` | Yes | Model III TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and CP/M where probes pass | Root only | Yes | TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and modelled Tandy CP/M files | TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and modelled Tandy CP/M files | No | No | No | No | No | No | Allocation-block/extent overlay where supported | Physical map; filesystem logical map where supported |
 | DisplayWriter | Yes | Label entries only | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
-| RT-11 | Yes | No | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
+| RT-11 normal volumes | Yes | Yes | Root only | Yes | Yes | Files | No | No | No | No | No | No | No | Physical map |
 | RT-11 Interchange RX01/IBM 3740 | Yes | Active labels and labelled-empty raw recovery extents | No | Yes | Yes | Nonempty datasets; raw residual extent where labelled empty | No | No | No | No | No | No | No | Physical map only |
 | Wang OIS 315K package `.img`/decoded `.scp` | Yes | Package catalog files and directories | Yes | Yes | Yes | Files and directories | No | No | No | No | No | No | Allocation extent overlay | Physical map |
 | Wang OIS 315K system/software `.img` | Yes | No supported file view yet | No | No | No | No | No | No | No | No | No | No | Logical 16x256 sector map | Physical map |
+| Seiko 8300 mixed-density `.img`/`.scp` | Yes | EBCDIC catalog or dataset headers | Root only | Yes | No | No | No | No | No | No | No | No | No | Physical map |
 
 Notes:
 
@@ -88,8 +96,9 @@ Known list-without-extract cases:
   translation are implemented.
 - **DisplayWriter**: lists standard-label `HDR1` records only; the document data
   format has not been decoded.
-- **RT-11**: can identify likely RT-11 volumes, but directory listing and
-  extraction are both pending.
+- **RT-11 normal volumes**: lists the flat RAD50 directory and extracts files
+  from modelled logical 512-byte block extents. The reader is read-only and
+  does not expose directory traversal or mutation.
 - **RT-11 Interchange (RX01/IBM 3740)**: exports a nonempty `HDR1` dataset as
   its fixed-length EBCDIC record stream. When a label declares its extent empty,
   Studio exposes a clearly named `.RESIDUAL.RAW` sector-for-sector recovery
@@ -103,6 +112,9 @@ Known list-without-extract cases:
   and flat IMG files use the logical 16-sector/256-byte view for sector mapping.
   File listing, selected-file overlays, and export remain disabled until the
   system disk file table or VTOC and its allocation extents are decoded.
+- **Seiko 8300 catalog/dataset media**: lists decoded EBCDIC catalog records or
+  dataset headers, but rejects HEX viewing and export until catalog offsets can
+  be mapped to physical allocation safely.
 
 ## Mutation Safety
 
@@ -133,5 +145,6 @@ Currently disabled mutation:
 - DisplayWriter writes.
 - RT-11 writes.
 - Wang OIS writes.
+- Seiko 8300 catalog/dataset writes.
 - `.scp` and `.imd` filesystem-level writes, until a safe container rewrite path
   is designed for each target.

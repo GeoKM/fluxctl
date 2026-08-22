@@ -56,6 +56,55 @@ class WangOISFilesystem(Filesystem):
         self._paths: dict[str, WangOISCatalogEntry] = {}
         self._package_id = ""
 
+    @staticmethod
+    def quick_probe(image: SectorImage) -> bool:
+        """Check only the Wang header and catalog prologue.
+
+        This deliberately avoids materialising the complete image. Generic
+        filesystem detection calls this method before the full catalog parse,
+        which matters for repeated probes of reconstructed SCP captures.
+        """
+
+        cached = getattr(image, "_wang_ois_quick_probe", None)
+        if cached is not None:
+            return bool(cached)
+        if getattr(image, "bytes_per_sector", 0) != _SECTOR_SIZE:
+            try:
+                setattr(image, "_wang_ois_quick_probe", False)
+            except (AttributeError, TypeError):
+                pass
+            return False
+        try:
+            header = image.read_sector(0)
+            if len(header) < 24:
+                return False
+            catalog_block = int.from_bytes(header[22:24], "little")
+            if catalog_block <= 0:
+                return False
+            for multiplier in (4, 1, 8):
+                catalog_lba = catalog_block * multiplier
+                try:
+                    catalog_sector = image.read_sector(catalog_lba)
+                except Exception:
+                    continue
+                if len(catalog_sector) >= 8 and catalog_sector[1:8] == b"Catalog":
+                    try:
+                        setattr(image, "_wang_ois_quick_probe", True)
+                    except (AttributeError, TypeError):
+                        pass
+                    return True
+        except Exception:
+            try:
+                setattr(image, "_wang_ois_quick_probe", False)
+            except (AttributeError, TypeError):
+                pass
+            return False
+        try:
+            setattr(image, "_wang_ois_quick_probe", False)
+        except (AttributeError, TypeError):
+            pass
+        return False
+
     def probe(self, image: SectorImage) -> bool:
         self.image = None
         self._data = b""
@@ -63,7 +112,7 @@ class WangOISFilesystem(Filesystem):
         self._paths = {}
         self._package_id = ""
         self._catalog_pointer_unit = "allocation_block"
-        if getattr(image, "bytes_per_sector", 0) != _SECTOR_SIZE:
+        if not self.quick_probe(image):
             return False
         try:
             data = b"".join(image.iter_sectors())

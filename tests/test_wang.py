@@ -6,6 +6,7 @@ from fluxctl.layouts.loader import load_builtin_layouts
 from fluxctl.cli import _prepare_image
 from fluxctl.filesystem_detection import detect_filesystem
 from fluxctl.detection import detect_layout_any
+from fluxctl.filesystems.wang_ois import WangOISFilesystem
 from fluxctl.models import RevolutionFlux, SCPImage, TrackFlux
 from fluxctl import studio_services as services
 
@@ -15,9 +16,38 @@ FIXTURE_IMG = Path(
 )
 
 
+class _WangQuickProbeImage:
+    bytes_per_sector = 256
+
+    def __init__(self) -> None:
+        self.reads: list[int] = []
+        self.header = bytearray(256)
+        self.header[22:24] = (616).to_bytes(2, "little")
+
+    def read_sector(self, lba: int, count: int = 1) -> bytes:
+        assert count == 1
+        self.reads.append(lba)
+        if lba == 0:
+            return bytes(self.header)
+        if lba == 616 * 4:
+            return b"\x00Catalog" + b"\x00" * 248
+        return b"\x00" * 256
+
+    def iter_sectors(self):
+        raise AssertionError("quick probe must not materialize the full image")
+
+
 def test_wang_crc_includes_sync_bits() -> None:
     assert wang_crc16(b"\x00" * 256) == 0x0A88
     assert wang_crc16(b"Wang OIS") == 0x6E71
+
+
+def test_wang_quick_probe_reads_only_header_and_catalog() -> None:
+    image = _WangQuickProbeImage()
+
+    assert WangOISFilesystem.quick_probe(image)
+    assert WangOISFilesystem.quick_probe(image)
+    assert image.reads == [0, 616 * 4]
 
 
 def test_wang_flat_image_uses_logical_geometry() -> None:
@@ -93,6 +123,7 @@ def test_wang_scp_reconstructs_all_logical_sectors() -> None:
 
 
 def test_wang_flat_probe_uses_catalog_structure_not_package_id(tmp_path: Path) -> None:
+    load_builtin_layouts()
     data = bytearray(77 * 16 * 256)
     data[:8] = b"OTHER001"
     data[22:24] = (616).to_bytes(2, "little")

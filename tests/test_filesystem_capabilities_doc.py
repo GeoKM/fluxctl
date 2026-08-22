@@ -24,7 +24,8 @@ def test_filesystem_capabilities_documents_current_studio_media() -> None:
         "Tandy/TRS-80 `.dsk`/`.dmk`/`.imd`/`.scp`",
         "DisplayWriter",
         "RT-11",
-            "Wang OIS 315K package `.img`/decoded `.scp`",
+        "Wang OIS 315K package `.img`/decoded `.scp`",
+        "Seiko 8300 catalog/dataset readers",
     ]
 
     for row in expected_rows:
@@ -45,3 +46,5 @@ def test_filesystem_capabilities_documents_current_studio_media() -> None:
     assert "Files and empty directories" in text
     assert "CP/M export is enabled only when Fluxctl has a modelled disk parameter block" in text
     assert "`.scp` and `.imd` write/manipulation actions are disabled" in text
+    assert "RT-11 normal volumes" in text
+    assert "Seiko 8300 mixed-density `.img`/`.scp`" in text
