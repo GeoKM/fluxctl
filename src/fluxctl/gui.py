@@ -11,6 +11,7 @@ from typing import Callable, Optional
 
 from . import studio_services as services
 from .application.command_operations import run_fluxctl_command
+from .application.report_operations import build_disk_map_for_image, build_qc_for_image
 
 
 try:  # pragma: no cover - exercised only when GUI dependencies are installed.
@@ -1786,7 +1787,7 @@ class FluxctlStudio(QMainWindow):
         assert self.current_path is not None
         layout = self._selected_layout() or None
         encoding = self._selected_encoding()
-        self._run_job("qc", lambda: services.build_qc_for_image(self.current_path, layout, encoding), self._show_qc)
+        self._run_job("qc", lambda: build_qc_for_image(self.current_path, layout, encoding), self._show_qc)
 
     def _show_qc(self, report: object) -> None:
         self.summary_labels["status"].setText(report.status)
@@ -1811,7 +1812,7 @@ class FluxctlStudio(QMainWindow):
         map_view = self._selected_map_view()
         self._run_job(
             "map",
-            lambda: services.build_disk_map_for_image(self.current_path, layout, encoding, map_view),
+            lambda: build_disk_map_for_image(self.current_path, layout, encoding, map_view),
             self._show_map,
         )
 
