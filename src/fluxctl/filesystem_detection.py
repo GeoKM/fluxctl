@@ -41,7 +41,7 @@ class FilesystemDetection:
         }
 
 
-def detect_filesystem(image, *, path_name: str = "") -> FilesystemDetection:
+def detect_filesystem(image) -> FilesystemDetection:
     """Detect filesystems while retaining evidence and hybrid-region notes."""
 
     if not registry.filesystem:

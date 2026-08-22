@@ -14,7 +14,7 @@ FIXTURE_NEWDOS80 = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model3-SSDD-MFM-NEW
 def _mount_newdos80():
     load_builtin_layouts()
     image = _prepare_image(FIXTURE_NEWDOS80, "tandy_mfm_ssdd_180k_s0", "mfm")
-    detection = detect_filesystem(image, path_name=FIXTURE_NEWDOS80.name)
+    detection = detect_filesystem(image)
     assert detection.primary == "newdos80"
     assert detection.plugin is not None
     return detection.plugin

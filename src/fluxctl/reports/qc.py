@@ -8,7 +8,6 @@ variance, or PLL stability across revolutions.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import List
@@ -16,6 +15,7 @@ from typing import List
 from ..decoding import Decoder
 from ..exceptions import FluxDecodeError
 from ..models import LayoutDescriptor, SCPImage, TrackFlux
+from ..output import atomic_write_text
 from ..sector.models import Sector, TrackSectors
 from ..sector.reconstruct import build_track_sectors_from_revolutions
 
@@ -182,23 +182,6 @@ def _compute_missing_tracks(image: SCPImage, layout: LayoutDescriptor | None, tr
     return max(missing, 0)
 
 
-def _estimate_sectors_per_track(image: SCPImage) -> int:
-    """Estimate expected sectors per track using filename hints and track counts."""
-
-    track_total = len(image.tracks)
-    if track_total == 0:
-        return 0
-    match = re.search(r"(\d+(?:\.\d+)?)\s*([KkMm])", image.path.name)
-    if match:
-        value = float(match.group(1))
-        unit = match.group(2).lower()
-        capacity_bytes = value * (1024 ** (1 if unit == "k" else 2))
-        estimated = int(round(capacity_bytes / (track_total * 512)))
-        if estimated > 0:
-            return estimated
-    return 9
-
-
 def _summarize_track_sectors(track_sectors: TrackSectors, missing: int) -> dict:
     """Compute per-track QC counts from reconstructed sectors."""
 
@@ -262,7 +245,9 @@ def build_qc_report(
     """
 
     track_reports: List[TrackQC] = []
-    expected_hint = _estimate_sectors_per_track(image)
+    # With no selected layout, expected sector counts come only from decoded
+    # sector IDs. Unknown geometry must not be inferred from the source name.
+    expected_hint = 0
     encoding = layout.encoding if layout else getattr(decoder, "encoding", None)
     for track_flux in image.tracks:
         logical_track = track_flux.track // max(track_step, 1)
@@ -372,7 +357,7 @@ def build_qc_report_from_tracks(
     image = SCPImage(path=Path(""), version=0, revolutions_per_track=0, timebase_ns=0.0, tracks=[])
     image.tracks = [TrackFlux(track=ts.track, side=ts.head, revolutions=[]) for ts in tracks]
     track_reports: List[TrackQC] = []
-    expected_hint = _estimate_sectors_per_track(image)
+    expected_hint = 0
     for ts in tracks:
         logical_track = ts.track // max(track_step, 1)
         expected, missing = _resolve_expected_and_missing(ts, layout, logical_track, expected_hint)
@@ -416,7 +401,13 @@ def build_qc_report_from_tracks(
     )
 
 
-def write_qc_report_text(report: DiskQCReport, path: Path, layout: LayoutDescriptor | None = None) -> None:
+def write_qc_report_text(
+    report: DiskQCReport,
+    path: Path,
+    layout: LayoutDescriptor | None = None,
+    *,
+    overwrite: bool = False,
+) -> None:
     """Write a human-readable QC report to ``path``."""
 
     lines = [
@@ -447,13 +438,13 @@ def write_qc_report_text(report: DiskQCReport, path: Path, layout: LayoutDescrip
             f"missing={track.missing_sectors} no_data={track.no_data_sectors} "
             f"bad={track.bad_sectors} crc_errors={track.crc_errors} conf={track.confidence:.2f}"
         )
-    path.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write_text(path, "\n".join(lines), overwrite=overwrite)
 
 
-def write_qc_report_json(report: DiskQCReport, path: Path) -> None:
+def write_qc_report_json(report: DiskQCReport, path: Path, *, overwrite: bool = False) -> None:
     """Write a machine-readable QC report to ``path``."""
 
-    path.write_text(report.to_json(), encoding="utf-8")
+    atomic_write_text(path, report.to_json(), overwrite=overwrite)
 
 
 __all__ = [

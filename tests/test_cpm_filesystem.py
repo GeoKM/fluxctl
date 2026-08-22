@@ -43,7 +43,7 @@ FIXTURE_C64_CPM_D64 = Path(
 def _mount_cpm_fixture(path: Path):
     load_builtin_layouts()
     image = _prepare_image(path, "generic_fm_8inch_cpm_256k", "fm")
-    detection = detect_filesystem(image, path_name=path.name)
+    detection = detect_filesystem(image)
     assert detection.plugin is not None
     return detection.plugin
 
@@ -51,7 +51,7 @@ def _mount_cpm_fixture(path: Path):
 def _mount_osborne_fixture(path: Path):
     load_builtin_layouts()
     image = _prepare_image(path, "osborne_mfm_ssdd_200k", "mfm")
-    detection = detect_filesystem(image, path_name=path.name)
+    detection = detect_filesystem(image)
     assert detection.primary == "cpm"
     assert detection.plugin is not None
     return detection.plugin
@@ -60,7 +60,7 @@ def _mount_osborne_fixture(path: Path):
 def _mount_kaypro_fixture(path: Path):
     load_builtin_layouts()
     image = _prepare_image(path, "kaypro_mfm_ssdd_40_200k", "mfm")
-    detection = detect_filesystem(image, path_name=path.name)
+    detection = detect_filesystem(image)
     assert detection.primary == "cpm"
     assert detection.plugin is not None
     return detection.plugin
@@ -69,7 +69,7 @@ def _mount_kaypro_fixture(path: Path):
 def _mount_tandy_fixture(path: Path, layout_id: str):
     load_builtin_layouts()
     image = _prepare_image(path, layout_id, "mfm")
-    detection = detect_filesystem(image, path_name=path.name)
+    detection = detect_filesystem(image)
     assert detection.primary == "cpm"
     assert detection.plugin is not None
     return detection.plugin
@@ -78,7 +78,7 @@ def _mount_tandy_fixture(path: Path, layout_id: str):
 def _mount_c128_gcr_fixture(path: Path):
     load_builtin_layouts()
     image = _prepare_image(path, "commodore_gcr_1571_341k", "gcr")
-    detection = detect_filesystem(image, path_name=path.name)
+    detection = detect_filesystem(image)
     assert detection.primary == "c128_cpm_3_0"
     assert detection.plugin is not None
     return detection.plugin

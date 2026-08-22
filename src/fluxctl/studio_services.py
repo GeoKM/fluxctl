@@ -29,6 +29,7 @@ from .filesystems.cbm_dos_1581 import CBMDOS1581
 from .filesystems.cpm import CPMFilesystem, cpm_disk_parameters_for_layout
 from .filesystems.fat12 import FAT12
 from .layouts.loader import ensure_layout_loaded, load_builtin_layouts
+from .output import atomic_write_bytes
 from .plugins import registry
 from .reports.map import (
     DiskMap,
@@ -359,8 +360,6 @@ def create_blank_image(preset_id: str, output_path: Path, *, overwrite: bool = F
 
     preset = _blank_preset_by_id(preset_id)
     output_path = output_path.with_suffix(preset.suffix) if output_path.suffix == "" else output_path
-    if output_path.exists() and not overwrite:
-        raise ValueError(f"Output image already exists: {output_path}")
     if preset_id in FAT12_PRESETS:
         payload = _build_blank_fat12_image(FAT12_PRESETS[preset_id])
     elif preset_id == "cbm_dos_1541_d64":
@@ -379,11 +378,7 @@ def create_blank_image(preset_id: str, output_path: Path, *, overwrite: bool = F
         payload = _build_blank_cpm_image("tandy_mfm_ssdd_180k")
     else:  # pragma: no cover - guarded by _blank_preset_by_id
         raise ValueError(f"Unsupported blank image preset: {preset_id}")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(prefix=f".{output_path.name}.", dir=output_path.parent, delete=False) as temp_file:
-        temp_name = Path(temp_file.name)
-        temp_file.write(payload)
-    shutil.move(str(temp_name), str(output_path))
+    atomic_write_bytes(output_path, payload, overwrite=overwrite)
     return BlankImageResult(
         path=str(output_path),
         preset_id=preset.preset_id,
@@ -753,14 +748,14 @@ def summarize_image(path: Path, hxcfe: Optional[Path] = None) -> ImageSummary:
             from .cli import _maybe_hxc_hint
 
             hint = _maybe_hxc_hint(path, hxcfe)
-        encoding = detect_encoding(image, path=path, hint=hint)
-        layout = detect_layout(image, encoding.encoding, path, hint=hint) if encoding else None
+        encoding = detect_encoding(image, hint=hint)
+        layout = detect_layout(image, encoding.encoding, hint=hint) if encoding else None
         candidates = []
         if layout:
             fs_name = ""
             try:
                 image_obj = _prepare_image(path, layout.layout.layout_id, layout.layout.encoding)
-                fs_detection = detect_filesystem(image_obj, path_name=path.name)
+                fs_detection = detect_filesystem(image_obj)
                 fs_name = fs_detection.primary or ""
                 fs_evidence = [
                     f"filesystem_confidence={fs_detection.confidence:.2f}",
@@ -849,7 +844,7 @@ def build_disk_map_for_image(
             if layout is not None and path.suffix.lower() in {".d64", ".d71"}
             else None
         )
-        detection = detect_filesystem(image_obj, path_name=path.name)
+        detection = detect_filesystem(image_obj)
         if detection.plugin is None or not hasattr(detection.plugin, "bam_blocks"):
             raise ValueError("No CBM DOS BAM is available for this image")
         return build_cbm_bam_block_map(detection.plugin.bam_blocks(max_tracks=max_tracks))
@@ -863,7 +858,7 @@ def build_disk_map_for_image(
         if map_view == "logical" and layout and layout.layout_id == "commodore_gcr_1541_170k":
             try:
                 image_obj = _prepare_image(path, layout.layout_id, layout.encoding)
-                detection = detect_filesystem(image_obj, path_name=path.name)
+                detection = detect_filesystem(image_obj)
                 if detection.primary == "c64_cpm_2_2":
                     allocated = (
                         detection.plugin.allocation_blocks()
@@ -881,7 +876,7 @@ def build_disk_map_for_image(
     disk_map = build_disk_map_from_tracksectors(image_obj.tracks)
     if map_view == "logical" and layout_id == "commodore_gcr_1541_170k":
         try:
-            detection = detect_filesystem(image_obj, path_name=path.name)
+            detection = detect_filesystem(image_obj)
             if detection.primary == "c64_cpm_2_2":
                 allocated = (
                     detection.plugin.allocation_blocks()
@@ -1097,7 +1092,7 @@ def file_hex_dump(
 
     load_builtin_filesystems()
     image = _prepare_image(path, layout_id, encoding)
-    filesystem = detect_filesystem(image, path_name=path.name).plugin
+    filesystem = detect_filesystem(image).plugin
     if filesystem is None:
         raise ValueError("No supported filesystem is available")
     data = filesystem.extract_file(file_path)
@@ -1121,7 +1116,7 @@ def file_allocation_for_image(
 
     load_builtin_filesystems()
     image = _prepare_image(path, layout_id, encoding)
-    filesystem = detect_filesystem(image, path_name=path.name).plugin
+    filesystem = detect_filesystem(image).plugin
     if filesystem is None:
         raise ValueError("No supported filesystem is available")
     if not hasattr(filesystem, "file_sector_addresses"):
@@ -1137,7 +1132,7 @@ def file_allocation_for_image(
 def _mount_filesystem(path: Path, layout_id: Optional[str], encoding: str):
     load_builtin_filesystems()
     image = _prepare_image(path, layout_id, encoding)
-    filesystem = detect_filesystem(image, path_name=path.name).plugin
+    filesystem = detect_filesystem(image).plugin
     if filesystem is None:
         raise ValueError("No supported filesystem is available")
     return filesystem
@@ -1206,8 +1201,7 @@ def export_filesystem_entry(
     if entry.is_dir:
         return _export_directory(filesystem, entry.path, destination, overwrite=overwrite)
     data = filesystem.extract_file(entry.path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(data)
+    atomic_write_bytes(destination, data, overwrite=overwrite)
     return ExportResult(path=str(destination), files=1, bytes=len(data))
 
 
@@ -1297,11 +1291,7 @@ def replace_file_with_copy(
         filesystem_name = "cbm_dos_1581"
     else:
         raise ValueError("File replacement is currently supported only for FAT12 .img and CBM DOS .d64/.d71/.d81 images")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(prefix=f".{output_path.name}.", dir=output_path.parent, delete=False) as temp_file:
-        temp_name = Path(temp_file.name)
-        temp_file.write(patched)
-    shutil.move(str(temp_name), str(output_path))
+    atomic_write_bytes(output_path, patched, source_paths=[path])
     return ReplaceResult(
         path=str(output_path),
         file_path=fs_path,
@@ -1584,11 +1574,7 @@ def _probe_cbm_dos_1581_bytes(image_bytes: bytes) -> CBMDOS1581:
 
 
 def _write_new_image_copy(output_path: Path, image_bytes: bytes) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(prefix=f".{output_path.name}.", dir=output_path.parent, delete=False) as temp_file:
-        temp_name = Path(temp_file.name)
-        temp_file.write(image_bytes)
-    shutil.move(str(temp_name), str(output_path))
+    atomic_write_bytes(output_path, image_bytes)
 
 
 def _flat_sector_offset(layout, track: int, head: int, sector_id: int) -> tuple[int, int]:
@@ -1751,7 +1737,7 @@ def list_files_with_info(
 
     load_builtin_filesystems()
     image = _prepare_image(path, layout_id, encoding)
-    filesystem = detect_filesystem(image, path_name=path.name).plugin
+    filesystem = detect_filesystem(image).plugin
     if filesystem is None:
         return FileListView([])
     volume_text = _filesystem_volume_text(filesystem)

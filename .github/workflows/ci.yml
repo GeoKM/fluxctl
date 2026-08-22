@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast-tests:
+    name: Fast tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.11"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: macos-latest
+            python: "3.11"
+          - os: windows-latest
+            python: "3.11"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install Fluxctl and test tools
+        run: python -m pip install -e . pytest
+      - name: Check CLI startup
+        run: |
+          fluxctl --help
+          fluxctl doctor
+      - name: Run fast deterministic tests
+        run: >-
+          python -m pytest -q
+          tests/test_output.py
+          tests/test_compare_cli.py
+          tests/test_doctor_cli.py
+          tests/test_exceptions.py
+          tests/test_install_fluxctl_script.py
+          tests/test_layouts.py
+          tests/test_native_loader.py
+          tests/test_scp_parser.py
+
+  full-fixture-tests:
+    name: Full fixture regression suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Fluxctl and all test-time integrations
+        run: python -m pip install -e ".[gui,greaseweazle]" pytest
+      - name: Build native acceleration
+        run: cargo build --manifest-path native/fluxctl_native/Cargo.toml --release
+      - name: Verify installation
+        run: fluxctl doctor
+      - name: Run complete suite
+        run: python -m pytest -q
+
+  rust-tests:
+    name: Rust native tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test native decoder
+        run: cargo test --manifest-path native/fluxctl_native/Cargo.toml --release

@@ -18,6 +18,7 @@ FIXTURE_GOOD = Path("tests/fixtures/5.25inch/IBM/IBM-Generic-SSDD-MFM-IBMPC-180K
 
 def test_disk_map_generation_counts_and_ascii() -> None:
     image = parse_scp(FIXTURE_GOOD)
+    image.path = Path("misleading-2880K-name.scp")
     disk_map = build_disk_map(image, mfm_decoder)
 
     assert disk_map.total_tracks == len(image.tracks)
@@ -38,7 +39,7 @@ def test_svg_renderer_contains_expected_segments() -> None:
 
     svg = render_svg(disk_map)
     assert "<svg" in svg
-    expected_paths = disk_map.total_tracks * disk_map.max_sectors_per_track
+    expected_paths = sum(len(track) for track in disk_map.tracks)
     assert svg.count("<path") >= expected_paths
 
 

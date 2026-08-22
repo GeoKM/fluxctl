@@ -199,7 +199,7 @@ def test_wang_scp_with_empty_head_placeholder_gets_provisional_geometry() -> Non
     )
 
     load_builtin_layouts()
-    candidate = detect_layout_any(image, image.path)
+    candidate = detect_layout_any(image)
 
     assert candidate is not None
     assert candidate.layout.layout_id == "wang_ois_hs32_fm_315k_128"

@@ -24,6 +24,7 @@ FIXTURE_XDF = Path("tests/fixtures/3.5inch/IBM/IBM-XDF-DSHD-MFM-OS2-1890K.scp")
 
 def test_qc_report_counts_good_disk() -> None:
     image = parse_scp(FIXTURE_GOOD)
+    image.path = Path("misleading-2880K-name.scp")
     report = build_qc_report(image, mfm_decoder)
 
     assert len(report.tracks) == len(image.tracks)

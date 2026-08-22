@@ -145,7 +145,7 @@ def test_probe_prefers_1440k_for_raw_hd_capture_without_sector_decode(monkeypatc
     )
     monkeypatch.setattr(detection, "_average_confidence", lambda *_args, **_kwargs: None)
 
-    candidate = detection.detect_layout_any(image, Path("capture.scp"))
+    candidate = detection.detect_layout_any(image)
 
     assert candidate is not None
     assert candidate.layout.layout_id == "ibm_mfm_1440k"
@@ -166,7 +166,7 @@ def test_probe_prefers_amiga_for_raw_dd_capture_without_ibm_sector_decode(monkey
     )
     monkeypatch.setattr(detection, "_average_confidence", lambda *_args, **_kwargs: None)
 
-    candidate = detection.detect_layout_any(image, Path("amiga.scp"))
+    candidate = detection.detect_layout_any(image)
 
     assert candidate is not None
     assert candidate.layout.layout_id == "amiga_mfm_880k"
@@ -201,7 +201,7 @@ def test_probe_skips_competing_geometry_when_mfm_sectors_are_strong(monkeypatch)
     monkeypatch.setattr(detection, "_estimate_geometry", fake_geometry)
     monkeypatch.setattr(detection, "_average_confidence", fake_confidence)
 
-    candidate = detection.detect_layout_any(image, Path("capture.scp"))
+    candidate = detection.detect_layout_any(image)
 
     assert candidate is not None
     assert candidate.layout.layout_id == "ibm_mfm_1440k"
@@ -565,9 +565,11 @@ def test_tandy_cpm_plus_imd_preserves_mixed_track_sector_counts() -> None:
     assert sum(track.missing for track in tracks) == 0
 
 
-def test_probe_supports_displaywriter_img() -> None:
+def test_probe_supports_renamed_displaywriter_img(tmp_path: Path) -> None:
+    renamed = tmp_path / "unrelated-media.img"
+    renamed.write_bytes(FIXTURE_DISPLAYWRITER_IMG.read_bytes())
     runner = CliRunner()
-    result = runner.invoke(cli.app, ["probe", str(FIXTURE_DISPLAYWRITER_IMG)])
+    result = runner.invoke(cli.app, ["probe", str(renamed)])
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload[0]["layout_id"] == "ibm_displaywriter_fm_284k"

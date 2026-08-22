@@ -29,6 +29,9 @@ class ExportError(FluxctlError):
     """Raised when an exporter cannot produce the requested output."""
 
 
+class OutputExistsError(FluxctlError):
+    """Raised when an output would replace an existing path without consent."""
+
+
 class FilesystemError(FluxctlError):
     """Raised when filesystem probing or extraction encounters an error."""
-

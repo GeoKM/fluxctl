@@ -17,7 +17,7 @@ FIXTURE_MODEL4_LDOS = Path("tests/fixtures/5.25inch/TANDY/Tandy-Model4-SSDD-MFM-
 def _mount_model3_trsdos():
     load_builtin_layouts()
     image = _prepare_image(FIXTURE_MODEL3_TRSDOS, "tandy_mfm_ssdd_180k", "mfm")
-    detection = detect_filesystem(image, path_name=FIXTURE_MODEL3_TRSDOS.name)
+    detection = detect_filesystem(image)
     assert detection.primary == "trsdos_1_3"
     assert detection.plugin is not None
     return detection.plugin
@@ -77,7 +77,7 @@ def test_ldos_and_trsdos6_fixtures_are_not_misdetected_as_trsdos13() -> None:
     ]
     for fixture, layout_id in fixtures:
         image = _prepare_image(fixture, layout_id, "mfm")
-        detection = detect_filesystem(image, path_name=fixture.name)
+        detection = detect_filesystem(image)
 
         assert detection.primary == "ldos_trsdos6"
 
@@ -85,7 +85,7 @@ def test_ldos_and_trsdos6_fixtures_are_not_misdetected_as_trsdos13() -> None:
 def test_ldos_trsdos6_lists_directory_entries() -> None:
     load_builtin_layouts()
     image = _prepare_image(FIXTURE_MODEL4_TRSDOS6, "tandy_mfm_ssdd_180k_s0", "mfm")
-    detection = detect_filesystem(image, path_name=FIXTURE_MODEL4_TRSDOS6.name)
+    detection = detect_filesystem(image)
     assert detection.primary == "ldos_trsdos6"
     assert detection.plugin is not None
 
@@ -99,7 +99,7 @@ def test_ldos_trsdos6_lists_directory_entries() -> None:
 def test_ldos_trsdos6_extracts_file_contents() -> None:
     load_builtin_layouts()
     image = _prepare_image(FIXTURE_MODEL3_LDOS, "tandy_mfm_ssdd_180k_s0", "mfm")
-    detection = detect_filesystem(image, path_name=FIXTURE_MODEL3_LDOS.name)
+    detection = detect_filesystem(image)
     assert detection.plugin is not None
 
     data = detection.plugin.extract_file("BASIC.CMD")
