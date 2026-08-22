@@ -2660,18 +2660,29 @@ class FluxctlStudio(QMainWindow):
         filename, _ = QFileDialog.getSaveFileName(self, "Save patched raw image", "patched.img", "Raw image (*.img);;All files (*)")
         if not filename:
             return
-        target = f"{self.track_input.text()}:{self.head_input.text()}:{self.sector_input.text()}:{payload}"
-        self._run_cli(
-            [
-                "patch",
-                str(self.current_path),
-                "--layout",
+        try:
+            replacement = bytes.fromhex(payload)
+            track, head, sector = self._display_to_internal_chs(
+                int(self.track_input.text()),
+                int(self.head_input.text()),
+                int(self.sector_input.text()),
+            )
+        except ValueError as exc:
+            self._warn(str(exc))
+            return
+        output = Path(filename)
+        self._run_job(
+            f"patch T{track} H{head} S{sector}",
+            lambda: replace_flat_sector_bytes_with_copy(
+                self.current_path,
                 layout,
-                "--write-sector",
-                target,
-                "--out",
-                filename,
-            ]
+                track,
+                head,
+                sector,
+                replacement,
+                output,
+            ),
+            self._show_advanced_hex_edit_result,
         )
 
     def convert_dialog(self) -> None:
