@@ -72,7 +72,7 @@ Typical workflows:
 Use `fluxctl COMMAND --help` for command-specific examples.
 """
 
-app = typer.Typer(add_completion=False, help=APP_HELP)
+app = typer.Typer(add_completion=False, help=APP_HELP, rich_markup_mode=None)
 provenance_app = typer.Typer(help="Inspect provenance records")
 
 DOCTOR_EXAMPLES = """Examples:
