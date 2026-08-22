@@ -76,20 +76,31 @@ app = typer.Typer(add_completion=False, help=APP_HELP)
 provenance_app = typer.Typer(help="Inspect provenance records")
 
 DOCTOR_EXAMPLES = """Examples:
+
   fluxctl doctor
+
   fluxctl doctor --json
+
   fluxctl doctor --hxcfe ~/src/HxCFloppyEmulator/HxCFloppyEmulator_cmdline/build/hxcfe"""
 
 CONVERT_EXAMPLES = """Examples:
+
   fluxctl convert disk.scp --layout ibm_mfm_720k --to raw --out disk.img
+
   fluxctl convert disk.img --layout ibm_mfm_720k --to imd --out disk.imd
+
   fluxctl convert c64.scp --layout commodore_gcr_1541_170k --to g64 --out disk.g64
+
   fluxctl convert c128.scp --layout commodore_gcr_1571_341k --to d71 --out disk.d71
+
   fluxctl convert 1581.scp --layout commodore_mfm_1581_800k --to d81 --out disk.d81"""
 
 ROUNDTRIP_EXAMPLES = """Examples:
+
   fluxctl roundtrip disk.scp --layout amiga_mfm_880k --to adf
+
   fluxctl roundtrip disk.adf --to raw --back-to adf
+
   fluxctl roundtrip disk.img --layout amiga_mfm_880k --to adf --back-to raw"""
 app.add_typer(provenance_app, name="provenance")
 
