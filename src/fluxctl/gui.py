@@ -19,6 +19,7 @@ from .application.filesystem_operations import (
     delete_filesystem_entry_with_copy,
     export_filesystem_entries,
     export_filesystem_entry,
+    extract_file_to_path,
     file_allocation_for_image,
     file_hex_dump,
     import_directory_with_copy,
@@ -2631,11 +2632,19 @@ class FluxctlStudio(QMainWindow):
         filename, _ = QFileDialog.getSaveFileName(self, "Save extracted file", Path(file_path).name, "All files (*)")
         if not filename:
             return
-        args = ["extract", str(self.current_path), "--path", file_path, "--out", filename, "--encoding", self._selected_encoding()]
         layout = self._selected_layout()
-        if layout:
-            args.extend(["--layout", layout])
-        self._run_cli(args)
+        output = Path(filename)
+        self._run_job(
+            f"extract {file_path}",
+            lambda: extract_file_to_path(
+                self.current_path,
+                layout or None,
+                self._selected_encoding(),
+                file_path,
+                output,
+            ),
+            lambda result: self._show_report_export_result("file", result),
+        )
 
     def patch_dialog(self) -> None:
         if not self._require_image():

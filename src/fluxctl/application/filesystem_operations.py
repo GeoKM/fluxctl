@@ -8,6 +8,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Sequence
 
+from ..output import atomic_write_bytes
+
 
 def _services():
     from .. import studio_services
@@ -29,6 +31,22 @@ def file_allocation_for_image(path: Path, layout_id: Optional[str], encoding: st
 
 def file_hex_dump(path: Path, layout_id: Optional[str], encoding: str, file_path: str, max_bytes: int = 65536):
     return _services().file_hex_dump(path, layout_id, encoding, file_path, max_bytes=max_bytes)
+
+
+def extract_file_to_path(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    file_path: str,
+    output: Path,
+    *,
+    overwrite: bool = False,
+) -> Path:
+    """Extract one filesystem file and atomically write it to the host."""
+
+    data = _services().file_hex_dump(path, layout_id, encoding, file_path, max_bytes=None).data
+    atomic_write_bytes(output, data, overwrite=overwrite, source_paths=[path])
+    return output
 
 
 def export_filesystem_entry(path: Path, layout_id: Optional[str], encoding: str, file_path: str, destination: Path):
@@ -65,4 +83,3 @@ def replace_file_bytes_with_copy(path: Path, layout_id: Optional[str], encoding:
 
 def replace_flat_sector_bytes_with_copy(path: Path, layout_id: str, track: int, head: int, sector: int, data: bytes, output: Path):
     return _services().replace_flat_sector_bytes_with_copy(path, layout_id, track, head, sector, data, output)
-
