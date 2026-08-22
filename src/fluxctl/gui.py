@@ -13,6 +13,7 @@ from . import studio_services as services
 from .application.command_operations import run_fluxctl_command
 from .application.compare_operations import compare_images
 from .application.conversion_operations import convert_image
+from .application.diagnostic_operations import summarize_image
 from .application.filesystem_operations import (
     create_directory_with_copy,
     delete_filesystem_entry_with_copy,
@@ -2374,7 +2375,10 @@ class FluxctlStudio(QMainWindow):
         self._append_log(f"Loaded hex view for {dump.title} ({dump.size:,} bytes)")
 
     def run_info(self) -> None:
-        self._run_cli(["info", str(self.current_path)] if self._require_image() else [])
+        if not self._require_image():
+            return
+        assert self.current_path is not None
+        self._run_job("info", lambda: summarize_image(self.current_path), self._show_summary)
 
     def run_sectors(self) -> None:
         if not self._require_image():
