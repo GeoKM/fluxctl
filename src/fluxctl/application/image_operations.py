@@ -11,6 +11,110 @@ from pathlib import Path
 from typing import Optional
 
 
+def prepare_image(path: Path, layout_id: Optional[str], encoding: str):
+    """Reconstruct an image container for reports and filesystem operations."""
+
+    from .. import cli
+    from ..apple2 import Apple2SectorImage
+    from ..filesystems import RawSectorImage, TrackSectorImage
+    from ..layouts.loader import ensure_layout_loaded
+
+    layout_desc = ensure_layout_loaded(layout_id) if layout_id else None
+    ext = path.suffix.lower()
+    if ext in {".woz", ".po", ".do", ".nib"} or (
+        ext in {".img", ".dsk"}
+        and layout_desc is not None
+        and layout_desc.layout_id.startswith("apple2_")
+    ):
+        tracks, _metadata = cli.load_apple2_tracks(path)
+        return Apple2SectorImage(tracks, layout_desc)
+
+    if layout_desc and ext == ".d81" and layout_desc.layout_id == "commodore_mfm_1581_800k":
+        from ..exporters.d81 import d81_bytes_to_physical_tracks
+
+        image = TrackSectorImage(
+            d81_bytes_to_physical_tracks(path.read_bytes()),
+            bytes_per_sector=layout_desc.sector_size,
+        )
+        image.layout = layout_desc
+        _apply_layout_geometry(image, layout_desc)
+        return image
+
+    if layout_desc and ext not in {".scp", ".imd", ".dsk", ".dmk"}:
+        track_data = cli._sectors_from_blob(
+            layout_desc,
+            path.read_bytes(),
+            allow_pad=True,
+            allow_prefix=ext in {".d64"},
+        )
+        if track_data:
+            image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
+            image.layout = layout_desc
+            _apply_layout_geometry(image, layout_desc)
+            return image
+
+    if ext == ".img":
+        return RawSectorImage(path.read_bytes())
+    if ext == ".scp":
+        if layout_desc and layout_desc.layout_id.startswith("amiga_"):
+            track_data = cli._decode_amiga_tracks(path, layout_desc)
+            image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
+            image.layout = layout_desc
+            _apply_layout_geometry(image, layout_desc)
+            return image
+        if layout_desc and layout_desc.layout_id in {
+            "wang_ois_hs32_fm_315k",
+            "wang_ois_hs32_fm_315k_128",
+        }:
+            from ..sector.reconstruct_wang import reconstruct_wang_track
+
+            scp = cli.parse_scp(path)
+            track_data = [
+                reconstruct_wang_track(ts.revolutions, ts.track, ts.side, layout_desc.sectors_per_track)
+                for ts in scp.tracks
+                if ts.track < layout_desc.tracks and ts.side < layout_desc.sides and ts.revolutions
+            ]
+            if not any(track.sectors for track in track_data):
+                image = RawSectorImage(path.read_bytes(), bytes_per_sector=layout_desc.sector_size)
+                image.layout = layout_desc
+                return image
+            image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
+            image.layout = layout_desc
+            _apply_layout_geometry(image, layout_desc)
+            return image
+        track_data = cli._decode_tracks(path, layout_id, encoding=encoding)
+        if layout_desc and layout_desc.layout_id.startswith("apple2_"):
+            return Apple2SectorImage(track_data, layout_desc)
+        image = TrackSectorImage(
+            track_data,
+            bytes_per_sector=layout_desc.sector_size if layout_desc else None,
+        )
+        if layout_desc:
+            image.layout = layout_desc
+            _apply_layout_geometry(image, layout_desc)
+        return image
+    if ext == ".imd":
+        tracks, geom, _meta = cli.load_imd_image(path)
+        return cli._image_from_tracks(tracks, geom, layout_desc)
+    if ext in {".dsk", ".dmk"}:
+        tracks, geom, _meta = cli.load_trs80_image(path)
+        return cli._image_from_tracks(tracks, geom, layout_desc)
+    if layout_desc:
+        track_data = cli._decode_tracks(path, layout_id, encoding=encoding)
+        image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
+        image.layout = layout_desc
+        return image
+    return RawSectorImage(path.read_bytes())
+
+
+def _apply_layout_geometry(image, layout) -> None:
+    image.set_geometry(
+        layout.sectors_per_track,
+        layout.sides,
+        int(layout.id_rules.get("sector_number_base", 1)),
+    )
+
+
 def _cli_module():
     # Lazy import avoids making the application layer depend on Typer during
     # module import and prevents a CLI/application import cycle.
@@ -32,10 +136,6 @@ def get_decoder(encoding: str):
     if plugin:
         return plugin.entry
     raise FluxDecodeError(f"Unknown encoding '{encoding}'")
-
-
-def prepare_image(path: Path, layout_id: Optional[str], encoding: str):
-    return _cli_module()._prepare_image(path, layout_id, encoding)
 
 
 def probe_flat_image(path: Path):
