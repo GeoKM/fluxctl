@@ -85,8 +85,9 @@ python3 scripts/install_fluxctl.py
 - Filesystems detected: FAT12, CBM DOS, Apple ProDOS, Apple DOS 3.3, CP/M
   (C64 CP/M 2.2, C128 CP/M 3.0, Osborne/Kaypro/Tandy variants), TRSDOS 1.3,
   LDOS/TRSDOS 6, NEWDOS/80, Amiga OFS/FFS, RT-11 (normal RX02 volumes and
-  RX01/IBM 3740 Interchange labels), Displaywriter probe, and read-only Wang
-  OIS installation-package catalogs; raw sector dumps always supported.
+  RX01/IBM 3740 Interchange labels), Displaywriter probe, read-only Seiko 8300
+  EBCDIC catalog/dataset readers, and read-only Wang OIS installation-package
+  catalogs; raw sector dumps always supported.
 - Filesystem listing, extraction, export, and copy-only mutation support varies
   by format. See the
   [filesystem capability matrix](docs/filesystem_capabilities.md) for current

@@ -27,6 +27,28 @@ def test_studio_doctor_report_matches_cli_shape() -> None:
     assert any(check["name"] == "layouts" for check in report["checks"])
 
 
+def test_studio_image_cache_reuses_snapshot_and_invalidates_on_change(monkeypatch, tmp_path) -> None:
+    image_path = tmp_path / "image.img"
+    image_path.write_bytes(b"one")
+    calls = []
+    sentinel = object()
+
+    def fake_prepare_image(*args):
+        calls.append(args)
+        return sentinel
+
+    services._prepare_image_cached.cache_clear()
+    monkeypatch.setattr(services, "_prepare_image", fake_prepare_image)
+
+    assert services._prepare_image_for_studio(image_path, "test", "mfm") is sentinel
+    assert services._prepare_image_for_studio(image_path, "test", "mfm") is sentinel
+    assert len(calls) == 1
+
+    image_path.write_bytes(b"two")
+    assert services._prepare_image_for_studio(image_path, "test", "mfm") is sentinel
+    assert len(calls) == 2
+
+
 def test_studio_detects_greaseweazle_command_from_venv(monkeypatch, tmp_path) -> None:
     executable = tmp_path / ("gw.exe" if services.sys.platform.startswith("win") else "gw")
     executable.write_text("#!/bin/sh\n")

@@ -85,9 +85,10 @@ Use these as the baseline known fixtures.
 | IBM XDF OS/2 | `IBM-XDF-DSHD-MFM-OS2-1890K.scp` | 80-track DSHD MFM physical XDF layout; track 0 has 19x512 sectors, tracks 1-79 use 512/1024/2048/8192-byte sectors. Probe/QC should identify `ibm_xdf_1890k`; filesystem listing remains unsupported until logical XDF unpacking is implemented. |
 | IBM 8-inch FAT12 | `IBM-Generic-DSDD-MFM-IBMPC-1200K-B.scp`, `IBM-Generic-DSDD-MFM-IBMPC-1200K-C.scp`, known-bad 1.2M variants | Geometry mismatch tolerance, empty disk behavior, bad/unknown filesystem handling, need for known-good 1.15 MB fixtures. |
 | IBM DisplayWriter | `IBM-6580-SSDD-FM-DisplayWriter-284K.scp`, `.imd`, `.img` | Mixed FM geometry, standard-label entries, document extraction disabled with a clear message. |
-| DEC RT-11 RX02 | `DEC-RX02-DSDD-MFM-RT11-500K.scp`, `.imd`, `.img` | Probe metadata, no listing/export claims, clear unsupported behavior. |
+| DEC RT-11 RX02 | `DEC-RX02-DSDD-MFM-RT11-500K.scp`, `.imd`, `.img` | Probe metadata, list the flat RAD50 directory, view HEX, and export readable files. Mutation and directory traversal remain unsupported. |
 | DEC RT-11 Interchange RX01 | `DEC-RX01-SSSD-FM-RT11_IDF-250K.scp`, `.imd`, `.img` | Probe as 77-track, one-sided, 26 x 128-byte FM RX01 media. Export nonempty `HDR1` datasets as fixed-length EBCDIC record streams. This fixture's `DATA` label is empty, so verify the separately named `DATA.RESIDUAL.RAW` forensic export and its JSON missing-sector manifest. |
 | Wang OIS package disk | `Wang-OIS100-HS32-FM-PeripheralsII-315K.scp`, `.img` | Probe as 77 x 16 x 256-byte `wang_ois` media. Navigate `/PRINT`, view and export files such as `/INSTALL` and `/PRINT/T300/OBJ`, recursively export `/PRINT/T407`, and verify selected-file allocation highlighting. Mutation remains disabled. |
+| Seiko 8300 mixed-density media | Seiko 8300 `.img` and `.scp` fixtures | Probe as Seiko-family mixed-density media, list EBCDIC catalog/dataset records, and verify that HEX/export actions explain that physical allocation mapping is not yet proven. |
 
 ## Files Panel and Directory Workflows
 
@@ -291,7 +292,9 @@ These are expected limitations today, not necessarily bugs:
   Other CP/M variants may list entries but still need per-format DPB support.
 - DisplayWriter lists standard-label entries only; document extraction is not
   implemented.
-- RT-11 probe metadata exists, but directory listing and extraction are pending.
+- Normal RT-11 volumes can list their flat RAD50 directory and extract files;
+  mutation and directory traversal are not implemented. RT-11 Interchange
+  media has separate HDR1 dataset and residual-recovery behavior.
 - `.scp` and `.imd` filesystem-level writes are disabled.
 - CBM DOS and 1581 mutation is limited to the explicitly enabled copy-only
   actions in the capability matrix.
