@@ -11,6 +11,7 @@ from typing import Callable, Optional
 
 from . import studio_services as services
 from .application.command_operations import run_fluxctl_command
+from .application.compare_operations import compare_images
 from .application.conversion_operations import convert_image
 from .application.filesystem_operations import (
     create_directory_with_copy,
@@ -2841,7 +2842,24 @@ class FluxctlStudio(QMainWindow):
         other, _ = QFileDialog.getOpenFileName(self, "Compare with image", "", "Disk images (*.scp *.woz *.po *.do *.nib *.img *.imd *.dsk *.dmk *.d64 *.d71 *.d81 *.adf);;All files (*)")
         if not other:
             return
-        self._run_cli(["compare", str(self.current_path), other])
+        other_path = Path(other)
+        self._run_job(
+            f"compare {self.current_path.name} with {other_path.name}",
+            lambda: compare_images(self.current_path, other_path),
+            self._show_comparison_result,
+        )
+
+    def _show_comparison_result(self, result: object) -> None:
+        self.summary_labels["status"].setText("ready" if result.identical else "suspect")
+        state = "MATCH" if result.identical else "DIFFER"
+        self.activity_label.setText(f"Comparison: {state}")
+        text = json.dumps(result.report, indent=2)
+        self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
+        self.advanced_output.setPlainText(text)
+        self._show_advanced_tab()
+        self._advanced_hex_dump = None
+        self._update_advanced_hex_edit_actions()
+        self.log.append(f"Comparison {state}:\n{text}")
 
     def open_provenance(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(self, "Open provenance", "", "Provenance (*.json);;All files (*)")
