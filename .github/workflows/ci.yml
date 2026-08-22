@@ -63,6 +63,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: true
+      - name: Install Qt runtime libraries
+        run: sudo apt-get update && sudo apt-get install --yes libegl1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
