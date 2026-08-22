@@ -386,7 +386,7 @@ def _maybe_hxc_hint(path: Path, hxcfe: Optional[Path]) -> LayoutHint | None:
     return metadata.to_layout_hint()
 
 
-@app.command(epilog=DOCTOR_EXAMPLES)
+@app.command(epilog=DOCTOR_EXAMPLES, context_settings={"terminal_width": 120})
 @_handle_cli_errors
 def doctor(
     hxcfe: Optional[Path] = typer.Option(None, "--hxcfe", help="Optional hxcfe binary path to validate"),
@@ -2276,7 +2276,7 @@ def visualize(
         write_provenance(record, prov_target, overwrite=force)
 
 
-@app.command(epilog=CONVERT_EXAMPLES)
+@app.command(epilog=CONVERT_EXAMPLES, context_settings={"terminal_width": 120})
 @_handle_cli_errors
 def convert(
     path: Path = typer.Argument(..., exists=True, readable=True),
@@ -2325,7 +2325,7 @@ def convert(
     typer.echo(f"Wrote {out}")
 
 
-@app.command(epilog=ROUNDTRIP_EXAMPLES)
+@app.command(epilog=ROUNDTRIP_EXAMPLES, context_settings={"terminal_width": 120})
 @_handle_cli_errors
 def roundtrip(
     path: Path = typer.Argument(..., exists=True, readable=True),
