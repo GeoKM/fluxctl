@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from . import studio_services as services
+from .application.command_operations import run_fluxctl_command
 
 
 try:  # pragma: no cover - exercised only when GUI dependencies are installed.
@@ -2820,7 +2821,7 @@ class FluxctlStudio(QMainWindow):
     def _run_cli(self, args: list[str]) -> None:
         if not args:
             return
-        self._run_job(" ".join(args), lambda: services.run_fluxctl_command(args), self._show_command_result)
+        self._run_job(" ".join(args), lambda: run_fluxctl_command(args), self._show_command_result)
 
     def _show_command_result(self, result: object) -> None:
         self.summary_labels["status"].setText("ready" if result.returncode == 0 else "error")

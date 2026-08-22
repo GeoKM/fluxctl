@@ -1,7 +1,6 @@
 """Application services shared by Fluxctl Studio and future frontends."""
 from __future__ import annotations
 
-from functools import lru_cache
 import json
 import shlex
 import shutil
@@ -9,17 +8,23 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
 from . import __version__
-from .cli import (
-    _doctor_report,
-    _get_decoder,
-    _prepare_image,
-    _probe_flat_image,
-    _prefix_track_count_for_size,
-    _track_in_range,
+from .application.image_operations import (
+    doctor_report as _application_doctor_report,
+    get_decoder as _get_decoder,
+    maybe_hxc_hint as _maybe_hxc_hint,
+    prepare_image as _prepare_image,
+    prefix_track_count_for_size as _prefix_track_count_for_size,
+    probe_flat_image as _probe_flat_image,
+    track_in_range as _track_in_range,
+)
+from .application.command_operations import (
+    CommandResult,
+    run_fluxctl_command,
 )
 from .decoding import load_builtin_decoders
 from .detection import detect_encoding, detect_layout
@@ -71,16 +76,6 @@ def _prepare_image_for_studio(path: Path, layout_id: Optional[str], encoding: st
         layout_id or "",
         encoding,
     )
-
-
-@dataclass(frozen=True)
-class CommandResult:
-    """Completed CLI command result."""
-
-    args: list[str]
-    returncode: int
-    stdout: str
-    stderr: str
 
 
 @dataclass(frozen=True)
@@ -593,20 +588,6 @@ def _build_blank_cpm_image(layout_id: str) -> bytes:
     return bytes(image)
 
 
-def run_fluxctl_command(args: list[str], cwd: Optional[Path] = None) -> CommandResult:
-    """Run a fluxctl CLI command using the current interpreter."""
-
-    cmd = [sys.executable, "-m", "fluxctl.cli", *args]
-    completed = subprocess.run(
-        cmd,
-        cwd=str(cwd) if cwd else None,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    return CommandResult(args=args, returncode=completed.returncode, stdout=completed.stdout, stderr=completed.stderr)
-
-
 def _greaseweazle_executable() -> Optional[Path]:
     exe_name = "gw.exe" if sys.platform.startswith("win") else "gw"
     venv_candidate = Path(sys.executable).parent / exe_name
@@ -742,7 +723,7 @@ def read_disk_with_greaseweazle(
 def doctor_report(hxcfe: Optional[Path] = None) -> dict:
     """Return the same doctor report used by the CLI."""
 
-    return _doctor_report(hxcfe)
+    return _application_doctor_report(hxcfe)
 
 
 def load_layout_options() -> list[dict[str, object]]:
@@ -776,8 +757,6 @@ def summarize_image(path: Path, hxcfe: Optional[Path] = None) -> ImageSummary:
         image = parse_scp(path)
         hint = None
         if hxcfe:
-            from .cli import _maybe_hxc_hint
-
             hint = _maybe_hxc_hint(path, hxcfe)
         encoding = detect_encoding(image, hint=hint)
         layout = detect_layout(image, encoding.encoding, hint=hint) if encoding else None
