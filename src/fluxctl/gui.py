@@ -147,6 +147,7 @@ class FluxctlStudio(QMainWindow):
         open_action = QAction("Open", self)
         open_action.triggered.connect(self.open_image)
         self.toolbar = QToolBar("Main")
+        self.toolbar.setObjectName("mainToolbar")
         self.toolbar.addAction(open_action)
         self.addToolBar(self.toolbar)
 
