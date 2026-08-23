@@ -1,25 +1,46 @@
 """Application services shared by Fluxctl Studio and future frontends."""
 from __future__ import annotations
 
-from functools import lru_cache
 import json
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
 from . import __version__
-from .cli import (
-    _doctor_report,
-    _get_decoder,
-    _prepare_image,
-    _probe_flat_image,
-    _prefix_track_count_for_size,
-    _track_in_range,
+from .application.image_operations import (
+    doctor_report as _application_doctor_report,
+    get_decoder as _get_decoder,
+    maybe_hxc_hint as _maybe_hxc_hint,
+    prepare_image as _prepare_image,
+    prefix_track_count_for_size as _prefix_track_count_for_size,
+    probe_flat_image as _probe_flat_image,
+    track_in_range as _track_in_range,
+)
+from .application.models import (
+    BlankImagePreset,
+    BlankImageResult,
+    ExportResult,
+    FileAllocationView,
+    FileEntryView,
+    FileListView,
+    GreaseweazleFormat,
+    GreaseweazleStatus,
+    HardwareReadResult,
+    HexDumpView,
+    HexEditResult,
+    ImageSummary,
+    MutationResult,
+    ReplaceResult,
+    TextView,
+)
+from .application.command_operations import (
+    CommandResult,
+    run_fluxctl_command,
 )
 from .decoding import load_builtin_decoders
 from .detection import detect_encoding, detect_layout
@@ -71,176 +92,6 @@ def _prepare_image_for_studio(path: Path, layout_id: Optional[str], encoding: st
         layout_id or "",
         encoding,
     )
-
-
-@dataclass(frozen=True)
-class CommandResult:
-    """Completed CLI command result."""
-
-    args: list[str]
-    returncode: int
-    stdout: str
-    stderr: str
-
-
-@dataclass(frozen=True)
-class GreaseweazleStatus:
-    """Greaseweazle command availability for Studio hardware workflows."""
-
-    available: bool
-    executable: str
-    detail: str
-    suggestion: str = ""
-
-
-@dataclass(frozen=True)
-class GreaseweazleFormat:
-    """Greaseweazle disk format option discovered from the installed CLI."""
-
-    format_id: str
-    label: str
-
-
-@dataclass(frozen=True)
-class HardwareReadResult:
-    """Result of a Greaseweazle read operation."""
-
-    path: str
-    command: list[str]
-    command_display: str
-    stdout: str
-    stderr: str
-
-
-@dataclass(frozen=True)
-class ImageSummary:
-    """High-level image metadata for the Studio dashboard."""
-
-    path: str
-    size: int
-    kind: str
-    layout_id: str
-    encoding: str
-    filesystem: str
-    confidence: float
-    evidence: list[str]
-
-
-@dataclass(frozen=True)
-class FileEntryView:
-    """Filesystem entry suitable for display in the GUI."""
-
-    name: str
-    kind: str
-    size: int
-    path: str
-    is_dir: bool
-    file_type: str = ""
-
-
-@dataclass(frozen=True)
-class FileListView:
-    """Filesystem directory entries plus volume/header metadata for display."""
-
-    entries: list[FileEntryView]
-    volume_text: str = ""
-
-
-@dataclass(frozen=True)
-class FileAllocationView:
-    """Filesystem allocation addresses suitable for map overlays."""
-
-    path: str
-    sectors: set[tuple[int, int, int]]
-    logical_sectors: set[tuple[int, int, int]] | None = None
-
-
-@dataclass(frozen=True)
-class HexDumpView:
-    """Hex/ASCII bytes suitable for Studio inspection panels."""
-
-    title: str
-    size: int
-    text: str
-    data: bytes = b""
-    source_kind: str = ""
-    track: Optional[int] = None
-    head: Optional[int] = None
-    sector: Optional[int] = None
-    file_path: str = ""
-
-
-@dataclass(frozen=True)
-class TextView:
-    """Text output suitable for Studio report panels."""
-
-    title: str
-    text: str
-
-
-@dataclass(frozen=True)
-class ExportResult:
-    """Summary of a Studio filesystem export operation."""
-
-    path: str
-    files: int
-    bytes: int
-
-
-@dataclass(frozen=True)
-class ReplaceResult:
-    """Summary of a safe copy-on-write filesystem replacement operation."""
-
-    path: str
-    file_path: str
-    bytes: int
-    filesystem: str
-
-
-@dataclass(frozen=True)
-class MutationResult:
-    """Summary of a safe copy-on-write filesystem mutation operation."""
-
-    path: str
-    operation: str
-    entries: int
-    bytes: int
-    filesystem: str
-
-
-@dataclass(frozen=True)
-class HexEditResult:
-    """Summary of a safe copy-on-write Advanced hex edit."""
-
-    path: str
-    target: str
-    bytes: int
-    mode: str
-
-
-@dataclass(frozen=True)
-class BlankImagePreset:
-    """A supported blank disk image option exposed by Studio."""
-
-    preset_id: str
-    label: str
-    suffix: str
-    layout_id: str
-    filesystem: str
-    size: int
-    description: str
-
-
-@dataclass(frozen=True)
-class BlankImageResult:
-    """Summary for a newly created blank disk image."""
-
-    path: str
-    preset_id: str
-    label: str
-    layout_id: str
-    filesystem: str
-    size: int
 
 
 FAT12_PRESETS = {
@@ -380,13 +231,13 @@ BLANK_IMAGE_PRESETS: tuple[BlankImagePreset, ...] = tuple(
 )
 
 
-def blank_image_presets() -> list[BlankImagePreset]:
+def _legacy_blank_image_presets() -> list[BlankImagePreset]:
     """Return blank image presets supported by Studio."""
 
     return list(BLANK_IMAGE_PRESETS)
 
 
-def create_blank_image(preset_id: str, output_path: Path, *, overwrite: bool = False) -> BlankImageResult:
+def _legacy_create_blank_image(preset_id: str, output_path: Path, *, overwrite: bool = False) -> BlankImageResult:
     """Create a new blank disk image for a supported Studio preset."""
 
     preset = _blank_preset_by_id(preset_id)
@@ -593,20 +444,6 @@ def _build_blank_cpm_image(layout_id: str) -> bytes:
     return bytes(image)
 
 
-def run_fluxctl_command(args: list[str], cwd: Optional[Path] = None) -> CommandResult:
-    """Run a fluxctl CLI command using the current interpreter."""
-
-    cmd = [sys.executable, "-m", "fluxctl.cli", *args]
-    completed = subprocess.run(
-        cmd,
-        cwd=str(cwd) if cwd else None,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    return CommandResult(args=args, returncode=completed.returncode, stdout=completed.stdout, stderr=completed.stderr)
-
-
 def _greaseweazle_executable() -> Optional[Path]:
     exe_name = "gw.exe" if sys.platform.startswith("win") else "gw"
     venv_candidate = Path(sys.executable).parent / exe_name
@@ -616,7 +453,7 @@ def _greaseweazle_executable() -> Optional[Path]:
     return Path(found) if found else None
 
 
-def greaseweazle_status() -> GreaseweazleStatus:
+def _legacy_greaseweazle_status() -> GreaseweazleStatus:
     """Return whether the Greaseweazle CLI is callable from Studio."""
 
     executable = _greaseweazle_executable()
@@ -658,7 +495,7 @@ def _parse_greaseweazle_formats(help_text: str) -> list[GreaseweazleFormat]:
     return [GreaseweazleFormat(format_id=format_id, label=format_id) for format_id in sorted(formats)]
 
 
-def greaseweazle_formats() -> list[GreaseweazleFormat]:
+def _legacy_greaseweazle_formats() -> list[GreaseweazleFormat]:
     """Return Greaseweazle disk formats supported by the installed CLI."""
 
     executable = _greaseweazle_executable()
@@ -703,7 +540,7 @@ def build_greaseweazle_read_command(
     return args
 
 
-def read_disk_with_greaseweazle(
+def _legacy_read_disk_with_greaseweazle(
     output: Path,
     *,
     drive: str = "A",
@@ -742,10 +579,10 @@ def read_disk_with_greaseweazle(
 def doctor_report(hxcfe: Optional[Path] = None) -> dict:
     """Return the same doctor report used by the CLI."""
 
-    return _doctor_report(hxcfe)
+    return _application_doctor_report(hxcfe)
 
 
-def load_layout_options() -> list[dict[str, object]]:
+def _legacy_load_layout_options() -> list[dict[str, object]]:
     """Return layout descriptors in a compact GUI-friendly shape."""
 
     layouts = load_builtin_layouts()
@@ -776,8 +613,6 @@ def summarize_image(path: Path, hxcfe: Optional[Path] = None) -> ImageSummary:
         image = parse_scp(path)
         hint = None
         if hxcfe:
-            from .cli import _maybe_hxc_hint
-
             hint = _maybe_hxc_hint(path, hxcfe)
         encoding = detect_encoding(image, hint=hint)
         layout = detect_layout(image, encoding.encoding, hint=hint) if encoding else None
@@ -837,7 +672,7 @@ def summarize_image(path: Path, hxcfe: Optional[Path] = None) -> ImageSummary:
     )
 
 
-def build_qc_for_image(path: Path, layout_id: Optional[str], encoding: str = "mfm") -> DiskQCReport:
+def _legacy_build_qc_for_image(path: Path, layout_id: Optional[str], encoding: str = "mfm") -> DiskQCReport:
     """Build a QC report for SCP or flat images."""
 
     load_builtin_decoders()
@@ -856,7 +691,7 @@ def build_qc_for_image(path: Path, layout_id: Optional[str], encoding: str = "mf
     return build_qc_report_from_tracks(image_obj.tracks, layout=layout, track_step=1)
 
 
-def build_disk_map_for_image(
+def _legacy_build_disk_map_for_image(
     path: Path,
     layout_id: Optional[str],
     encoding: str = "mfm",
@@ -920,13 +755,30 @@ def build_disk_map_for_image(
     return disk_map
 
 
+def build_qc_for_image(path: Path, layout_id: Optional[str], encoding: str = "mfm") -> DiskQCReport:
+    from .application.report_operations import build_qc_for_image as operation
+
+    return operation(path, layout_id, encoding)
+
+
+def build_disk_map_for_image(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str = "mfm",
+    map_view: str = "logical",
+) -> DiskMap:
+    from .application.report_operations import build_disk_map_for_image as operation
+
+    return operation(path, layout_id, encoding, map_view)
+
+
 def _join_filesystem_path(directory: str, name: str) -> str:
     parts = [part for part in directory.strip("/").split("/") if part]
     parts.append(name)
     return "/" + "/".join(parts)
 
 
-def format_hex_dump(data: bytes, *, width: int = 16, max_bytes: Optional[int] = None) -> str:
+def _legacy_format_hex_dump(data: bytes, *, width: int = 16, max_bytes: Optional[int] = None) -> str:
     """Render bytes as offset, hex, and ASCII columns."""
 
     if width <= 0:
@@ -944,7 +796,7 @@ def format_hex_dump(data: bytes, *, width: int = 16, max_bytes: Optional[int] = 
     return "\n".join(lines)
 
 
-def parse_hex_dump_text(text: str, *, expected_size: Optional[int] = None) -> bytes:
+def _legacy_parse_hex_dump_text(text: str, *, expected_size: Optional[int] = None) -> bytes:
     """Parse an edited Studio hex dump back into bytes.
 
     The parser accepts Fluxctl's offset/hex/ASCII dump format and intentionally
@@ -988,7 +840,7 @@ def parse_hex_dump_text(text: str, *, expected_size: Optional[int] = None) -> by
     return bytes(payload)
 
 
-def apply_ascii_hex_dump_edits(text: str, original_data: bytes, *, width: int = 16) -> bytes:
+def _legacy_apply_ascii_hex_dump_edits(text: str, original_data: bytes, *, width: int = 16) -> bytes:
     """Apply edited ASCII-column characters to a Fluxctl hex dump.
 
     Non-printable source bytes are rendered as ``.``. Keeping that character
@@ -1047,7 +899,7 @@ def apply_ascii_hex_dump_edits(text: str, original_data: bytes, *, width: int = 
     return bytes(payload)
 
 
-def sector_hex_dump(
+def _legacy_sector_hex_dump(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1070,7 +922,7 @@ def sector_hex_dump(
     return HexDumpView(
         title=title,
         size=len(data),
-        text=format_hex_dump(data, max_bytes=max_bytes),
+        text=_legacy_format_hex_dump(data, max_bytes=max_bytes),
         data=data,
         source_kind="sector",
         track=track,
@@ -1079,7 +931,7 @@ def sector_hex_dump(
     )
 
 
-def sector_list(
+def _legacy_sector_list(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1111,7 +963,7 @@ def sector_list(
     return TextView(title=f"Sectors T{track} H{head}", text="\n".join(lines))
 
 
-def file_hex_dump(
+def _legacy_file_hex_dump(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1130,14 +982,14 @@ def file_hex_dump(
     return HexDumpView(
         title=f"File {file_path}",
         size=len(data),
-        text=format_hex_dump(data, max_bytes=max_bytes),
+        text=_legacy_format_hex_dump(data, max_bytes=max_bytes),
         data=data,
         source_kind="file",
         file_path=file_path,
     )
 
 
-def file_allocation_for_image(
+def _legacy_file_allocation_for_image(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1217,7 +1069,7 @@ def _find_entry(filesystem, fs_path: str) -> FileEntryView:
     raise ValueError(f"Filesystem entry '{fs_path}' was not found")
 
 
-def export_filesystem_entry(
+def _legacy_export_filesystem_entry(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1236,7 +1088,7 @@ def export_filesystem_entry(
     return ExportResult(path=str(destination), files=1, bytes=len(data))
 
 
-def export_filesystem_entries(
+def _legacy_export_filesystem_entries(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1283,7 +1135,7 @@ def export_filesystem_entries(
     return ExportResult(path=str(destination_parent), files=files, bytes=byte_count)
 
 
-def replace_file_with_copy(
+def _legacy_replace_file_with_copy(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1331,7 +1183,7 @@ def replace_file_with_copy(
     )
 
 
-def replace_file_bytes_with_copy(
+def _legacy_replace_file_bytes_with_copy(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1367,7 +1219,7 @@ def replace_file_bytes_with_copy(
     return HexEditResult(path=str(output_path), target=fs_path, bytes=len(replacement), mode="file")
 
 
-def replace_flat_sector_bytes_with_copy(
+def _legacy_replace_flat_sector_bytes_with_copy(
     path: Path,
     layout_id: str,
     track: int,
@@ -1409,7 +1261,7 @@ def replace_flat_sector_bytes_with_copy(
     )
 
 
-def delete_filesystem_entry_with_copy(
+def _legacy_delete_filesystem_entry_with_copy(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1456,7 +1308,7 @@ def delete_filesystem_entry_with_copy(
     return MutationResult(str(output_path), "delete", 1, entry.size, filesystem_name)
 
 
-def create_directory_with_copy(
+def _legacy_create_directory_with_copy(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1483,7 +1335,7 @@ def create_directory_with_copy(
     return MutationResult(str(output_path), "create-directory", 1, 0, filesystem_name)
 
 
-def import_file_with_copy(
+def _legacy_import_file_with_copy(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1521,7 +1373,7 @@ def import_file_with_copy(
     return MutationResult(str(output_path), "import-file", 1, len(data), filesystem_name)
 
 
-def import_directory_with_copy(
+def _legacy_import_directory_with_copy(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1747,7 +1599,7 @@ def _export_directory_contents(filesystem, fs_path: str, host_directory: Path) -
     return files, byte_count
 
 
-def list_files(
+def _legacy_list_files(
     path: Path,
     layout_id: Optional[str],
     encoding: str = "mfm",
@@ -1758,7 +1610,7 @@ def list_files(
     return list_files_with_info(path, layout_id, encoding, directory).entries
 
 
-def list_files_with_info(
+def _legacy_list_files_with_info(
     path: Path,
     layout_id: Optional[str],
     encoding: str = "mfm",
@@ -1822,13 +1674,200 @@ def _filesystem_volume_text(filesystem) -> str:
     return ""
 
 
+def list_files(path: Path, layout_id: Optional[str], encoding: str = "mfm", directory: str = "/"):
+    from .application.filesystem_operations import list_files as operation
+
+    return operation(path, layout_id, encoding, directory)
+
+
+def list_files_with_info(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str = "mfm",
+    directory: str = "/",
+):
+    from .application.filesystem_operations import list_files_with_info as operation
+
+    return operation(path, layout_id, encoding, directory)
+
+
+def file_allocation_for_image(path: Path, layout_id: Optional[str], encoding: str, file_path: str):
+    from .application.filesystem_operations import file_allocation_for_image as operation
+
+    return operation(path, layout_id, encoding, file_path)
+
+
+def sector_hex_dump(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    track: int,
+    head: int,
+    sector_id: int,
+    *,
+    max_bytes: Optional[int] = None,
+):
+    from .application.filesystem_operations import sector_hex_dump as operation
+
+    return operation(path, layout_id, encoding, track, head, sector_id, max_bytes=max_bytes)
+
+
+def sector_list(path: Path, layout_id: Optional[str], encoding: str, track: int, head: int):
+    from .application.filesystem_operations import sector_list as operation
+
+    return operation(path, layout_id, encoding, track, head)
+
+
+def file_hex_dump(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    file_path: str,
+    *,
+    max_bytes: Optional[int] = None,
+):
+    from .application.filesystem_operations import file_hex_dump as operation
+
+    return operation(path, layout_id, encoding, file_path, max_bytes=max_bytes)
+
+
+def export_filesystem_entry(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    fs_path: str,
+    destination: Path,
+    overwrite: bool = False,
+):
+    from .application.filesystem_operations import export_filesystem_entry as operation
+
+    return operation(path, layout_id, encoding, fs_path, destination, overwrite=overwrite)
+
+
+def export_filesystem_entries(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    fs_paths: list[str],
+    destination_parent: Path,
+    overwrite: bool = False,
+):
+    from .application.filesystem_operations import export_filesystem_entries as operation
+
+    return operation(path, layout_id, encoding, fs_paths, destination_parent, overwrite=overwrite)
+
+
+def replace_file_with_copy(path: Path, layout_id: Optional[str], encoding: str, fs_path: str, replacement_path: Path, output_path: Path):
+    from .application.filesystem_operations import replace_file_with_copy as operation
+
+    return operation(path, layout_id, encoding, fs_path, replacement_path, output_path)
+
+
+def delete_filesystem_entry_with_copy(path: Path, layout_id: Optional[str], encoding: str, fs_path: str, output_path: Path):
+    from .application.filesystem_operations import delete_filesystem_entry_with_copy as operation
+
+    return operation(path, layout_id, encoding, fs_path, output_path)
+
+
+def import_file_with_copy(path: Path, layout_id: Optional[str], encoding: str, directory: str, host_file: Path, output_path: Path):
+    from .application.filesystem_operations import import_file_with_copy as operation
+
+    return operation(path, layout_id, encoding, directory, host_file, output_path)
+
+
+def import_directory_with_copy(path: Path, layout_id: Optional[str], encoding: str, directory: str, host_directory: Path, output_path: Path):
+    from .application.filesystem_operations import import_directory_with_copy as operation
+
+    return operation(path, layout_id, encoding, directory, host_directory, output_path)
+
+
+def create_directory_with_copy(path: Path, layout_id: Optional[str], encoding: str, parent: str, name: str, output_path: Path):
+    from .application.filesystem_operations import create_directory_with_copy as operation
+
+    return operation(path, layout_id, encoding, parent, name, output_path)
+
+
+def replace_file_bytes_with_copy(path: Path, layout_id: Optional[str], encoding: str, fs_path: str, replacement: bytes, output_path: Path):
+    from .application.filesystem_operations import replace_file_bytes_with_copy as operation
+
+    return operation(path, layout_id, encoding, fs_path, replacement, output_path)
+
+
+def replace_flat_sector_bytes_with_copy(path: Path, layout_id: str, track: int, head: int, sector_id: int, replacement: bytes, output_path: Path):
+    from .application.filesystem_operations import replace_flat_sector_bytes_with_copy as operation
+
+    return operation(path, layout_id, track, head, sector_id, replacement, output_path)
+
+
+def blank_image_presets() -> list[BlankImagePreset]:
+    from .application.image_creation_operations import blank_image_presets as operation
+
+    return operation()
+
+
+def create_blank_image(preset_id: str, output_path: Path, *, overwrite: bool = False) -> BlankImageResult:
+    from .application.image_creation_operations import create_blank_image as operation
+
+    return operation(preset_id, output_path, overwrite=overwrite)
+
+
+def greaseweazle_status() -> GreaseweazleStatus:
+    from .application.hardware_operations import greaseweazle_status as operation
+
+    return operation()
+
+
+def greaseweazle_formats() -> list[GreaseweazleFormat]:
+    from .application.hardware_operations import greaseweazle_formats as operation
+
+    return operation()
+
+
+def read_disk_with_greaseweazle(
+    output: Path,
+    *,
+    drive: str = "A",
+    gw_format: str = "",
+    tracks: str = "",
+    revs: Optional[int] = None,
+    overwrite: bool = False,
+) -> HardwareReadResult:
+    from .application.hardware_operations import read_disk_with_greaseweazle as operation
+
+    return operation(output, drive=drive, gw_format=gw_format, tracks=tracks, revs=revs, overwrite=overwrite)
+
+
 def provenance_json(path: Path) -> dict:
     """Load a provenance sidecar for display."""
 
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def format_hex_dump(data: bytes, *, width: int = 16, max_bytes: Optional[int] = None) -> str:
+    from .application.text_operations import format_hex_dump as operation
+
+    return operation(data, width=width, max_bytes=max_bytes)
+
+
+def parse_hex_dump_text(text: str, *, expected_size: Optional[int] = None) -> bytes:
+    from .application.text_operations import parse_hex_dump_text as operation
+
+    return operation(text, expected_size=expected_size)
+
+
+def apply_ascii_hex_dump_edits(text: str, original_data: bytes, *, width: int = 16) -> bytes:
+    from .application.text_operations import apply_ascii_hex_dump_edits as operation
+
+    return operation(text, original_data, width=width)
+
+
 def runtime_version() -> str:
     """Return the fluxctl version used by Studio."""
 
     return __version__
+
+
+def load_layout_options() -> list[dict[str, object]]:
+    from .application.layout_operations import load_layout_options as operation
+
+    return operation()
