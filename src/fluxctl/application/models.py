@@ -1,0 +1,135 @@
+"""Shared value objects returned by Fluxctl application operations."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass(frozen=True)
+class GreaseweazleStatus:
+    available: bool
+    executable: str
+    detail: str
+    suggestion: str = ""
+
+
+@dataclass(frozen=True)
+class GreaseweazleFormat:
+    format_id: str
+    label: str
+
+
+@dataclass(frozen=True)
+class HardwareReadResult:
+    path: str
+    command: list[str]
+    command_display: str
+    stdout: str
+    stderr: str
+
+
+@dataclass(frozen=True)
+class ImageSummary:
+    path: str
+    size: int
+    kind: str
+    layout_id: str
+    encoding: str
+    filesystem: str
+    confidence: float
+    evidence: list[str]
+
+
+@dataclass(frozen=True)
+class FileEntryView:
+    name: str
+    kind: str
+    size: int
+    path: str
+    is_dir: bool
+    file_type: str = ""
+
+
+@dataclass(frozen=True)
+class FileListView:
+    entries: list[FileEntryView]
+    volume_text: str = ""
+
+
+@dataclass(frozen=True)
+class FileAllocationView:
+    path: str
+    sectors: set[tuple[int, int, int]]
+    logical_sectors: set[tuple[int, int, int]] | None = None
+
+
+@dataclass(frozen=True)
+class HexDumpView:
+    title: str
+    size: int
+    text: str
+    data: bytes = b""
+    source_kind: str = ""
+    track: Optional[int] = None
+    head: Optional[int] = None
+    sector: Optional[int] = None
+    file_path: str = ""
+
+
+@dataclass(frozen=True)
+class TextView:
+    title: str
+    text: str
+
+
+@dataclass(frozen=True)
+class ExportResult:
+    path: str
+    files: int
+    bytes: int
+
+
+@dataclass(frozen=True)
+class ReplaceResult:
+    path: str
+    file_path: str
+    bytes: int
+    filesystem: str
+
+
+@dataclass(frozen=True)
+class MutationResult:
+    path: str
+    operation: str
+    entries: int
+    bytes: int
+    filesystem: str
+
+
+@dataclass(frozen=True)
+class HexEditResult:
+    path: str
+    target: str
+    bytes: int
+    mode: str
+
+
+@dataclass(frozen=True)
+class BlankImagePreset:
+    preset_id: str
+    label: str
+    suffix: str
+    layout_id: str
+    filesystem: str
+    size: int
+    description: str
+
+
+@dataclass(frozen=True)
+class BlankImageResult:
+    path: str
+    preset_id: str
+    label: str
+    layout_id: str
+    filesystem: str
+    size: int
