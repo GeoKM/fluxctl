@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import math
 import sys
-import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -41,10 +40,11 @@ from .application.report_operations import (
     export_disk_map_svg,
     export_qc_json,
 )
+from .gui_jobs import Job
 
 
 try:  # pragma: no cover - exercised only when GUI dependencies are installed.
-    from PySide6.QtCore import QObject, QRunnable, QSettings, QStandardPaths, Qt, QThreadPool, Signal, Slot, QTimer
+    from PySide6.QtCore import QSettings, QStandardPaths, Qt, QThreadPool, Signal, QTimer
     from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
     from PySide6.QtWidgets import (
         QApplication,
@@ -80,53 +80,6 @@ except ImportError as exc:  # pragma: no cover - import guard.
     raise SystemExit(
         "Fluxctl Studio requires PySide6. Install it with `python -m pip install -e .[gui]`."
     ) from exc
-
-
-class JobSignals(QObject):
-    finished = Signal(object)
-    failed = Signal(str)
-    cancelled = Signal()
-    progress = Signal(int)
-
-
-class Job(QRunnable):
-    def __init__(self, fn: Callable[[], object]):
-        super().__init__()
-        self.fn = fn
-        self.signals = JobSignals()
-        self.cancel_event = threading.Event()
-        self.started_at = time.monotonic()
-
-    def cancel(self) -> None:
-        """Request cooperative cancellation; the result will be discarded."""
-
-        self.cancel_event.set()
-
-    @property
-    def cancelled_requested(self) -> bool:
-        return self.cancel_event.is_set()
-
-    @Slot()
-    def run(self) -> None:
-        try:
-            self.signals.progress.emit(0)
-            result = self.fn()
-            if self.cancelled_requested:
-                self.signals.cancelled.emit()
-                return
-            try:
-                self.signals.progress.emit(100)
-                self.signals.finished.emit(result)
-            except RuntimeError:
-                pass
-        except Exception as exc:  # pragma: no cover - GUI error transport.
-            try:
-                if self.cancelled_requested:
-                    self.signals.cancelled.emit()
-                    return
-                self.signals.failed.emit(str(exc))
-            except RuntimeError:
-                pass
 
 
 class HexDumpEditor(QTextEdit):
