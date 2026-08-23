@@ -31,13 +31,13 @@ def compare_images(
 ) -> ComparisonResult:
     """Compare decoded image contents using the CLI's comparison core."""
 
-    from .. import cli
+    from .image_operations import first_diff_offset, image_bytes_for_compare
 
-    bytes_a, meta_a = cli._image_bytes_for_compare(path_a, layout_a, encoding_a)
-    bytes_b, meta_b = cli._image_bytes_for_compare(path_b, layout_b, encoding_b)
+    bytes_a, meta_a = image_bytes_for_compare(path_a, layout_a, encoding_a)
+    bytes_b, meta_b = image_bytes_for_compare(path_b, layout_b, encoding_b)
     sha_a = hashlib.sha256(bytes_a).hexdigest()
     sha_b = hashlib.sha256(bytes_b).hexdigest()
-    diff = cli._first_diff_offset(bytes_a, bytes_b)
+    diff = first_diff_offset(bytes_a, bytes_b)
     report = {
         "path_a": str(path_a),
         "path_b": str(path_b),

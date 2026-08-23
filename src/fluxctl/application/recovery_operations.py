@@ -62,9 +62,8 @@ def _recover_tracks(
     load_builtin_layouts()
     layout = ensure_layout_loaded(layout_id)
     image = parse_scp(path)
-    from .. import cli
-
-    decoder = cli._get_decoder(encoding or layout.encoding)
+    from .image_operations import get_decoder
+    decoder = get_decoder(encoding or layout.encoding)
     recovered: list[TrackSectors] = []
     track_reports: list[dict[str, Any]] = []
     selected_count = 0
@@ -174,7 +173,6 @@ def recover_image(
 ) -> RecoveryResult:
     """Recover an SCP into a new image and write a decision manifest."""
 
-    from .. import cli
     from .conversion_planner import ConversionContext, plan_conversion
     from ..decoding import load_builtin_decoders
     from ..exporters import load_builtin_exporters
@@ -195,12 +193,14 @@ def recover_image(
         layout.sides,
         int(layout.id_rules.get("sector_number_base", 1)),
     )
-    plugin = cli.registry.exporter.get(exporter_name)
+    from ..plugins import registry
+    plugin = registry.exporter.get(exporter_name)
     if plugin is None:
         raise ExportError(f"Unsupported recovery exporter '{exporter_name}'")
     filesystem = ""
     try:
-        filesystem = cli._filesystem_name_for_image(image) or ""
+        from ..filesystem_detection import detect_filesystem
+        filesystem = detect_filesystem(image).primary or ""
     except Exception:
         pass
     plan = plan_conversion(
@@ -217,7 +217,9 @@ def recover_image(
         raise ExportError(plan.reason or f"Exporter '{exporter_name}' does not support recovered sectors")
     payload = plugin.entry.export(image)
     manifest_path = manifest or output.with_suffix(output.suffix + ".recovery.json")
-    cli._validate_outputs([output, manifest_path], force=force, source_paths=[path])
+    from ..output import validate_output_path
+    validate_output_path(output, overwrite=force, source_paths=[path])
+    validate_output_path(manifest_path, overwrite=force, source_paths=[path])
     atomic_write_bytes(output, payload, overwrite=force, source_paths=[path])
     source_unchanged = sha256_file(path) == source_hash
     report: dict[str, Any] = {

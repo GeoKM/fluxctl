@@ -1787,7 +1787,7 @@ class ConvertPayload:
         return self.layout.layout_id if self.layout else ""
 
 
-def _prepare_convert_payload(path: Path, to: str, layout: Optional[str], encoding: str) -> ConvertPayload:
+def _legacy_prepare_convert_payload(path: Path, to: str, layout: Optional[str], encoding: str) -> ConvertPayload:
     load_builtin_decoders()
     load_builtin_layouts()
     load_builtin_exporters()
@@ -1906,6 +1906,13 @@ def _prepare_convert_payload(path: Path, to: str, layout: Optional[str], encodin
         exporter_metadata=exporter.metadata(),
         conversion_plan=conversion_plan,
     )
+
+
+def _prepare_convert_payload(path: Path, to: str, layout: Optional[str], encoding: str):
+    """Compatibility wrapper; conversion ownership lives in application."""
+
+    from .application.conversion_pipeline import prepare_convert_payload
+    return prepare_convert_payload(path, to, layout, encoding)
 
 
 def _exporter_suffix(exporter: str) -> str:
