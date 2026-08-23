@@ -13,6 +13,7 @@ from . import studio_services as services
 from .application.compare_operations import compare_images
 from .application.conversion_operations import convert_image, roundtrip_image
 from .application.diagnostic_operations import summarize_image
+from .application.diagnostic_operations import doctor_report, provenance_json
 from .application.filesystem_operations import (
     create_directory_with_copy,
     delete_filesystem_entry_with_copy,
@@ -1464,7 +1465,7 @@ class FluxctlStudio(QMainWindow):
         self._update_advanced_context()
 
     def run_doctor(self) -> None:
-        self._run_job("doctor", services.doctor_report, self._show_doctor)
+        self._run_job("doctor", doctor_report, self._show_doctor)
 
     def _show_doctor(self, report: object) -> None:
         self.summary_labels["status"].setText(str(report.get("overall", "unknown")) if isinstance(report, dict) else "unknown")
@@ -2929,7 +2930,7 @@ class FluxctlStudio(QMainWindow):
         filename, _ = QFileDialog.getOpenFileName(self, "Open provenance", "", "Provenance (*.json);;All files (*)")
         if not filename:
             return
-        self._run_job("provenance show", lambda: services.provenance_json(Path(filename)), lambda data: self._append_log(json.dumps(data, indent=2)))
+        self._run_job("provenance show", lambda: provenance_json(Path(filename)), lambda data: self._append_log(json.dumps(data, indent=2)))
 
     def _show_command_result(self, result: object) -> None:
         self.summary_labels["status"].setText("ready" if result.returncode == 0 else "error")
