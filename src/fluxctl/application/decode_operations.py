@@ -63,7 +63,7 @@ def decode_tracks(path: Path, layout_id: Optional[str], *, encoding: Optional[st
                 expected = layout.sectors_per_track
         if selected == "gcr" and hasattr(decoder, "set_track"):
             decoder.set_track(raw.track)
-        primary = decoder.decode_revolution(revolutions[0])
+        primary = None if selected == "dec_rx02" else decoder.decode_revolution(revolutions[0])
         tracks.append(build_track_sectors_from_revolutions(
             revolutions, decoder, cylinder=raw.track, head=raw.side,
             expected_sectors=expected, encoding=selected,
@@ -85,7 +85,24 @@ def sectors_from_blob(layout: LayoutDescriptor, data: bytes, *, allow_pad: bool 
         return None
     counts = list(layout.track_sectors) if layout.track_sectors else [layout.sectors_per_track] * layout.tracks
     counts += [layout.sectors_per_track] * max(0, layout.tracks - len(counts))
-    expected = sum(counts) * layout.sides * layout.sector_size
+    counts = counts[:layout.tracks]
+    def spec(cylinder: int, head: int) -> tuple[int, list[int]]:
+        sector_size = layout.sector_size
+        count = counts[cylinder]
+        sizes = list(layout.sector_sizes) if layout.sector_sizes else [sector_size] * count
+        for override in layout.track_overrides or ():
+            expr = override.get("track_range", "")
+            in_range = str(cylinder) == str(expr) or ("-" in str(expr) and int(str(expr).split("-", 1)[0]) <= cylinder <= int(str(expr).split("-", 1)[1]))
+            if in_range and (override.get("head") is None or override.get("head") == head):
+                sector_size = int(override.get("sector_size", sector_size))
+                count = int(override.get("sectors_per_track", count))
+                sizes = list(override.get("sector_sizes", [])) or [sector_size] * count
+                break
+        return count, sizes
+    order_list = list(((c, h) for c in range(len(counts)) for h in range(layout.sides)))
+    if layout.layout_id == "commodore_gcr_1571_341k":
+        order_list = list(((c, h) for h in range(layout.sides) for c in range(len(counts))))
+    expected = sum(sum(spec(c, h)[1]) for c, h in order_list)
     if len(data) != expected:
         if allow_prefix and layout.sides == 1:
             total = 0
@@ -95,6 +112,7 @@ def sectors_from_blob(layout: LayoutDescriptor, data: bytes, *, allow_pad: bool 
                 if total == len(data):
                     prefix = prefix + 1
                     counts = counts[:prefix]
+                    order_list = [(c, h) for c in range(len(counts)) for h in range(layout.sides)]
                     expected = len(data)
                     break
                 prefix += 1
@@ -102,16 +120,12 @@ def sectors_from_blob(layout: LayoutDescriptor, data: bytes, *, allow_pad: bool 
             data = data.ljust(expected, b"\0")
         elif len(data) != expected:
             return None
-    order = ((c, h) for c in range(len(counts)) for h in range(layout.sides))
-    if layout.layout_id == "commodore_gcr_1571_341k":
-        order = ((c, h) for h in range(layout.sides) for c in range(len(counts)))
+    order = iter(order_list)
     tracks = []
     offset = 0
     base = int(layout.id_rules.get("sector_number_base", 1))
     for cylinder, head in order:
-        count = counts[cylinder]
-        size = layout.sector_size
-        sizes = list(layout.sector_sizes) if layout.sector_sizes else [size] * count
+        count, sizes = spec(cylinder, head)
         sectors = []
         for index, sector_size in enumerate(sizes):
             chunk = data[offset:offset + sector_size]

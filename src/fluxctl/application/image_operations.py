@@ -54,7 +54,10 @@ def prepare_image(path: Path, layout_id: Optional[str], encoding: str):
             return image
 
     if ext == ".img":
-        return RawSectorImage(path.read_bytes())
+        image = RawSectorImage(path.read_bytes(), bytes_per_sector=layout_desc.sector_size if layout_desc else None)
+        if layout_desc:
+            image.layout = layout_desc
+        return image
     if ext == ".scp":
         if layout_desc and layout_desc.layout_id.startswith("amiga_"):
             from ..sector.reconstruct_amiga import reconstruct_amiga_greaseweazle, reconstruct_amiga_with_pll

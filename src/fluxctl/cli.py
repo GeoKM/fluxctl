@@ -27,7 +27,7 @@ from .apple2 import (
 )
 from .decoding import load_builtin_decoders
 from .decoding.mfm import mfm_decoder
-from .detection import detect_encoding, detect_layout, infer_track_step, logical_track_count
+from .detection import detect_encoding, detect_layout, detect_layout_any, infer_track_step, logical_track_count
 from .exceptions import ExportError, FluxDecodeError, FluxctlError
 from .filesystem_detection import FilesystemDetection, detect_filesystem
 from .exporters import load_builtin_exporters
@@ -67,6 +67,7 @@ from .native import (
 
 APP_HELP = """Inspect, verify, recover, and convert floppy flux captures.
 
+\b
 Typical workflows:
   fluxctl doctor
   fluxctl probe disk.scp
@@ -76,6 +77,7 @@ Typical workflows:
   fluxctl roundtrip disk.scp --layout amiga_mfm_880k --to adf
   fluxctl extract disk.img --list
 
+\b
 Use `fluxctl COMMAND --help` for command-specific examples.
 """
 
@@ -2272,6 +2274,16 @@ def convert(
     """Convert SCP, IMD, TRS-80 DSK/DMK, or flat sector images to a supported output format.
 
     """
+
+    if path.suffix.lower() == ".scp" and layout is None:
+        load_builtin_decoders()
+        load_builtin_layouts()
+        scp_image = parse_scp(path)
+        detected_encoding = detect_encoding(scp_image)
+        detected_layout = detect_layout(scp_image, detected_encoding.encoding) if detected_encoding else None
+        detected_layout = detected_layout or detect_layout_any(scp_image)
+        if detected_layout:
+            typer.echo(f"Auto-detected layout {detected_layout.layout.layout_id} ({detected_layout.layout.encoding})")
 
     result = convert_image(
         path,
