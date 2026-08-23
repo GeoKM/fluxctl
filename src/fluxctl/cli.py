@@ -51,6 +51,8 @@ from .sector.reconstruct_gcr import (
 from .external.hxc import probe_hxcfe
 from .application.compare_operations import compare_images
 from .application.conversion_operations import convert_image, roundtrip_image
+from .application.filesystem_operations import file_hex_dump, list_files_with_info, sector_list
+from .application.report_operations import build_disk_map_for_image
 from .geohints import LayoutHint
 from .trs80 import load_trs80_image
 from .native import (
@@ -1998,32 +2000,8 @@ def sectors(
 ):
     """Decode a specific track/head and list reconstructed sectors."""
 
-    scp = parse_scp(path)
-    track_flux = next((t for t in scp.tracks if t.track == track and t.side == head), None)
-    if track_flux is None:
-        raise FluxctlError(f"Track {track} head {head} not found in image")
-    if not track_flux.revolutions:
-        raise FluxDecodeError("No revolutions captured for the selected track")
-
-    decoder = _get_decoder(encoding)
-    track_sectors = build_track_sectors_from_revolutions(
-        track_flux.revolutions,
-        decoder,
-        cylinder=track,
-        head=head,
-        encoding=encoding,
-        timebase_ns=scp.timebase_ns,
-    )
-    typer.echo(
-        f"Track {track_sectors.track} head {track_sectors.head}: "
-        f"{len(track_sectors.sectors)} sectors (weak={track_sectors.weak} missing={track_sectors.missing})"
-    )
-    for sector in sorted(track_sectors.sectors, key=lambda s: s.sector_id):
-        crc_status = "ok" if sector.crc_ok else "bad"
-        typer.echo(
-            f"ID {sector.sector_id:02d} size={sector.size} crc={crc_status} "
-            f"deleted={'yes' if sector.deleted else 'no'} conf={sector.confidence:.2f}"
-        )
+    view = sector_list(path, None, encoding, track, head)
+    typer.echo(view.text)
 
 
 @app.command()
@@ -2187,43 +2165,7 @@ def visualize(
     if format_lower not in {"ascii", "svg"}:
         raise typer.BadParameter("--format must be 'ascii' or 'svg'")
 
-    load_builtin_layouts()
-    load_builtin_decoders()
-    ext = path.suffix.lower()
-
-    if ext == ".scp":
-        image = parse_scp(path)
-        selected_encoding = encoding
-        layout_desc = ensure_layout_loaded(layout) if layout else None
-        if layout_desc is None:
-            # Fast-path: many captures (e.g., Amiga) are MFM even when encoding
-            # detection leans GCR. Try MFM layout detection first.
-            layout_candidate = detect_layout(image, "mfm")
-            if layout_candidate:
-                layout_desc = layout_candidate.layout
-                selected_encoding = layout_desc.encoding
-            else:
-                encoding_candidate = detect_encoding(image)
-                if encoding_candidate:
-                    selected_encoding = encoding_candidate.encoding
-                layout_candidate = detect_layout(image, selected_encoding)
-                if layout_candidate:
-                    layout_desc = layout_candidate.layout
-                    selected_encoding = layout_desc.encoding
-        decoder = _get_decoder(selected_encoding)
-        disk_map = build_disk_map(image, decoder, layout=layout_desc)
-    else:
-        layout_desc = ensure_layout_loaded(layout) if layout else None
-        tracks: list[TrackSectors]
-        if layout_desc is None:
-            candidates = _probe_flat_image(path)
-            layout_desc = ensure_layout_loaded(candidates[0].layout_id) if candidates and candidates[0].layout_id else None
-        image_obj = _prepare_image(path, layout_desc.layout_id if layout_desc else None, encoding)
-        if isinstance(image_obj, TrackSectorImage):
-            tracks = image_obj.tracks
-        else:
-            raise FluxDecodeError("Flat image could not be reconstructed into sectors for visualisation")
-        disk_map = build_disk_map_from_tracksectors(tracks)
+    disk_map = build_disk_map_for_image(path, layout, encoding, "physical")
 
     output_path: Optional[Path] = None
     prov_target: Optional[Path] = None
@@ -2445,14 +2387,14 @@ def extract(
 
     if list_only or file_path is None:
         target_dir = "/" if file_path is None else file_path
-        entries = filesystem.list_directory(target_dir)
+        entries = list_files_with_info(path, selected_layout, selected_encoding, target_dir).entries
         for entry in entries:
-            type_label = "<DIR>" if entry.is_dir else f"{entry.size} bytes"
+            type_label = entry.kind if entry.is_dir else f"{entry.size} bytes"
             typer.echo(f"{entry.name}\t{type_label}")
         return
 
     assert out is not None  # guarded above
-    content = filesystem.extract_file(file_path)
+    content = file_hex_dump(path, selected_layout, selected_encoding, file_path, max_bytes=None).data
     prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
     _validate_outputs([out, prov_target], force=force, source_paths=[path])
     atomic_write_bytes(out, content, overwrite=force, source_paths=[path])

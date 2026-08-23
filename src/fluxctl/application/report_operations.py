@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..decoding import load_builtin_decoders
+from ..detection import detect_encoding, detect_layout
 from ..filesystem_detection import detect_filesystem
 from ..filesystems import TrackSectorImage, load_builtin_filesystems
 from ..layouts.loader import ensure_layout_loaded, load_builtin_layouts
@@ -61,6 +62,17 @@ def build_disk_map_for_image(path: Path, layout_id: Optional[str], encoding: str
         image = parse_scp(path)
         layout = ensure_layout_loaded(layout_id) if layout_id else None
         selected_encoding = layout.encoding if layout else encoding
+        if layout is None:
+            mfm_candidate = detect_layout(image, "mfm")
+            if mfm_candidate is not None:
+                layout = mfm_candidate.layout
+                selected_encoding = layout.encoding
+            elif encoding == "auto":
+                encoding_candidate = detect_encoding(image)
+                if encoding_candidate is not None:
+                    selected_encoding = encoding_candidate.encoding
+                    layout_candidate = detect_layout(image, selected_encoding)
+                    layout = layout_candidate.layout if layout_candidate else None
         disk_map = build_disk_map(image, get_decoder(selected_encoding), layout=layout)
         if map_view == "logical" and layout and layout.layout_id == "commodore_gcr_1541_170k":
             try:
@@ -72,11 +84,20 @@ def build_disk_map_for_image(path: Path, layout_id: Optional[str], encoding: str
             except Exception:
                 pass
         return disk_map
-    image_obj = prepare_image(path, layout_id, encoding)
+    selected_layout = layout_id
+    selected_encoding = encoding
+    if selected_layout is None:
+        from .image_operations import probe_flat_image
+
+        candidates = probe_flat_image(path)
+        if candidates:
+            selected_layout = candidates[0].layout_id
+            selected_encoding = candidates[0].encoding or encoding
+    image_obj = prepare_image(path, selected_layout, selected_encoding)
     if not isinstance(image_obj, TrackSectorImage):
         raise ValueError("Image could not be reconstructed into sector tracks")
     disk_map = build_disk_map_from_tracksectors(image_obj.tracks)
-    if map_view == "logical" and layout_id == "commodore_gcr_1541_170k":
+    if map_view == "logical" and selected_layout == "commodore_gcr_1541_170k":
         try:
             detection = detect_filesystem(image_obj)
             if detection.primary == "c64_cpm_2_2":
