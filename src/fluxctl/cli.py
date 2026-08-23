@@ -49,6 +49,8 @@ from .sector.reconstruct_gcr import (
     score_gcr_alignment,
 )
 from .external.hxc import probe_hxcfe
+from .application.compare_operations import compare_images
+from .application.conversion_operations import convert_image, roundtrip_image
 from .geohints import LayoutHint
 from .trs80 import load_trs80_image
 from .native import (
@@ -1923,29 +1925,26 @@ def compare(
     fluxctl compare before.img after.img
     """
 
-    bytes_a, meta_a = _image_bytes_for_compare(a, layout_a, encoding_a)
-    bytes_b, meta_b = _image_bytes_for_compare(b, layout_b, encoding_b)
+    comparison = compare_images(
+        a,
+        b,
+        layout_a=layout_a,
+        layout_b=layout_b,
+        encoding_a=encoding_a,
+        encoding_b=encoding_b,
+    )
+    report = comparison.report
+    len_a = int(report["len_a"])
+    len_b = int(report["len_b"])
+    sha_a = str(report["sha256_a"])
+    sha_b = str(report["sha256_b"])
+    diff = report["first_diff_offset"]
+    identical = comparison.identical
+    meta_a = report["meta_a"]
+    meta_b = report["meta_b"]
 
-    sha_a = hashlib.sha256(bytes_a).hexdigest()
-    sha_b = hashlib.sha256(bytes_b).hexdigest()
-    diff = _first_diff_offset(bytes_a, bytes_b)
-    identical = diff is None and len(bytes_a) == len(bytes_b)
-
-    report = {
-        "path_a": str(a),
-        "path_b": str(b),
-        "len_a": len(bytes_a),
-        "len_b": len(bytes_b),
-        "sha256_a": sha_a,
-        "sha256_b": sha_b,
-        "identical": identical,
-        "first_diff_offset": diff,
-        "meta_a": meta_a,
-        "meta_b": meta_b,
-    }
-
-    typer.echo(f"A: {a} ({len(bytes_a)} bytes) sha256={sha_a}")
-    typer.echo(f"B: {b} ({len(bytes_b)} bytes) sha256={sha_b}")
+    typer.echo(f"A: {a} ({len_a} bytes) sha256={sha_a}")
+    typer.echo(f"B: {b} ({len_b} bytes) sha256={sha_b}")
     if identical:
         typer.secho("Result: MATCH (byte-identical)", fg=typer.colors.GREEN)
     else:
@@ -2279,34 +2278,16 @@ def convert(
 
     """
 
-    prov_target = prov_out or out.with_suffix(out.suffix + ".provenance.json")
-    _validate_outputs([out, prov_target], force=force, source_paths=[path])
-    result = _prepare_convert_payload(path, to, layout, encoding)
-    exported = result.payload
-    atomic_write_bytes(out, exported, overwrite=force, source_paths=[path])
-
-    provenance = ProvenanceRecord(
-        tool_name="fluxctl",
-        tool_version=__version__,
-        operation="convert",
-        input_path=path,
-        input_sha256=sha256_file(path),
-        output_path=out,
-        output_sha256=hashlib.sha256(exported).hexdigest(),
-        parameters={
-            "layout": layout or "",
-            "resolved_layout": result.layout_id,
-            "encoding": result.encoding,
-            "exporter": to,
-            "output": str(out),
-        },
-        plugins={"exporter": result.exporter_name, "exporter_version": result.exporter_version, "decoder": result.encoding},
-        decoder=result.encoding,
-        encoder=to,
+    result = convert_image(
+        path,
+        out,
+        to,
+        layout,
+        encoding,
+        prov_out=prov_out,
+        force=force,
     )
-    write_provenance(provenance, prov_target, overwrite=force)
-
-    if _is_lossy(result.track_data, result.exporter_metadata):
+    if result.lossy_warning:
         typer.secho(
             "Warning: export may be lossy due to missing or low-confidence sectors", fg=typer.colors.YELLOW
         )
@@ -2334,135 +2315,54 @@ def roundtrip(
 
     """
 
-    back_exporter = back_to or _infer_roundtrip_back_exporter(path)
-    temp_context = tempfile.TemporaryDirectory(prefix="fluxctl-roundtrip-") if work_dir is None else None
-    base_dir = Path(temp_context.name) if temp_context is not None else work_dir
-    assert base_dir is not None
-    base_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        first_path = base_dir / f"{path.stem}-to-{to}{_exporter_suffix(to)}"
-        final_path = base_dir / f"{path.stem}-roundtrip-{back_exporter}{_exporter_suffix(back_exporter)}"
-        prov_target = (prov_out or json_out.with_suffix(json_out.suffix + ".provenance.json")) if json_out else None
-        retained_outputs = [first_path, final_path] if work_dir is not None else []
-        report_outputs = [output for output in (json_out, prov_target) if output is not None]
-        _validate_outputs([*retained_outputs, *report_outputs], force=force, source_paths=[path])
-        intermediate_overwrite = force if work_dir is not None else False
+    result = roundtrip_image(
+        path,
+        to,
+        back_to,
+        layout,
+        encoding,
+        work_dir=work_dir,
+        json_out=json_out,
+        prov_out=prov_out,
+        force=force,
+    )
+    report = result.report
+    back_exporter = str(report["back_to"])
+    original_sha = str(report["original_sha256"])
+    first_sha = str(report["first_sha256"])
+    final_sha = str(report["final_sha256"])
+    original_length = int(report["original_length"])
+    first_length = int(report["first_length"])
+    final_length = int(report["final_length"])
+    forward_match = bool(report["forward_match"])
+    roundtrip_match = result.roundtrip_match
+    forward_diff = report["forward_first_diff_offset"]
+    final_diff = report["roundtrip_first_diff_offset"]
+    lossy = bool(report["lossy_warning"])
 
-        first = _prepare_convert_payload(path, to, layout, encoding)
-        atomic_write_bytes(
-            first_path,
-            first.payload,
-            overwrite=intermediate_overwrite,
-            source_paths=[path],
-        )
-
-        resolved_layout = first.layout_id or layout
-        original_bytes, original_meta = _image_bytes_for_compare(path, resolved_layout, first.encoding)
-        first_bytes, first_meta = _image_bytes_for_compare(first_path, resolved_layout, first.encoding)
-        second = _prepare_convert_payload(first_path, back_exporter, resolved_layout, first.encoding)
-        atomic_write_bytes(
-            final_path,
-            second.payload,
-            overwrite=intermediate_overwrite,
-            source_paths=[path],
-        )
-        final_bytes, final_meta = _image_bytes_for_compare(final_path, resolved_layout, first.encoding)
-
-        original_sha = hashlib.sha256(original_bytes).hexdigest()
-        first_sha = hashlib.sha256(first_bytes).hexdigest()
-        final_sha = hashlib.sha256(final_bytes).hexdigest()
-        forward_diff = _first_diff_offset(original_bytes, first_bytes)
-        final_diff = _first_diff_offset(original_bytes, final_bytes)
-        forward_match = forward_diff is None and len(original_bytes) == len(first_bytes)
-        roundtrip_match = final_diff is None and len(original_bytes) == len(final_bytes)
-        lossy = _is_lossy(first.track_data, first.exporter_metadata) or _is_lossy(second.track_data, second.exporter_metadata)
-
-        report = {
-            "input": str(path),
-            "to": to,
-            "back_to": back_exporter,
-            "layout": resolved_layout or "",
-            "encoding": first.encoding,
-            "work_dir": str(base_dir) if work_dir is not None else "",
-            "first_path": str(first_path) if work_dir is not None else "",
-            "final_path": str(final_path) if work_dir is not None else "",
-            "original_sha256": original_sha,
-            "first_sha256": first_sha,
-            "final_sha256": final_sha,
-            "original_length": len(original_bytes),
-            "first_length": len(first_bytes),
-            "final_length": len(final_bytes),
-            "forward_match": forward_match,
-            "roundtrip_match": roundtrip_match,
-            "forward_first_diff_offset": forward_diff,
-            "roundtrip_first_diff_offset": final_diff,
-            "lossy_warning": lossy,
-            "meta": {
-                "original": original_meta,
-                "first": first_meta,
-                "final": final_meta,
-            },
-        }
-
-        typer.echo(f"Input decoded sha256:      {original_sha} ({len(original_bytes)} bytes)")
-        typer.echo(f"After --to {to} sha256:    {first_sha} ({len(first_bytes)} bytes)")
-        typer.echo(f"After --back-to {back_exporter}: {final_sha} ({len(final_bytes)} bytes)")
-        if work_dir is not None:
-            typer.echo(f"Intermediate images: {base_dir}")
-        if lossy:
-            typer.secho("Warning: one conversion leg reported missing or low-confidence sectors", fg=typer.colors.YELLOW)
-        if forward_match:
-            typer.secho("Forward check: MATCH", fg=typer.colors.GREEN)
-        else:
-            typer.secho("Forward check: DIFFER", fg=typer.colors.YELLOW)
-            if forward_diff is not None:
-                typer.echo(f"Forward first difference at decoded offset {forward_diff}")
-        if roundtrip_match:
-            typer.secho("Round-trip check: MATCH", fg=typer.colors.GREEN)
-        else:
-            typer.secho("Round-trip check: DIFFER", fg=typer.colors.YELLOW)
-            if final_diff is not None:
-                typer.echo(f"Round-trip first difference at decoded offset {final_diff}")
-
-        if json_out:
-            atomic_write_text(json_out, json.dumps(report, indent=2), overwrite=force, source_paths=[path])
-            assert prov_target is not None
-            record = ProvenanceRecord(
-                tool_name="fluxctl",
-                tool_version=__version__,
-                operation="roundtrip",
-                input_path=path,
-                input_sha256=sha256_file(path),
-                output_path=json_out,
-                output_sha256=ProvenanceRecord.sha256_file(json_out),
-                parameters={
-                    "to": to,
-                    "back_to": back_exporter,
-                    "layout": layout or "",
-                    "resolved_layout": resolved_layout or "",
-                    "encoding": first.encoding,
-                    "work_dir": str(work_dir or ""),
-                    "json_out": str(json_out),
-                },
-                plugins={"forward_exporter": first.exporter_name, "back_exporter": second.exporter_name},
-                decoder=first.encoding,
-                encoder=back_exporter,
-                evidence=[
-                    f"original_decoded_sha256={original_sha}",
-                    f"first_decoded_sha256={first_sha}",
-                    f"final_decoded_sha256={final_sha}",
-                    f"forward_match={int(forward_match)}",
-                    f"roundtrip_match={int(roundtrip_match)}",
-                ],
-            )
-            write_provenance(record, prov_target, overwrite=force)
-            typer.echo(f"Wrote round-trip report to {json_out}")
-
-        if not roundtrip_match:
-            raise typer.Exit(code=1)
-    finally:
-        if temp_context is not None:
-            temp_context.cleanup()
+    typer.echo(f"Input decoded sha256:      {original_sha} ({original_length} bytes)")
+    typer.echo(f"After --to {to} sha256:    {first_sha} ({first_length} bytes)")
+    typer.echo(f"After --back-to {back_exporter}: {final_sha} ({final_length} bytes)")
+    if work_dir is not None:
+        typer.echo(f"Intermediate images: {work_dir}")
+    if lossy:
+        typer.secho("Warning: one conversion leg reported missing or low-confidence sectors", fg=typer.colors.YELLOW)
+    if forward_match:
+        typer.secho("Forward check: MATCH", fg=typer.colors.GREEN)
+    else:
+        typer.secho("Forward check: DIFFER", fg=typer.colors.YELLOW)
+        if forward_diff is not None:
+            typer.echo(f"Forward first difference at decoded offset {forward_diff}")
+    if roundtrip_match:
+        typer.secho("Round-trip check: MATCH", fg=typer.colors.GREEN)
+    else:
+        typer.secho("Round-trip check: DIFFER", fg=typer.colors.YELLOW)
+        if final_diff is not None:
+            typer.echo(f"Round-trip first difference at decoded offset {final_diff}")
+    if json_out:
+        typer.echo(f"Wrote round-trip report to {json_out}")
+    if not roundtrip_match:
+        raise typer.Exit(code=1)
 
 
 @app.command()

@@ -43,6 +43,7 @@ def convert_image(
     layout: Optional[str],
     encoding: str,
     *,
+    prov_out: Optional[Path] = None,
     force: bool = False,
 ) -> ConversionResult:
     """Convert an image using the same core and output policy as the CLI."""
@@ -52,7 +53,7 @@ def convert_image(
     from .. import cli
 
     result = cli._prepare_convert_payload(path, exporter, layout, encoding)
-    provenance_path = output.with_suffix(output.suffix + ".provenance.json")
+    provenance_path = prov_out or output.with_suffix(output.suffix + ".provenance.json")
     cli._validate_outputs([output, provenance_path], force=force, source_paths=[path])
     cli.atomic_write_bytes(output, result.payload, overwrite=force, source_paths=[path])
     provenance = cli.ProvenanceRecord(
