@@ -105,9 +105,17 @@ fluxctl compare a.scp b.img --json-out diff.json
 fluxctl compare before.img after.img
 
 # Verify conversion losslessness through decoded sector hashes. Round-trip
-# checks compare reconstructed sector bytes, not raw flux timing bytes.
+# checks compare reconstructed sector bytes, physical sector metadata, and
+# readable filesystem file hashes, not raw flux timing bytes.
 fluxctl roundtrip amiga.scp --layout amiga_mfm_880k --to adf --json-out roundtrip.json
 fluxctl roundtrip disk.adf --to raw --back-to adf --work-dir /tmp/fluxctl-roundtrip
+
+# The report separates data, logical geometry, and preservation equivalence.
+
+# Recover competing SCP revolutions into a new image. The source is never
+# modified; the decision manifest is written beside the repaired image.
+fluxctl recover damaged.scp --layout ibm_mfm_720k --policy strict-crc \
+  --out damaged-recovered.img
 
 # Planned once SCP export exists:
 # fluxctl roundtrip disk.adf --to scp --back-to adf

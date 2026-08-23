@@ -42,6 +42,7 @@ from .application.report_operations import (
     export_disk_map_svg,
     export_qc_json,
 )
+from .application.recovery_operations import recover_image
 from .gui_jobs import Job
 from .gui_job_controller import StudioJobController
 from .gui_map import DiskMapWidget
@@ -305,6 +306,7 @@ class FluxctlStudio(QMainWindow):
             ("Render Map", self.run_map),
             ("List Files", self.run_list_files),
             ("Convert...", self.convert_dialog),
+            ("Recover...", self.recovery_dialog),
             ("Round Trip...", self.roundtrip_dialog),
         ]:
             button = QPushButton(text)
@@ -2368,10 +2370,80 @@ class FluxctlStudio(QMainWindow):
             self._show_roundtrip_result,
         )
 
+    def recovery_dialog(self) -> None:
+        if not self._require_image():
+            return
+        assert self.current_path is not None
+        if self.current_path.suffix.lower() != ".scp":
+            QMessageBox.information(self, "Recovery unavailable", "Recovery requires an SCP flux capture with multiple revolutions.")
+            return
+        layout = self._selected_layout()
+        if not layout:
+            QMessageBox.warning(self, "Recovery needs a layout", "Select the image layout before starting recovery.")
+            return
+        policy, ok = QInputDialog.getItem(
+            self,
+            "Recovery policy",
+            "Select how competing sector copies are chosen:",
+            ["best-effort", "strict-crc"],
+            0,
+            False,
+        )
+        if not ok:
+            return
+        default_output = self.current_path.with_name(self.current_path.stem + "-recovered.img")
+        output_name, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save repaired image (source remains unchanged)",
+            str(default_output),
+            "Raw image (*.img);;ImageDisk (*.imd);;All files (*)",
+        )
+        if not output_name:
+            return
+        output = self._resolve_source_relative_path(Path(output_name))
+        exporter = "imd" if output.suffix.lower() == ".imd" else "raw"
+        manifest = output.with_suffix(output.suffix + ".recovery.json")
+        self._run_job(
+            f"recover {self.current_path.name} ({policy})",
+            lambda: recover_image(
+                self.current_path,
+                output,
+                manifest,
+                layout,
+                self._selected_encoding(),
+                policy,
+                exporter,
+            ),
+            self._show_recovery_result,
+        )
+
+    def _show_recovery_result(self, result: object) -> None:
+        report = getattr(result, "report", {})
+        summary = report.get("summary", {}) if isinstance(report, dict) else {}
+        self.summary_labels["status"].setText("ready" if not summary.get("missing_sectors") else "suspect")
+        self.activity_label.setText(
+            f"Recovery complete: {summary.get('selected_sectors', 0)} selected, "
+            f"{summary.get('missing_sectors', 0)} missing; source unchanged"
+        )
+        self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
+        self.advanced_output.setPlainText(json.dumps(report, indent=2))
+        self._show_advanced_tab()
+        self.log.append(f"Recovery complete:\n{json.dumps(report, indent=2)}")
+
     def _show_roundtrip_result(self, result: object) -> None:
         state = "MATCH" if result.roundtrip_match else "DIFFER"
         self.summary_labels["status"].setText("ready" if result.roundtrip_match else "suspect")
-        self.activity_label.setText(f"Round-trip check: {state}")
+        report = getattr(result, "report", {})
+        equivalence = report.get("roundtrip_equivalence", {}) if isinstance(report, dict) else {}
+
+        def _status(key: str) -> str:
+            value = equivalence.get(key, {}).get("match") if isinstance(equivalence, dict) else None
+            return "match" if value is True else "differ" if value is False else "n/a"
+
+        self.activity_label.setText(
+            f"Round-trip check: {state} | data {_status('data')}, "
+            f"geometry {_status('logical_geometry')}, preservation {_status('preservation')}"
+        )
         text = json.dumps(result.report, indent=2)
         self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
         self.advanced_output.setPlainText(text)

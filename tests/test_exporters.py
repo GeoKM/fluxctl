@@ -521,5 +521,9 @@ def test_roundtrip_flat_adf_through_raw_matches(tmp_path: Path) -> None:
     assert report["forward_match"] is True
     assert report["roundtrip_match"] is True
     assert report["layout"] == "amiga_mfm_880k"
+    assert report["data_equivalence"]["match"] is True
+    assert report["logical_geometry_equivalence"]["match"] is True
+    assert report["preservation_equivalence"]["match"] is True
+    assert report["filesystem_file_equivalence"]["match"] is True
     assert Path(report["first_path"]).exists()
     assert Path(report["final_path"]).exists()

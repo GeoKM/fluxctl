@@ -11,7 +11,7 @@ import json
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from .. import __version__
 
@@ -37,6 +37,201 @@ class RoundtripResult:
 
     report: dict[str, object]
     roundtrip_match: bool
+
+
+_MAX_REPORTED_DIFFERENCES = 100
+
+
+def _track_snapshot(
+    tracks: Optional[list[Any]],
+    *,
+    synthesized: bool = False,
+) -> dict[str, Any]:
+    """Reduce decoded tracks to stable, JSON-friendly comparison data."""
+
+    if tracks is None:
+        return {"available": False, "synthesized": synthesized}
+
+    ordered: list[tuple[int, int, int]] = []
+    sectors: dict[tuple[int, int, int], dict[str, Any]] = {}
+    track_status: dict[tuple[int, int], dict[str, int]] = {}
+    for track in tracks:
+        track_key = (int(track.track), int(track.head))
+        track_status[track_key] = {
+            "missing": int(getattr(track, "missing", 0)),
+            "weak": int(getattr(track, "weak", 0)),
+        }
+        for sector in track.sectors:
+            key = (int(track.track), int(track.head), int(sector.sector_id))
+            ordered.append(key)
+            sectors[key] = {
+                "track": key[0],
+                "head": key[1],
+                "sector": key[2],
+                "size": int(sector.size),
+                "data_sha256": hashlib.sha256(sector.data).hexdigest() if sector.data else None,
+                "has_data": bool(sector.data),
+                "crc_ok": bool(sector.crc_ok),
+                "deleted": bool(getattr(sector, "deleted", False)),
+                "source_revolutions": list(getattr(sector, "source_revolutions", [])),
+            }
+    return {
+        "available": True,
+        "synthesized": synthesized,
+        "ordered_sectors": [list(key) for key in ordered],
+        "track_heads": [list(key) for key in track_status],
+        "sectors": {"%d:%d:%d" % key: value for key, value in sectors.items()},
+        "track_status": {"%d:%d" % key: value for key, value in track_status.items()},
+    }
+
+
+def _filesystem_snapshot(path: Path, layout: Optional[str], encoding: str) -> dict[str, Any]:
+    """Hash readable filesystem files without making extraction mandatory."""
+
+    from .. import cli
+
+    try:
+        image = cli._prepare_image(path, layout, encoding)
+        detection = cli._filesystem_detection_for_image(image)
+        plugin = detection.plugin
+        result: dict[str, Any] = {
+            "available": plugin is not None,
+            "filesystem": detection.primary,
+            "files": {},
+            "extraction_errors": [],
+        }
+        if plugin is None:
+            return result
+
+        pending = ["/"]
+        visited: set[str] = set()
+        files: dict[str, dict[str, Any]] = {}
+        errors: list[dict[str, str]] = []
+        while pending:
+            directory = pending.pop()
+            if directory in visited:
+                continue
+            visited.add(directory)
+            try:
+                entries = plugin.list_directory(directory)
+            except Exception as exc:  # pragma: no cover - plugin-specific failures
+                errors.append({"path": directory, "error": str(exc)})
+                continue
+            for entry in entries:
+                entry_path = "/" + entry.name if directory == "/" else directory.rstrip("/") + "/" + entry.name
+                if entry.is_dir:
+                    pending.append(entry_path)
+                    continue
+                try:
+                    data = plugin.extract_file(entry_path)
+                    files[entry_path] = {
+                        "size": len(data),
+                        "sha256": hashlib.sha256(data).hexdigest(),
+                    }
+                except Exception as exc:  # pragma: no cover - plugin-specific failures
+                    errors.append({"path": entry_path, "error": str(exc)})
+        result["files"] = files
+        result["extraction_errors"] = errors
+        result["readable"] = bool(files) or not errors
+        return result
+    except Exception as exc:  # pragma: no cover - unsupported image/container
+        return {
+            "available": False,
+            "filesystem": None,
+            "files": {},
+            "extraction_errors": [{"path": "/", "error": str(exc)}],
+        }
+
+
+def _compare_snapshots(
+    original: dict[str, Any],
+    candidate: dict[str, Any],
+    original_files: dict[str, Any],
+    candidate_files: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare decoded physical structure, data, preservation, and files."""
+
+    unavailable = not original.get("available") or not candidate.get("available")
+    if unavailable:
+        geometry = {"available": False, "match": None, "reason": "decoded sector model unavailable"}
+        data = {"available": False, "match": None, "reason": "decoded sector model unavailable"}
+        preservation = {"available": False, "match": None, "reason": "decoded sector model unavailable"}
+    else:
+        original_sectors = original["sectors"]
+        candidate_sectors = candidate["sectors"]
+        original_keys = set(original_sectors)
+        candidate_keys = set(candidate_sectors)
+        common = sorted(original_keys & candidate_keys)
+        identity_match = original_keys == candidate_keys
+        order_match = original["ordered_sectors"] == candidate["ordered_sectors"]
+        sizes_match = all(original_sectors[key]["size"] == candidate_sectors[key]["size"] for key in common)
+        data_differences = [
+            key for key in common
+            if original_sectors[key]["data_sha256"] != candidate_sectors[key]["data_sha256"]
+            or original_sectors[key]["has_data"] != candidate_sectors[key]["has_data"]
+        ]
+        deleted_differences = [key for key in common if original_sectors[key]["deleted"] != candidate_sectors[key]["deleted"]]
+        crc_differences = [key for key in common if original_sectors[key]["crc_ok"] != candidate_sectors[key]["crc_ok"]]
+        missing_differences = original.get("track_status") != candidate.get("track_status") or original_keys != candidate_keys
+        synthesized_match = original.get("synthesized", False) == candidate.get("synthesized", False)
+        geometry = {
+            "available": True,
+            "match": identity_match and order_match and sizes_match,
+            "track_head_identity_match": original.get("track_heads") == candidate.get("track_heads"),
+            "sector_identity_match": identity_match,
+            "sector_order_match": order_match,
+            "sector_sizes_match": sizes_match,
+            "original_sector_count": len(original_keys),
+            "candidate_sector_count": len(candidate_keys),
+        }
+        data = {
+            "available": True,
+            "match": identity_match and not data_differences,
+            "compared_sectors": len(common),
+            "different_sector_count": len(data_differences),
+            "different_sectors": [list(map(int, key.split(":"))) for key in data_differences[:_MAX_REPORTED_DIFFERENCES]],
+        }
+        preservation = {
+            "available": True,
+            "match": bool(data["match"] and geometry["match"] and not deleted_differences and not crc_differences and missing_differences is False and synthesized_match),
+            "deleted_marks_match": not deleted_differences,
+            "crc_status_match": not crc_differences,
+            "missing_status_match": not missing_differences,
+            "synthesized_status_match": synthesized_match,
+            "deleted_mark_difference_count": len(deleted_differences),
+            "crc_difference_count": len(crc_differences),
+        }
+
+    file_available = bool(original_files.get("readable")) and bool(candidate_files.get("readable"))
+    file_match = None
+    if file_available:
+        file_match = (
+            original_files.get("filesystem") == candidate_files.get("filesystem")
+            and original_files.get("files") == candidate_files.get("files")
+        )
+    filesystem = {
+        "available": file_available,
+        "match": file_match,
+        "original_filesystem": original_files.get("filesystem"),
+        "candidate_filesystem": candidate_files.get("filesystem"),
+        "original_file_count": len(original_files.get("files", {})),
+        "candidate_file_count": len(candidate_files.get("files", {})),
+        "hashes_match": file_match,
+    }
+    return {"data": data, "logical_geometry": geometry, "preservation": preservation, "filesystem_files": filesystem}
+
+
+def _decoded_tracks(path: Path, layout: Optional[str], encoding: str) -> Optional[list[Any]]:
+    """Return decoded tracks when the selected image path exposes them."""
+
+    from .. import cli
+
+    try:
+        image = cli._prepare_image(path, layout, encoding)
+        tracks = getattr(image, "tracks", None)
+        return list(tracks) if tracks is not None else None
+    except Exception:
+        return None
 
 
 def convert_image(
@@ -140,6 +335,34 @@ def roundtrip_image(
         cli.atomic_write_bytes(final_path, second.payload, overwrite=intermediate_overwrite, source_paths=[path])
         final_bytes, final_meta = cli._image_bytes_for_compare(final_path, resolved_layout, first.encoding)
 
+        original_tracks = _decoded_tracks(path, resolved_layout, first.encoding)
+        first_tracks = first.track_data or _decoded_tracks(first_path, resolved_layout, first.encoding)
+        final_tracks = second.track_data or _decoded_tracks(final_path, resolved_layout, first.encoding)
+        original_sector_snapshot = _track_snapshot(original_tracks)
+        first_sector_snapshot = _track_snapshot(
+            first_tracks,
+            synthesized=bool(first.exporter_metadata.get("padded_missing")),
+        )
+        final_sector_snapshot = _track_snapshot(
+            final_tracks,
+            synthesized=bool(second.exporter_metadata.get("padded_missing")),
+        )
+        original_files = _filesystem_snapshot(path, resolved_layout, first.encoding)
+        first_files = _filesystem_snapshot(first_path, resolved_layout, first.encoding)
+        final_files = _filesystem_snapshot(final_path, resolved_layout, first.encoding)
+        forward_equivalence = _compare_snapshots(
+            original_sector_snapshot,
+            first_sector_snapshot,
+            original_files,
+            first_files,
+        )
+        roundtrip_equivalence = _compare_snapshots(
+            original_sector_snapshot,
+            final_sector_snapshot,
+            original_files,
+            final_files,
+        )
+
         original_sha = hashlib.sha256(original_bytes).hexdigest()
         first_sha = hashlib.sha256(first_bytes).hexdigest()
         final_sha = hashlib.sha256(final_bytes).hexdigest()
@@ -163,6 +386,14 @@ def roundtrip_image(
             "forward_conversion_reason": first.conversion_plan.reason,
             "back_conversion_classification": second.conversion_plan.classification,
             "back_conversion_reason": second.conversion_plan.reason,
+            "forward_equivalence": forward_equivalence,
+            "roundtrip_equivalence": roundtrip_equivalence,
+            # These aliases make the final round-trip verdict convenient for
+            # consumers while preserving the explicit per-leg reports above.
+            "data_equivalence": roundtrip_equivalence["data"],
+            "logical_geometry_equivalence": roundtrip_equivalence["logical_geometry"],
+            "preservation_equivalence": roundtrip_equivalence["preservation"],
+            "filesystem_file_equivalence": roundtrip_equivalence["filesystem_files"],
             "meta": {"original": original_meta, "first": first_meta, "final": final_meta},
         }
         if json_out:
@@ -175,7 +406,16 @@ def roundtrip_image(
                 parameters={"to": to, "back_to": back_exporter, "layout": layout or "", "resolved_layout": resolved_layout or "", "encoding": first.encoding, "work_dir": str(work_dir or ""), "json_out": str(json_out)},
                 plugins={"forward_exporter": first.exporter_name, "back_exporter": second.exporter_name},
                 decoder=first.encoding, encoder=back_exporter,
-                evidence=[f"original_decoded_sha256={original_sha}", f"first_decoded_sha256={first_sha}", f"final_decoded_sha256={final_sha}", f"forward_match={int(forward_match)}", f"roundtrip_match={int(roundtrip_match)}"],
+                evidence=[
+                    f"original_decoded_sha256={original_sha}",
+                    f"first_decoded_sha256={first_sha}",
+                    f"final_decoded_sha256={final_sha}",
+                    f"forward_match={int(forward_match)}",
+                    f"roundtrip_match={int(roundtrip_match)}",
+                    f"data_equivalence={int(roundtrip_equivalence['data'].get('match') is True)}",
+                    f"logical_geometry_equivalence={int(roundtrip_equivalence['logical_geometry'].get('match') is True)}",
+                    f"preservation_equivalence={int(roundtrip_equivalence['preservation'].get('match') is True)}",
+                ],
             )
             cli.write_provenance(record, prov_target, overwrite=force)
         return RoundtripResult(report=report, roundtrip_match=roundtrip_match)
