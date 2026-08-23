@@ -235,6 +235,11 @@ step, not the raw container bytes.
 | Future SCP export | `fluxctl roundtrip source.adf --to scp --back-to adf` | Once SCP export exists, the generated SCP should decode back to the same sector image. |
 | Future raw-to-SCP export | `fluxctl roundtrip source.img --layout ibm_mfm_720k --to scp --back-to raw` | Once SCP export exists, the generated SCP should decode back to the same raw sector bytes. |
 
+Round-trip JSON reports also contain separate `data_equivalence`,
+`logical_geometry_equivalence`, and `preservation_equivalence` results. Check
+sector IDs/order/sizes, deleted marks, CRC and missing/synthesized status, and
+`filesystem_file_equivalence` when the filesystem plugin can extract files.
+
 Flag any `DIFFER` result where the source image has no weak/missing/bad sector
 warnings, or any workflow that claims success but produces an output image that
 cannot be probed/listed.

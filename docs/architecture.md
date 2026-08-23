@@ -13,9 +13,19 @@ CLI commands wire these layers together using Typer.
 `convert` writes one output image through an exporter. `roundtrip` uses the
 same exporter path twice: source to an intermediate container, then intermediate
 back to a requested canonical container. It compares decoded sector bytes after
-each leg, which is the useful losslessness check for preservation workflows.
+each leg, plus physical sector identity/order, sizes, deleted marks, CRC and
+missing/synthesized state, and readable filesystem file hashes. The report
+separates data, logical geometry, and preservation equivalence; the legacy
+decoded byte match remains available as `roundtrip_match` for scripts.
 The comparison deliberately does not require regenerated flux containers to
 match original flux timing byte-for-byte.
+
+`recover` is the explicit multi-revolution repair path. It decodes each SCP
+revolution independently, records competing sector copies and the selected
+candidate, then writes a new image and JSON recovery manifest. `strict-crc`
+only accepts populated CRC-valid candidates; `best-effort` may select the best
+populated candidate when no valid copy exists. Recovery rejects an output path
+that aliases the source and never edits the source capture.
 
 File-producing CLI commands also write provenance sidecars through
 `fluxctl.provenance.write_provenance`. The sidecar records the operation,

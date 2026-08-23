@@ -54,6 +54,7 @@ from .application.conversion_operations import convert_image, roundtrip_image
 from .application.conversion_planner import ConversionContext, ConversionPlan, plan_conversion
 from .application.filesystem_operations import file_hex_dump, list_files_with_info, sector_list
 from .application.report_operations import build_disk_map_for_image
+from .application.recovery_operations import recover_image
 from .geohints import LayoutHint
 from .trs80 import load_trs80_image
 from .native import (
@@ -70,6 +71,7 @@ Typical workflows:
   fluxctl doctor
   fluxctl probe disk.scp
   fluxctl qc disk.scp --layout ibm_mfm_720k --json-out qc.json
+  fluxctl recover disk.scp --layout ibm_mfm_720k --policy strict-crc --out repaired.img
   fluxctl convert disk.scp --layout ibm_mfm_720k --to raw --out disk.img
   fluxctl roundtrip disk.scp --layout amiga_mfm_880k --to adf
   fluxctl extract disk.img --list
@@ -2019,7 +2021,7 @@ def sectors(
     path: Path = typer.Argument(..., exists=True, readable=True),
     track: int = typer.Option(0, "--track", help="Cylinder index"),
     head: int = typer.Option(0, "--head", help="Head index"),
-    encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding (mfm, fm, gcr, apple2_gcr)"),
+    encoding: str = typer.Option("auto", "--encoding", help="Bitstream encoding (auto, mfm, fm, gcr, apple2_gcr)"),
 ):
     """Decode a specific track/head and list reconstructed sectors."""
 
@@ -2169,6 +2171,27 @@ def qc(
             decoder=selected_encoding,
         )
         write_provenance(record, prov_target, overwrite=force)
+
+
+@app.command()
+@_handle_cli_errors
+def recover(
+    path: Path = typer.Argument(..., exists=True, readable=True),
+    layout: str = typer.Option(..., "--layout", help="Layout identifier for the SCP capture"),
+    policy: str = typer.Option("best-effort", "--policy", help="Sector selection policy: strict-crc or best-effort"),
+    encoding: str = typer.Option("auto", "--encoding", help="Bitstream encoding (auto, mfm, fm, gcr, apple2_gcr)"),
+    to: str = typer.Option("raw", "--to", help="Repaired image exporter (raw, imd, adf, d64, d71, d81)"),
+    out: Path = typer.Option(..., "--out", help="New repaired image path; the source is never modified"),
+    manifest: Optional[Path] = typer.Option(None, "--manifest", help="Recovery manifest path; defaults beside --out"),
+    force: bool = typer.Option(False, "--force", help="Replace the repaired image and manifest if they exist"),
+):
+    """Recover sectors from competing SCP revolutions into a new image."""
+
+    result = recover_image(path, out, manifest, layout, encoding, policy.lower(), to, force=force)
+    summary = result.report["summary"]
+    typer.echo(f"Recovered {summary['selected_sectors']} sectors into {result.output_path}")
+    typer.echo(f"Policy: {summary['policy']}; missing sectors: {summary['missing_sectors']}")
+    typer.echo(f"Recovery manifest: {result.manifest_path}")
 
 
 @app.command()
@@ -2337,6 +2360,29 @@ def roundtrip(
         typer.secho("Round-trip check: DIFFER", fg=typer.colors.YELLOW)
         if final_diff is not None:
             typer.echo(f"Round-trip first difference at decoded offset {final_diff}")
+    equivalence = report.get("roundtrip_equivalence", {})
+    for label, key in (
+        ("Data equivalence", "data"),
+        ("Logical geometry equivalence", "logical_geometry"),
+        ("Preservation equivalence", "preservation"),
+    ):
+        result_payload = equivalence.get(key, {}) if isinstance(equivalence, dict) else {}
+        match = result_payload.get("match")
+        if match is True:
+            typer.secho(f"{label}: MATCH", fg=typer.colors.GREEN)
+        elif match is False:
+            typer.secho(f"{label}: DIFFER", fg=typer.colors.YELLOW)
+        else:
+            typer.secho(f"{label}: NOT AVAILABLE", fg=typer.colors.CYAN)
+    filesystem_equivalence = equivalence.get("filesystem_files", {}) if isinstance(equivalence, dict) else {}
+    if filesystem_equivalence.get("available"):
+        file_match = filesystem_equivalence.get("match")
+        typer.secho(
+            f"Filesystem file hashes: {'MATCH' if file_match else 'DIFFER'}",
+            fg=typer.colors.GREEN if file_match else typer.colors.YELLOW,
+        )
+    else:
+        typer.echo("Filesystem file hashes: NOT AVAILABLE")
     if json_out:
         typer.echo(f"Wrote round-trip report to {json_out}")
     if not roundtrip_match:
