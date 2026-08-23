@@ -1485,7 +1485,7 @@ class FluxctlStudio(QMainWindow):
         if not self._require_image():
             return
         assert self.current_path is not None
-        self._run_job("probe", lambda: services.summarize_image(self.current_path), self._show_summary)
+        self._run_job("probe", lambda: summarize_image(self.current_path), self._show_summary)
 
     def _show_summary(self, summary: object) -> None:
         self.current_summary = summary
