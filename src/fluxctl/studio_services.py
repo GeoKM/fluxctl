@@ -7,7 +7,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -21,6 +20,23 @@ from .application.image_operations import (
     prefix_track_count_for_size as _prefix_track_count_for_size,
     probe_flat_image as _probe_flat_image,
     track_in_range as _track_in_range,
+)
+from .application.models import (
+    BlankImagePreset,
+    BlankImageResult,
+    ExportResult,
+    FileAllocationView,
+    FileEntryView,
+    FileListView,
+    GreaseweazleFormat,
+    GreaseweazleStatus,
+    HardwareReadResult,
+    HexDumpView,
+    HexEditResult,
+    ImageSummary,
+    MutationResult,
+    ReplaceResult,
+    TextView,
 )
 from .application.command_operations import (
     CommandResult,
@@ -76,166 +92,6 @@ def _prepare_image_for_studio(path: Path, layout_id: Optional[str], encoding: st
         layout_id or "",
         encoding,
     )
-
-
-@dataclass(frozen=True)
-class GreaseweazleStatus:
-    """Greaseweazle command availability for Studio hardware workflows."""
-
-    available: bool
-    executable: str
-    detail: str
-    suggestion: str = ""
-
-
-@dataclass(frozen=True)
-class GreaseweazleFormat:
-    """Greaseweazle disk format option discovered from the installed CLI."""
-
-    format_id: str
-    label: str
-
-
-@dataclass(frozen=True)
-class HardwareReadResult:
-    """Result of a Greaseweazle read operation."""
-
-    path: str
-    command: list[str]
-    command_display: str
-    stdout: str
-    stderr: str
-
-
-@dataclass(frozen=True)
-class ImageSummary:
-    """High-level image metadata for the Studio dashboard."""
-
-    path: str
-    size: int
-    kind: str
-    layout_id: str
-    encoding: str
-    filesystem: str
-    confidence: float
-    evidence: list[str]
-
-
-@dataclass(frozen=True)
-class FileEntryView:
-    """Filesystem entry suitable for display in the GUI."""
-
-    name: str
-    kind: str
-    size: int
-    path: str
-    is_dir: bool
-    file_type: str = ""
-
-
-@dataclass(frozen=True)
-class FileListView:
-    """Filesystem directory entries plus volume/header metadata for display."""
-
-    entries: list[FileEntryView]
-    volume_text: str = ""
-
-
-@dataclass(frozen=True)
-class FileAllocationView:
-    """Filesystem allocation addresses suitable for map overlays."""
-
-    path: str
-    sectors: set[tuple[int, int, int]]
-    logical_sectors: set[tuple[int, int, int]] | None = None
-
-
-@dataclass(frozen=True)
-class HexDumpView:
-    """Hex/ASCII bytes suitable for Studio inspection panels."""
-
-    title: str
-    size: int
-    text: str
-    data: bytes = b""
-    source_kind: str = ""
-    track: Optional[int] = None
-    head: Optional[int] = None
-    sector: Optional[int] = None
-    file_path: str = ""
-
-
-@dataclass(frozen=True)
-class TextView:
-    """Text output suitable for Studio report panels."""
-
-    title: str
-    text: str
-
-
-@dataclass(frozen=True)
-class ExportResult:
-    """Summary of a Studio filesystem export operation."""
-
-    path: str
-    files: int
-    bytes: int
-
-
-@dataclass(frozen=True)
-class ReplaceResult:
-    """Summary of a safe copy-on-write filesystem replacement operation."""
-
-    path: str
-    file_path: str
-    bytes: int
-    filesystem: str
-
-
-@dataclass(frozen=True)
-class MutationResult:
-    """Summary of a safe copy-on-write filesystem mutation operation."""
-
-    path: str
-    operation: str
-    entries: int
-    bytes: int
-    filesystem: str
-
-
-@dataclass(frozen=True)
-class HexEditResult:
-    """Summary of a safe copy-on-write Advanced hex edit."""
-
-    path: str
-    target: str
-    bytes: int
-    mode: str
-
-
-@dataclass(frozen=True)
-class BlankImagePreset:
-    """A supported blank disk image option exposed by Studio."""
-
-    preset_id: str
-    label: str
-    suffix: str
-    layout_id: str
-    filesystem: str
-    size: int
-    description: str
-
-
-@dataclass(frozen=True)
-class BlankImageResult:
-    """Summary for a newly created blank disk image."""
-
-    path: str
-    preset_id: str
-    label: str
-    layout_id: str
-    filesystem: str
-    size: int
 
 
 FAT12_PRESETS = {
