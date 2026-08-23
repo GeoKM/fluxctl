@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from . import studio_services as services
-from .application.command_operations import run_fluxctl_command
 from .application.compare_operations import compare_images
 from .application.conversion_operations import convert_image, roundtrip_image
 from .application.diagnostic_operations import summarize_image
@@ -2928,11 +2927,6 @@ class FluxctlStudio(QMainWindow):
         if not filename:
             return
         self._run_job("provenance show", lambda: services.provenance_json(Path(filename)), lambda data: self._append_log(json.dumps(data, indent=2)))
-
-    def _run_cli(self, args: list[str]) -> None:
-        if not args:
-            return
-        self._run_job(" ".join(args), lambda: run_fluxctl_command(args), self._show_command_result)
 
     def _show_command_result(self, result: object) -> None:
         self.summary_labels["status"].setText("ready" if result.returncode == 0 else "error")
