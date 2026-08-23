@@ -26,6 +26,9 @@ class ConversionResult:
     output_size: int
     output_sha256: str
     lossy_warning: bool
+    conversion_classification: str = ""
+    conversion_reason: str = ""
+    conversion_warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,8 @@ def convert_image(
             "resolved_layout": result.layout_id,
             "encoding": result.encoding,
             "exporter": exporter,
+            "conversion_classification": result.conversion_plan.classification,
+            "conversion_reason": result.conversion_plan.reason,
             "output": str(output),
         },
         plugins={
@@ -86,7 +91,13 @@ def convert_image(
         exporter=exporter,
         output_size=len(result.payload),
         output_sha256=hashlib.sha256(result.payload).hexdigest(),
-        lossy_warning=cli._is_lossy(result.track_data, result.exporter_metadata),
+        lossy_warning=(
+            result.conversion_plan.lossy
+            or cli._is_lossy(result.track_data, result.exporter_metadata)
+        ),
+        conversion_classification=result.conversion_plan.classification,
+        conversion_reason=result.conversion_plan.reason,
+        conversion_warnings=result.conversion_plan.warnings,
     )
 
 
@@ -148,6 +159,10 @@ def roundtrip_image(
             "forward_match": forward_match, "roundtrip_match": roundtrip_match,
             "forward_first_diff_offset": forward_diff, "roundtrip_first_diff_offset": final_diff,
             "lossy_warning": lossy,
+            "forward_conversion_classification": first.conversion_plan.classification,
+            "forward_conversion_reason": first.conversion_plan.reason,
+            "back_conversion_classification": second.conversion_plan.classification,
+            "back_conversion_reason": second.conversion_plan.reason,
             "meta": {"original": original_meta, "first": first_meta, "final": final_meta},
         }
         if json_out:

@@ -51,6 +51,7 @@ from .sector.reconstruct_gcr import (
 from .external.hxc import probe_hxcfe
 from .application.compare_operations import compare_images
 from .application.conversion_operations import convert_image, roundtrip_image
+from .application.conversion_planner import ConversionContext, ConversionPlan, plan_conversion
 from .application.filesystem_operations import file_hex_dump, list_files_with_info, sector_list
 from .application.report_operations import build_disk_map_for_image
 from .geohints import LayoutHint
@@ -1777,6 +1778,7 @@ class ConvertPayload:
     exporter_name: str
     exporter_version: str
     exporter_metadata: dict
+    conversion_plan: ConversionPlan
 
     @property
     def layout_id(self) -> str:
@@ -1868,6 +1870,26 @@ def _prepare_convert_payload(path: Path, to: str, layout: Optional[str], encodin
         raise typer.BadParameter("Unsupported exporter")
 
     exporter = plugin.entry
+    filesystem_name = ""
+    try:
+        load_builtin_filesystems()
+        filesystem_name = _filesystem_name_for_image(image_obj) or ""
+    except Exception:
+        # Conversion compatibility is primarily layout-driven. A filesystem
+        # probe must not prevent raw/sector conversion of damaged media.
+        filesystem_name = ""
+    conversion_plan = plan_conversion(
+        ConversionContext.from_image(
+            image_obj,
+            source_kind=path.suffix.lower().lstrip("."),
+            layout=layout_desc,
+            encoding=decoder_used,
+            filesystem=filesystem_name,
+        ),
+        to,
+    )
+    if not conversion_plan.allowed:
+        raise ExportError(conversion_plan.reason)
     if not exporter.supports(image_obj):
         raise ExportError(f"Exporter '{to}' does not support this image type")
 
@@ -1880,6 +1902,7 @@ def _prepare_convert_payload(path: Path, to: str, layout: Optional[str], encodin
         exporter_name=plugin.name,
         exporter_version=plugin.version,
         exporter_metadata=exporter.metadata(),
+        conversion_plan=conversion_plan,
     )
 
 
@@ -2230,9 +2253,22 @@ def convert(
         force=force,
     )
     if result.lossy_warning:
-        typer.secho(
-            "Warning: export may be lossy due to missing or low-confidence sectors", fg=typer.colors.YELLOW
-        )
+        if result.conversion_classification == "lossy-but-useful":
+            typer.secho(
+                f"Warning: conversion route is lossy but useful: {result.conversion_reason}",
+                fg=typer.colors.YELLOW,
+            )
+            for warning in result.conversion_warnings:
+                typer.secho(f"  {warning}", fg=typer.colors.YELLOW)
+        else:
+            typer.secho(
+                "Warning: export may be lossy due to missing or low-confidence sectors",
+                fg=typer.colors.YELLOW,
+            )
+    typer.echo(
+        f"Conversion route: {result.conversion_classification}"
+        f" ({result.conversion_reason})"
+    )
     typer.echo(f"Wrote {out}")
 
 
