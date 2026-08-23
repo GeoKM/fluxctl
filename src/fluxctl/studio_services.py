@@ -778,7 +778,7 @@ def _join_filesystem_path(directory: str, name: str) -> str:
     return "/" + "/".join(parts)
 
 
-def format_hex_dump(data: bytes, *, width: int = 16, max_bytes: Optional[int] = None) -> str:
+def _legacy_format_hex_dump(data: bytes, *, width: int = 16, max_bytes: Optional[int] = None) -> str:
     """Render bytes as offset, hex, and ASCII columns."""
 
     if width <= 0:
@@ -796,7 +796,7 @@ def format_hex_dump(data: bytes, *, width: int = 16, max_bytes: Optional[int] = 
     return "\n".join(lines)
 
 
-def parse_hex_dump_text(text: str, *, expected_size: Optional[int] = None) -> bytes:
+def _legacy_parse_hex_dump_text(text: str, *, expected_size: Optional[int] = None) -> bytes:
     """Parse an edited Studio hex dump back into bytes.
 
     The parser accepts Fluxctl's offset/hex/ASCII dump format and intentionally
@@ -840,7 +840,7 @@ def parse_hex_dump_text(text: str, *, expected_size: Optional[int] = None) -> by
     return bytes(payload)
 
 
-def apply_ascii_hex_dump_edits(text: str, original_data: bytes, *, width: int = 16) -> bytes:
+def _legacy_apply_ascii_hex_dump_edits(text: str, original_data: bytes, *, width: int = 16) -> bytes:
     """Apply edited ASCII-column characters to a Fluxctl hex dump.
 
     Non-printable source bytes are rendered as ``.``. Keeping that character
@@ -922,7 +922,7 @@ def _legacy_sector_hex_dump(
     return HexDumpView(
         title=title,
         size=len(data),
-        text=format_hex_dump(data, max_bytes=max_bytes),
+        text=_legacy_format_hex_dump(data, max_bytes=max_bytes),
         data=data,
         source_kind="sector",
         track=track,
@@ -982,7 +982,7 @@ def _legacy_file_hex_dump(
     return HexDumpView(
         title=f"File {file_path}",
         size=len(data),
-        text=format_hex_dump(data, max_bytes=max_bytes),
+        text=_legacy_format_hex_dump(data, max_bytes=max_bytes),
         data=data,
         source_kind="file",
         file_path=file_path,
@@ -1841,6 +1841,24 @@ def provenance_json(path: Path) -> dict:
     """Load a provenance sidecar for display."""
 
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def format_hex_dump(data: bytes, *, width: int = 16, max_bytes: Optional[int] = None) -> str:
+    from .application.text_operations import format_hex_dump as operation
+
+    return operation(data, width=width, max_bytes=max_bytes)
+
+
+def parse_hex_dump_text(text: str, *, expected_size: Optional[int] = None) -> bytes:
+    from .application.text_operations import parse_hex_dump_text as operation
+
+    return operation(text, expected_size=expected_size)
+
+
+def apply_ascii_hex_dump_edits(text: str, original_data: bytes, *, width: int = 16) -> bytes:
+    from .application.text_operations import apply_ascii_hex_dump_edits as operation
+
+    return operation(text, original_data, width=width)
 
 
 def runtime_version() -> str:

@@ -15,6 +15,7 @@ from .application.diagnostic_operations import summarize_image
 from .application.diagnostic_operations import doctor_report, provenance_json
 from .application.hardware_operations import greaseweazle_formats, greaseweazle_status, read_disk_with_greaseweazle
 from .application.image_creation_operations import blank_image_presets, create_blank_image
+from .application.text_operations import apply_ascii_hex_dump_edits, format_hex_dump, parse_hex_dump_text
 from .application.filesystem_operations import (
     create_directory_with_copy,
     delete_filesystem_entry_with_copy,
@@ -2431,20 +2432,20 @@ class FluxctlStudio(QMainWindow):
         try:
             original_data = dump.data
             if len(original_data) != dump.size:
-                original_data = services.parse_hex_dump_text(dump.text, expected_size=dump.size)
+                original_data = parse_hex_dump_text(dump.text, expected_size=dump.size)
             if edit_ascii:
-                edited = services.apply_ascii_hex_dump_edits(
+                edited = apply_ascii_hex_dump_edits(
                     self.advanced_hex_text.toPlainText(), original_data
                 )
             else:
-                edited = services.parse_hex_dump_text(
+                edited = parse_hex_dump_text(
                     self.advanced_hex_text.toPlainText(), expected_size=dump.size
                 )
         except ValueError as exc:
             self._warn(str(exc))
             return
         cursor_position = cursor.position()
-        self.advanced_hex_text.setPlainText(services.format_hex_dump(edited))
+        self.advanced_hex_text.setPlainText(format_hex_dump(edited))
         refreshed_cursor = self.advanced_hex_text.textCursor()
         refreshed_cursor.setPosition(min(cursor_position, len(self.advanced_hex_text.toPlainText())))
         self.advanced_hex_text.setTextCursor(refreshed_cursor)
@@ -2458,7 +2459,7 @@ class FluxctlStudio(QMainWindow):
             self._warn("Load a sector or file dump before saving edited hex.")
             return
         try:
-            edited = services.parse_hex_dump_text(self.advanced_hex_text.toPlainText(), expected_size=dump.size)
+            edited = parse_hex_dump_text(self.advanced_hex_text.toPlainText(), expected_size=dump.size)
         except ValueError as exc:
             self._warn(str(exc))
             return
