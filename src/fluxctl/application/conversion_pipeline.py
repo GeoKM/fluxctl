@@ -7,7 +7,7 @@ from typing import Optional
 
 from ..apple2 import Apple2SectorImage, load_apple2_tracks
 from ..decoding import load_builtin_decoders
-from ..detection import detect_encoding, detect_layout
+from ..detection import detect_encoding, detect_layout, detect_layout_any
 from ..exceptions import ExportError, FluxDecodeError
 from ..exporters import load_builtin_exporters
 from ..filesystems import RawSectorImage, TrackSectorImage, load_builtin_filesystems
@@ -52,7 +52,7 @@ def prepare_convert_payload(path: Path, to: str, layout: Optional[str], encoding
             scp = parse_scp(path); detected_encoding = detect_encoding(scp)
             if detected_encoding is None:
                 raise FluxDecodeError("Unable to auto-detect SCP encoding; pass --layout and --encoding")
-            detected_layout = detect_layout(scp, detected_encoding.encoding)
+            detected_layout = detect_layout(scp, detected_encoding.encoding) or detect_layout_any(scp)
             if detected_layout is None:
                 raise FluxDecodeError("Unable to auto-detect SCP layout; pass --layout explicitly")
             layout_desc = detected_layout.layout; decoder_used = layout_desc.encoding

@@ -30,18 +30,26 @@ class Job(QRunnable):
     def cancelled_requested(self) -> bool:
         return self.cancel_event.is_set()
 
+    def _emit_cancelled(self) -> None:
+        """Ignore cancellation notifications after Qt has torn down the signals."""
+        try:
+            self.signals.cancelled.emit()
+        except RuntimeError:
+            # A QRunnable can outlive its QObject during application shutdown.
+            pass
+
     @Slot()
     def run(self) -> None:
         try:
             self.signals.progress.emit(0)
             result = self.fn()
             if self.cancelled_requested:
-                self.signals.cancelled.emit()
+                self._emit_cancelled()
                 return
             self.signals.progress.emit(100)
             self.signals.finished.emit(result)
         except Exception as exc:  # pragma: no cover - GUI error transport.
             if self.cancelled_requested:
-                self.signals.cancelled.emit()
+                self._emit_cancelled()
                 return
             self.signals.failed.emit(str(exc))

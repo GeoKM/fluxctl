@@ -755,6 +755,9 @@ class FluxctlStudio(QMainWindow):
         self._save_settings()
         for job in tuple(self.active_jobs):
             job.cancel()
+        # Do not destroy JobSignals while a worker can still be returning a
+        # cancellation or completion notification.
+        self.thread_pool.waitForDone(5000)
         super().closeEvent(event)
 
     def _update_job_elapsed(self) -> None:
