@@ -582,7 +582,7 @@ def doctor_report(hxcfe: Optional[Path] = None) -> dict:
     return _application_doctor_report(hxcfe)
 
 
-def load_layout_options() -> list[dict[str, object]]:
+def _legacy_load_layout_options() -> list[dict[str, object]]:
     """Return layout descriptors in a compact GUI-friendly shape."""
 
     layouts = load_builtin_layouts()
@@ -1865,3 +1865,9 @@ def runtime_version() -> str:
     """Return the fluxctl version used by Studio."""
 
     return __version__
+
+
+def load_layout_options() -> list[dict[str, object]]:
+    from .application.layout_operations import load_layout_options as operation
+
+    return operation()
