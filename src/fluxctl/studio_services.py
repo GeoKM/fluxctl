@@ -816,7 +816,7 @@ def summarize_image(path: Path, hxcfe: Optional[Path] = None) -> ImageSummary:
     )
 
 
-def build_qc_for_image(path: Path, layout_id: Optional[str], encoding: str = "mfm") -> DiskQCReport:
+def _legacy_build_qc_for_image(path: Path, layout_id: Optional[str], encoding: str = "mfm") -> DiskQCReport:
     """Build a QC report for SCP or flat images."""
 
     load_builtin_decoders()
@@ -835,7 +835,7 @@ def build_qc_for_image(path: Path, layout_id: Optional[str], encoding: str = "mf
     return build_qc_report_from_tracks(image_obj.tracks, layout=layout, track_step=1)
 
 
-def build_disk_map_for_image(
+def _legacy_build_disk_map_for_image(
     path: Path,
     layout_id: Optional[str],
     encoding: str = "mfm",
@@ -897,6 +897,23 @@ def build_disk_map_for_image(
         except Exception:
             pass
     return disk_map
+
+
+def build_qc_for_image(path: Path, layout_id: Optional[str], encoding: str = "mfm") -> DiskQCReport:
+    from .application.report_operations import build_qc_for_image as operation
+
+    return operation(path, layout_id, encoding)
+
+
+def build_disk_map_for_image(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str = "mfm",
+    map_view: str = "logical",
+) -> DiskMap:
+    from .application.report_operations import build_disk_map_for_image as operation
+
+    return operation(path, layout_id, encoding, map_view)
 
 
 def _join_filesystem_path(directory: str, name: str) -> str:
