@@ -7,13 +7,14 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from . import studio_services as services
 from .application.compare_operations import compare_images
 from .application.conversion_operations import convert_image, roundtrip_image
 from .application.diagnostic_operations import summarize_image
 from .application.diagnostic_operations import doctor_report, provenance_json
 from .application.hardware_operations import greaseweazle_formats, greaseweazle_status, read_disk_with_greaseweazle
 from .application.image_creation_operations import blank_image_presets, create_blank_image
+from .application.layout_operations import load_layout_options
+from .application.models import FileListView, HexDumpView
 from .application.text_operations import apply_ascii_hex_dump_edits, format_hex_dump, parse_hex_dump_text
 from .application.filesystem_operations import (
     create_directory_with_copy,
@@ -118,11 +119,11 @@ class FluxctlStudio(QMainWindow):
         self.file_browser_path = "/"
         self.advanced_file_browser_path = "/"
         self._loading_advanced_file_paths = False
-        self.layout_options = services.load_layout_options()
+        self.layout_options = load_layout_options()
         self.blank_image_presets = blank_image_presets()
         self.greaseweazle_status = greaseweazle_status()
         self.greaseweazle_formats = greaseweazle_formats()
-        self._advanced_hex_dump: Optional[services.HexDumpView] = None
+        self._advanced_hex_dump: Optional[HexDumpView] = None
         self._build_ui()
         self.job_controller = StudioJobController(self)
         self._restore_settings()
@@ -655,7 +656,7 @@ class FluxctlStudio(QMainWindow):
         if not self._uses_cbm_logical_addressing():
             return dump
         title = f"Sector CBM T{track} H{head} S{sector}"
-        return services.HexDumpView(
+        return HexDumpView(
             title=title,
             size=dump.size,
             text=dump.text,
@@ -1408,7 +1409,7 @@ class FluxctlStudio(QMainWindow):
     def _show_files(self, entries: object) -> None:
         self._show_files_tab()
         volume_text = ""
-        if isinstance(entries, services.FileListView):
+        if isinstance(entries, FileListView):
             volume_text = entries.volume_text
             entries = entries.entries
         self.file_volume_label.setText(volume_text)
