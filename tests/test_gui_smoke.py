@@ -520,6 +520,7 @@ def test_left_panel_runs_greaseweazle_read_to_scp(monkeypatch, tmp_path) -> None
 def test_studio_uses_five_top_level_workflow_tabs() -> None:
     window = FluxctlStudio()
 
+    assert window.toolbar.objectName() == "mainToolbar"
     assert [window.main_tabs.tabText(index) for index in range(window.main_tabs.count())] == [
         "Disk && Imaging",
         "Files && Directories",
