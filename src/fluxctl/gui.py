@@ -12,7 +12,7 @@ from typing import Callable, Optional
 from . import studio_services as services
 from .application.command_operations import run_fluxctl_command
 from .application.compare_operations import compare_images
-from .application.conversion_operations import convert_image
+from .application.conversion_operations import convert_image, roundtrip_image
 from .application.diagnostic_operations import summarize_image
 from .application.filesystem_operations import (
     create_directory_with_copy,
@@ -2781,20 +2781,34 @@ class FluxctlStudio(QMainWindow):
         if options is None:
             return
 
-        args = ["roundtrip", str(self.current_path), "--to", options["to"]]
-        if options.get("back_to"):
-            args.extend(["--back-to", options["back_to"]])
         work_dir = options.get("work_dir")
-        if work_dir:
-            args.extend(["--work-dir", str(self._resolve_source_relative_path(Path(str(work_dir))))])
         json_out = options.get("json_out")
-        if json_out:
-            args.extend(["--json-out", str(self._resolve_source_relative_path(Path(str(json_out))))])
         layout = self._selected_layout()
-        if layout:
-            args.extend(["--layout", layout])
-        args.extend(["--encoding", self._selected_encoding()])
-        self._run_cli(args)
+        self._run_job(
+            f"roundtrip {self.current_path.name}",
+            lambda: roundtrip_image(
+                self.current_path,
+                str(options["to"]),
+                str(options["back_to"]) if options.get("back_to") else None,
+                layout or None,
+                self._selected_encoding(),
+                work_dir=self._resolve_source_relative_path(Path(str(work_dir))) if work_dir else None,
+                json_out=self._resolve_source_relative_path(Path(str(json_out))) if json_out else None,
+            ),
+            self._show_roundtrip_result,
+        )
+
+    def _show_roundtrip_result(self, result: object) -> None:
+        state = "MATCH" if result.roundtrip_match else "DIFFER"
+        self.summary_labels["status"].setText("ready" if result.roundtrip_match else "suspect")
+        self.activity_label.setText(f"Round-trip check: {state}")
+        text = json.dumps(result.report, indent=2)
+        self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
+        self.advanced_output.setPlainText(text)
+        self._show_advanced_tab()
+        self._advanced_hex_dump = None
+        self._update_advanced_hex_edit_actions()
+        self.log.append(f"Round-trip {state}:\n{text}")
 
     def _roundtrip_options_dialog(self, default_to: str, default_back: str) -> Optional[dict[str, object]]:
         dialog = QDialog(self)
