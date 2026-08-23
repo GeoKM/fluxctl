@@ -1043,7 +1043,7 @@ def apply_ascii_hex_dump_edits(text: str, original_data: bytes, *, width: int = 
     return bytes(payload)
 
 
-def sector_hex_dump(
+def _legacy_sector_hex_dump(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1075,7 +1075,7 @@ def sector_hex_dump(
     )
 
 
-def sector_list(
+def _legacy_sector_list(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1839,6 +1839,27 @@ def file_allocation_for_image(path: Path, layout_id: Optional[str], encoding: st
     from .application.filesystem_operations import file_allocation_for_image as operation
 
     return operation(path, layout_id, encoding, file_path)
+
+
+def sector_hex_dump(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    track: int,
+    head: int,
+    sector_id: int,
+    *,
+    max_bytes: Optional[int] = None,
+):
+    from .application.filesystem_operations import sector_hex_dump as operation
+
+    return operation(path, layout_id, encoding, track, head, sector_id, max_bytes=max_bytes)
+
+
+def sector_list(path: Path, layout_id: Optional[str], encoding: str, track: int, head: int):
+    from .application.filesystem_operations import sector_list as operation
+
+    return operation(path, layout_id, encoding, track, head)
 
 
 def file_hex_dump(
