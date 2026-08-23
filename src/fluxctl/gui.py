@@ -14,6 +14,8 @@ from .application.compare_operations import compare_images
 from .application.conversion_operations import convert_image, roundtrip_image
 from .application.diagnostic_operations import summarize_image
 from .application.diagnostic_operations import doctor_report, provenance_json
+from .application.hardware_operations import greaseweazle_formats, greaseweazle_status, read_disk_with_greaseweazle
+from .application.image_creation_operations import blank_image_presets, create_blank_image
 from .application.filesystem_operations import (
     create_directory_with_copy,
     delete_filesystem_entry_with_copy,
@@ -518,9 +520,9 @@ class FluxctlStudio(QMainWindow):
         self.advanced_file_browser_path = "/"
         self._loading_advanced_file_paths = False
         self.layout_options = services.load_layout_options()
-        self.blank_image_presets = services.blank_image_presets()
-        self.greaseweazle_status = services.greaseweazle_status()
-        self.greaseweazle_formats = services.greaseweazle_formats()
+        self.blank_image_presets = blank_image_presets()
+        self.greaseweazle_status = greaseweazle_status()
+        self.greaseweazle_formats = greaseweazle_formats()
         self._advanced_hex_dump: Optional[services.HexDumpView] = None
         self._build_ui()
         self._restore_settings()
@@ -1281,7 +1283,7 @@ class FluxctlStudio(QMainWindow):
             return
         self._run_job(
             f"create blank {preset.label}",
-            lambda: services.create_blank_image(preset.preset_id, output, overwrite=overwrite),
+            lambda: create_blank_image(preset.preset_id, output, overwrite=overwrite),
             self._show_blank_image_result,
         )
 
@@ -1408,7 +1410,7 @@ class FluxctlStudio(QMainWindow):
         tracks = self.greaseweazle_tracks_input.text().strip()
         self._run_job(
             f"greaseweazle read {drive}",
-            lambda: services.read_disk_with_greaseweazle(
+            lambda: read_disk_with_greaseweazle(
                 output,
                 drive=drive,
                 gw_format=gw_format,
@@ -1471,8 +1473,8 @@ class FluxctlStudio(QMainWindow):
         self.summary_labels["status"].setText(str(report.get("overall", "unknown")) if isinstance(report, dict) else "unknown")
         summary = self._doctor_summary_text(report) if isinstance(report, dict) else str(report)
         self.log.append(json.dumps(report, indent=2))
-        self.greaseweazle_status = services.greaseweazle_status()
-        self.greaseweazle_formats = services.greaseweazle_formats()
+        self.greaseweazle_status = greaseweazle_status()
+        self.greaseweazle_formats = greaseweazle_formats()
         self._refresh_greaseweazle_format_combo()
         self._update_hardware_controls()
         if self.current_path is None:

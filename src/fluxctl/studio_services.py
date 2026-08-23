@@ -375,13 +375,13 @@ BLANK_IMAGE_PRESETS: tuple[BlankImagePreset, ...] = tuple(
 )
 
 
-def blank_image_presets() -> list[BlankImagePreset]:
+def _legacy_blank_image_presets() -> list[BlankImagePreset]:
     """Return blank image presets supported by Studio."""
 
     return list(BLANK_IMAGE_PRESETS)
 
 
-def create_blank_image(preset_id: str, output_path: Path, *, overwrite: bool = False) -> BlankImageResult:
+def _legacy_create_blank_image(preset_id: str, output_path: Path, *, overwrite: bool = False) -> BlankImageResult:
     """Create a new blank disk image for a supported Studio preset."""
 
     preset = _blank_preset_by_id(preset_id)
@@ -597,7 +597,7 @@ def _greaseweazle_executable() -> Optional[Path]:
     return Path(found) if found else None
 
 
-def greaseweazle_status() -> GreaseweazleStatus:
+def _legacy_greaseweazle_status() -> GreaseweazleStatus:
     """Return whether the Greaseweazle CLI is callable from Studio."""
 
     executable = _greaseweazle_executable()
@@ -639,7 +639,7 @@ def _parse_greaseweazle_formats(help_text: str) -> list[GreaseweazleFormat]:
     return [GreaseweazleFormat(format_id=format_id, label=format_id) for format_id in sorted(formats)]
 
 
-def greaseweazle_formats() -> list[GreaseweazleFormat]:
+def _legacy_greaseweazle_formats() -> list[GreaseweazleFormat]:
     """Return Greaseweazle disk formats supported by the installed CLI."""
 
     executable = _greaseweazle_executable()
@@ -684,7 +684,7 @@ def build_greaseweazle_read_command(
     return args
 
 
-def read_disk_with_greaseweazle(
+def _legacy_read_disk_with_greaseweazle(
     output: Path,
     *,
     drive: str = "A",
@@ -1941,6 +1941,44 @@ def replace_flat_sector_bytes_with_copy(path: Path, layout_id: str, track: int, 
     from .application.filesystem_operations import replace_flat_sector_bytes_with_copy as operation
 
     return operation(path, layout_id, track, head, sector_id, replacement, output_path)
+
+
+def blank_image_presets() -> list[BlankImagePreset]:
+    from .application.image_creation_operations import blank_image_presets as operation
+
+    return operation()
+
+
+def create_blank_image(preset_id: str, output_path: Path, *, overwrite: bool = False) -> BlankImageResult:
+    from .application.image_creation_operations import create_blank_image as operation
+
+    return operation(preset_id, output_path, overwrite=overwrite)
+
+
+def greaseweazle_status() -> GreaseweazleStatus:
+    from .application.hardware_operations import greaseweazle_status as operation
+
+    return operation()
+
+
+def greaseweazle_formats() -> list[GreaseweazleFormat]:
+    from .application.hardware_operations import greaseweazle_formats as operation
+
+    return operation()
+
+
+def read_disk_with_greaseweazle(
+    output: Path,
+    *,
+    drive: str = "A",
+    gw_format: str = "",
+    tracks: str = "",
+    revs: Optional[int] = None,
+    overwrite: bool = False,
+) -> HardwareReadResult:
+    from .application.hardware_operations import read_disk_with_greaseweazle as operation
+
+    return operation(output, drive=drive, gw_format=gw_format, tracks=tracks, revs=revs, overwrite=overwrite)
 
 
 def provenance_json(path: Path) -> dict:
