@@ -300,7 +300,7 @@ def test_convert_dialog_warns_for_amiga_imd_target(monkeypatch, tmp_path) -> Non
     window.close()
 
 
-def test_roundtrip_dialog_runs_cli_with_selected_options(monkeypatch, tmp_path) -> None:
+def test_roundtrip_dialog_runs_application_operation_with_selected_options(monkeypatch, tmp_path) -> None:
     window = FluxctlStudio()
     source = tmp_path / "disk.adf"
     source.write_bytes(b"")
@@ -329,26 +329,24 @@ def test_roundtrip_dialog_runs_cli_with_selected_options(monkeypatch, tmp_path) 
             "json_out": Path("disk-roundtrip.json"),
         },
     )
-    monkeypatch.setattr(window, "_run_cli", lambda args: captured.setdefault("args", args))
+    def fake_run_job(_label, fn, _done):
+        captured["operation"] = fn
+
+    monkeypatch.setattr(window, "_run_job", fake_run_job)
+    monkeypatch.setattr(
+        "fluxctl.gui.roundtrip_image",
+        lambda *args, **kwargs: captured.setdefault("args", (args, kwargs)),
+    )
 
     window.roundtrip_dialog()
 
-    assert captured["args"] == [
-        "roundtrip",
-        str(source),
-        "--to",
-        "raw",
-        "--back-to",
-        "adf",
-        "--work-dir",
-        str(tmp_path / "roundtrip-work"),
-        "--json-out",
-        str(tmp_path / "disk-roundtrip.json"),
-        "--layout",
-        "amiga_mfm_880k",
-        "--encoding",
-        "mfm",
-    ]
+    captured["operation"]()
+    args, kwargs = captured["args"]
+    assert args == (source, "raw", "adf", "amiga_mfm_880k", "mfm")
+    assert kwargs == {
+        "work_dir": tmp_path / "roundtrip-work",
+        "json_out": tmp_path / "disk-roundtrip.json",
+    }
     window.close()
 
 
