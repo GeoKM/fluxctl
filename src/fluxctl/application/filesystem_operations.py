@@ -11,7 +11,7 @@ import shutil
 import tempfile
 
 from ..filesystem_detection import detect_filesystem
-from ..filesystems import load_builtin_filesystems
+from ..filesystems import TrackSectorImage, load_builtin_filesystems
 from ..filesystems.cbm_dos import cbm_file_type_label
 from ..output import atomic_write_bytes
 from .image_operations import prepare_image
@@ -50,6 +50,67 @@ def _join_filesystem_path(directory: str, name: str) -> str:
 
 def _format_hex_dump(data: bytes, *, max_bytes: Optional[int] = None) -> str:
     return _services().format_hex_dump(data, max_bytes=max_bytes)
+
+
+def safe_export_name(name: str) -> str:
+    return _safe_export_name(name)
+
+
+def sector_hex_dump(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    track: int,
+    head: int,
+    sector_id: int,
+    *,
+    max_bytes: Optional[int] = None,
+):
+    override = _service_override("sector_hex_dump")
+    if override is not None:
+        if max_bytes is None:
+            return override(path, layout_id, encoding, track, head, sector_id)
+        return override(path, layout_id, encoding, track, head, sector_id, max_bytes=max_bytes)
+    image = prepare_image(path, layout_id, encoding)
+    if not isinstance(image, TrackSectorImage):
+        raise ValueError("Image could not be reconstructed into sector tracks")
+    try:
+        data = image._sector_lookup[(track, head, sector_id)]
+    except KeyError as exc:
+        raise ValueError(f"Sector {track}:{head}:{sector_id} is not available") from exc
+    return _models().HexDumpView(
+        title=f"Sector T{track} H{head} S{sector_id}",
+        size=len(data),
+        text=_format_hex_dump(data, max_bytes=max_bytes),
+        data=data,
+        source_kind="sector",
+        track=track,
+        head=head,
+        sector=sector_id,
+    )
+
+
+def sector_list(path: Path, layout_id: Optional[str], encoding: str, track: int, head: int):
+    override = _service_override("sector_list")
+    if override is not None:
+        return override(path, layout_id, encoding, track, head)
+    image = prepare_image(path, layout_id, encoding)
+    if not isinstance(image, TrackSectorImage):
+        raise ValueError("Image could not be reconstructed into sector tracks")
+    selected = next((row for row in image.tracks if row.track == track and row.head == head), None)
+    if selected is None:
+        raise ValueError(f"Track {track} head {head} is not available")
+    lines = [
+        f"Track {selected.track} head {selected.head}: "
+        f"{len(selected.sectors)} sectors (weak={selected.weak} missing={selected.missing})"
+    ]
+    for sector in sorted(selected.sectors, key=lambda item: item.sector_id):
+        crc_status = "ok" if sector.crc_ok else "bad"
+        lines.append(
+            f"ID {sector.sector_id:02d} size={sector.size} crc={crc_status} "
+            f"deleted={'yes' if sector.deleted else 'no'} conf={sector.confidence:.2f}"
+        )
+    return _models().TextView(title=f"Sectors T{track} H{head}", text="\n".join(lines))
 
 
 def _mount_filesystem(path: Path, layout_id: Optional[str], encoding: str):

@@ -28,6 +28,9 @@ from .application.filesystem_operations import (
     replace_file_bytes_with_copy,
     replace_file_with_copy,
     replace_flat_sector_bytes_with_copy,
+    safe_export_name,
+    sector_hex_dump,
+    sector_list,
 )
 from .application.report_operations import (
     build_disk_map_for_image,
@@ -1038,7 +1041,7 @@ class FluxctlStudio(QMainWindow):
     def _sector_hex_dump_for_display(self, layout: Optional[str], encoding: str, track: int, head: int, sector: int):
         internal_track, internal_head, internal_sector = self._display_to_internal_chs(track, head, sector)
         assert self.current_path is not None
-        dump = services.sector_hex_dump(
+        dump = sector_hex_dump(
             self.current_path,
             layout,
             encoding,
@@ -2027,7 +2030,7 @@ class FluxctlStudio(QMainWindow):
             for row in sorted(set(selected_rows))
             if row >= 0 and self.files_table.item(row, 0) is not None
         ]
-        export_names = [services._safe_export_name(name) for name in selected_names]
+        export_names = [safe_export_name(name) for name in selected_names]
         conflicts = [
             destination / name
             for name in export_names
@@ -2404,7 +2407,7 @@ class FluxctlStudio(QMainWindow):
             return
         self._run_job(
             f"sectors T{track} H{head}",
-            lambda: services.sector_list(self.current_path, layout, encoding, internal_track, internal_head),
+            lambda: sector_list(self.current_path, layout, encoding, internal_track, internal_head),
             self._show_text_view,
         )
 
