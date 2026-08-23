@@ -1279,7 +1279,7 @@ def _legacy_export_filesystem_entries(
     return ExportResult(path=str(destination_parent), files=files, bytes=byte_count)
 
 
-def replace_file_with_copy(
+def _legacy_replace_file_with_copy(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1327,7 +1327,7 @@ def replace_file_with_copy(
     )
 
 
-def replace_file_bytes_with_copy(
+def _legacy_replace_file_bytes_with_copy(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1363,7 +1363,7 @@ def replace_file_bytes_with_copy(
     return HexEditResult(path=str(output_path), target=fs_path, bytes=len(replacement), mode="file")
 
 
-def replace_flat_sector_bytes_with_copy(
+def _legacy_replace_flat_sector_bytes_with_copy(
     path: Path,
     layout_id: str,
     track: int,
@@ -1405,7 +1405,7 @@ def replace_flat_sector_bytes_with_copy(
     )
 
 
-def delete_filesystem_entry_with_copy(
+def _legacy_delete_filesystem_entry_with_copy(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1452,7 +1452,7 @@ def delete_filesystem_entry_with_copy(
     return MutationResult(str(output_path), "delete", 1, entry.size, filesystem_name)
 
 
-def create_directory_with_copy(
+def _legacy_create_directory_with_copy(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1479,7 +1479,7 @@ def create_directory_with_copy(
     return MutationResult(str(output_path), "create-directory", 1, 0, filesystem_name)
 
 
-def import_file_with_copy(
+def _legacy_import_file_with_copy(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1517,7 +1517,7 @@ def import_file_with_copy(
     return MutationResult(str(output_path), "import-file", 1, len(data), filesystem_name)
 
 
-def import_directory_with_copy(
+def _legacy_import_directory_with_copy(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1899,6 +1899,48 @@ def export_filesystem_entries(
     from .application.filesystem_operations import export_filesystem_entries as operation
 
     return operation(path, layout_id, encoding, fs_paths, destination_parent, overwrite=overwrite)
+
+
+def replace_file_with_copy(path: Path, layout_id: Optional[str], encoding: str, fs_path: str, replacement_path: Path, output_path: Path):
+    from .application.filesystem_operations import replace_file_with_copy as operation
+
+    return operation(path, layout_id, encoding, fs_path, replacement_path, output_path)
+
+
+def delete_filesystem_entry_with_copy(path: Path, layout_id: Optional[str], encoding: str, fs_path: str, output_path: Path):
+    from .application.filesystem_operations import delete_filesystem_entry_with_copy as operation
+
+    return operation(path, layout_id, encoding, fs_path, output_path)
+
+
+def import_file_with_copy(path: Path, layout_id: Optional[str], encoding: str, directory: str, host_file: Path, output_path: Path):
+    from .application.filesystem_operations import import_file_with_copy as operation
+
+    return operation(path, layout_id, encoding, directory, host_file, output_path)
+
+
+def import_directory_with_copy(path: Path, layout_id: Optional[str], encoding: str, directory: str, host_directory: Path, output_path: Path):
+    from .application.filesystem_operations import import_directory_with_copy as operation
+
+    return operation(path, layout_id, encoding, directory, host_directory, output_path)
+
+
+def create_directory_with_copy(path: Path, layout_id: Optional[str], encoding: str, parent: str, name: str, output_path: Path):
+    from .application.filesystem_operations import create_directory_with_copy as operation
+
+    return operation(path, layout_id, encoding, parent, name, output_path)
+
+
+def replace_file_bytes_with_copy(path: Path, layout_id: Optional[str], encoding: str, fs_path: str, replacement: bytes, output_path: Path):
+    from .application.filesystem_operations import replace_file_bytes_with_copy as operation
+
+    return operation(path, layout_id, encoding, fs_path, replacement, output_path)
+
+
+def replace_flat_sector_bytes_with_copy(path: Path, layout_id: str, track: int, head: int, sector_id: int, replacement: bytes, output_path: Path):
+    from .application.filesystem_operations import replace_flat_sector_bytes_with_copy as operation
+
+    return operation(path, layout_id, track, head, sector_id, replacement, output_path)
 
 
 def provenance_json(path: Path) -> dict:

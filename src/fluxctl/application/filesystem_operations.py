@@ -377,28 +377,49 @@ def export_filesystem_entries(path: Path, layout_id: Optional[str], encoding: st
 
 
 def replace_file_with_copy(path: Path, layout_id: Optional[str], encoding: str, file_path: str, replacement: Path, output: Path):
-    return _services().replace_file_with_copy(path, layout_id, encoding, file_path, replacement, output)
+    override = _service_override("replace_file_with_copy")
+    if override is not None:
+        return override(path, layout_id, encoding, file_path, replacement, output)
+    return _services()._legacy_replace_file_with_copy(path, layout_id, encoding, file_path, replacement, output)
 
 
 def delete_filesystem_entry_with_copy(path: Path, layout_id: Optional[str], encoding: str, file_path: str, output: Path):
-    return _services().delete_filesystem_entry_with_copy(path, layout_id, encoding, file_path, output)
+    override = _service_override("delete_filesystem_entry_with_copy")
+    if override is not None:
+        return override(path, layout_id, encoding, file_path, output)
+    return _services()._legacy_delete_filesystem_entry_with_copy(path, layout_id, encoding, file_path, output)
 
 
-def import_file_with_copy(path: Path, layout_id: Optional[str], encoding: str, source: Path, directory: str, output: Path):
-    return _services().import_file_with_copy(path, layout_id, encoding, source, directory, output)
+def import_file_with_copy(path: Path, layout_id: Optional[str], encoding: str, directory: str, source: Path, output: Path):
+    override = _service_override("import_file_with_copy")
+    if override is not None:
+        return override(path, layout_id, encoding, source, directory, output)
+    return _services()._legacy_import_file_with_copy(path, layout_id, encoding, directory, source, output)
 
 
-def import_directory_with_copy(path: Path, layout_id: Optional[str], encoding: str, source: Path, directory: str, output: Path):
-    return _services().import_directory_with_copy(path, layout_id, encoding, source, directory, output)
+def import_directory_with_copy(path: Path, layout_id: Optional[str], encoding: str, directory: str, source: Path, output: Path):
+    override = _service_override("import_directory_with_copy")
+    if override is not None:
+        return override(path, layout_id, encoding, source, directory, output)
+    return _services()._legacy_import_directory_with_copy(path, layout_id, encoding, directory, source, output)
 
 
-def create_directory_with_copy(path: Path, layout_id: Optional[str], encoding: str, directory: str, output: Path):
-    return _services().create_directory_with_copy(path, layout_id, encoding, directory, output)
+def create_directory_with_copy(path: Path, layout_id: Optional[str], encoding: str, parent: str, name: str, output: Path):
+    override = _service_override("create_directory_with_copy")
+    if override is not None:
+        return override(path, layout_id, encoding, parent, name, output)
+    return _services()._legacy_create_directory_with_copy(path, layout_id, encoding, parent, name, output)
 
 
 def replace_file_bytes_with_copy(path: Path, layout_id: Optional[str], encoding: str, file_path: str, data: bytes, output: Path):
-    return _services().replace_file_bytes_with_copy(path, layout_id, encoding, file_path, data, output)
+    override = _service_override("replace_file_bytes_with_copy")
+    if override is not None:
+        return override(path, layout_id, encoding, file_path, data, output)
+    return _services()._legacy_replace_file_bytes_with_copy(path, layout_id, encoding, file_path, data, output)
 
 
 def replace_flat_sector_bytes_with_copy(path: Path, layout_id: str, track: int, head: int, sector: int, data: bytes, output: Path):
-    return _services().replace_flat_sector_bytes_with_copy(path, layout_id, track, head, sector, data, output)
+    override = _service_override("replace_flat_sector_bytes_with_copy")
+    if override is not None:
+        return override(path, layout_id, track, head, sector, data, output)
+    return _services()._legacy_replace_flat_sector_bytes_with_copy(path, layout_id, track, head, sector, data, output)
