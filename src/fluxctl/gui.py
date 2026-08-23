@@ -43,6 +43,7 @@ from .application.report_operations import (
     export_qc_json,
 )
 from .application.recovery_operations import recover_image
+from .gui_pages import AdvancedPageController, FilesPageController, HexPageController, JobsPageController, MainPageController
 from .gui_jobs import Job
 from .gui_job_controller import StudioJobController
 from .gui_map import DiskMapWidget
@@ -127,6 +128,13 @@ class FluxctlStudio(QMainWindow):
         self.greaseweazle_formats = greaseweazle_formats()
         self._advanced_hex_dump: Optional[HexDumpView] = None
         self._build_ui()
+        self.pages = type("StudioPages", (), {
+            "main": MainPageController(self),
+            "files": FilesPageController(self),
+            "hex": HexPageController(self),
+            "advanced": AdvancedPageController(self),
+            "jobs": JobsPageController(self),
+        })()
         self.job_controller = StudioJobController(self)
         self._restore_settings()
         self._apply_style()
@@ -586,22 +594,19 @@ class FluxctlStudio(QMainWindow):
         self.main_tabs.setTabEnabled(self.advanced_tab_index, advanced)
 
     def _show_main_tab(self) -> None:
-        self.main_tabs.setCurrentIndex(self.disk_tab_index)
+        self.pages.main.show()
 
     def _show_files_tab(self) -> None:
-        self.main_tabs.setCurrentIndex(self.files_tab_index)
+        self.pages.files.show()
 
     def _show_hex_tab(self, *, advanced: Optional[bool] = None) -> None:
-        use_advanced = self.mode.currentIndex() == 1 if advanced is None else advanced
-        self.hex_mode_stack.setCurrentIndex(1 if use_advanced else 0)
-        self.main_tabs.setCurrentIndex(self.hex_tab_index)
+        self.pages.hex.show(advanced=advanced)
 
     def _show_advanced_tab(self) -> None:
-        if self.main_tabs.isTabEnabled(self.advanced_tab_index):
-            self.main_tabs.setCurrentIndex(self.advanced_tab_index)
+        self.pages.advanced.show()
 
     def _show_jobs_tab(self) -> None:
-        self.main_tabs.setCurrentIndex(self.jobs_tab_index)
+        self.pages.jobs.show()
 
     def _selected_layout(self) -> str:
         return str(self.layout_combo.currentData() or (self.current_summary.layout_id if self.current_summary else ""))

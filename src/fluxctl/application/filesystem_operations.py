@@ -11,34 +11,21 @@ import shutil
 import tempfile
 
 from ..filesystem_detection import detect_filesystem
-from ..filesystems import TrackSectorImage, load_builtin_filesystems
+from ..filesystems import RawSectorImage, TrackSectorImage, load_builtin_filesystems
+from ..filesystems.cbm_dos import CBMDOS
+from ..filesystems.cbm_dos_1581 import CBMDOS1581
+from ..filesystems.cpm import CPMFilesystem, cpm_disk_parameters_for_layout
+from ..filesystems.fat12 import FAT12
+from ..layouts.loader import ensure_layout_loaded
 from ..filesystems.cbm_dos import cbm_file_type_label
 from ..output import atomic_write_bytes
 from . import models
 from .image_operations import prepare_image
-
-
-def _services():
-    from .. import studio_services
-
-    return studio_services
+from .hex_operations import format_hex_dump
 
 
 def _models():
     return models
-
-
-def _service_override(name: str):
-    """Return a deliberately replaced legacy entry point, if present.
-
-    This keeps existing test/integration monkeypatches useful while the normal
-    Studio path uses the implementations in this module.
-    """
-
-    candidate = getattr(_services(), name)
-    if getattr(candidate, "__module__", "") != "fluxctl.studio_services":
-        return candidate
-    return None
 
 
 def _join_filesystem_path(directory: str, name: str) -> str:
@@ -48,7 +35,7 @@ def _join_filesystem_path(directory: str, name: str) -> str:
 
 
 def _format_hex_dump(data: bytes, *, max_bytes: Optional[int] = None) -> str:
-    return _services().format_hex_dump(data, max_bytes=max_bytes)
+    return format_hex_dump(data, max_bytes=max_bytes)
 
 
 def safe_export_name(name: str) -> str:
@@ -65,11 +52,6 @@ def sector_hex_dump(
     *,
     max_bytes: Optional[int] = None,
 ):
-    override = _service_override("sector_hex_dump")
-    if override is not None:
-        if max_bytes is None:
-            return override(path, layout_id, encoding, track, head, sector_id)
-        return override(path, layout_id, encoding, track, head, sector_id, max_bytes=max_bytes)
     image = prepare_image(path, layout_id, encoding)
     if not isinstance(image, TrackSectorImage):
         raise ValueError("Image could not be reconstructed into sector tracks")
@@ -90,9 +72,6 @@ def sector_hex_dump(
 
 
 def sector_list(path: Path, layout_id: Optional[str], encoding: str, track: int, head: int):
-    override = _service_override("sector_list")
-    if override is not None:
-        return override(path, layout_id, encoding, track, head)
     image = prepare_image(path, layout_id, encoding)
     if not isinstance(image, TrackSectorImage):
         raise ValueError("Image could not be reconstructed into sector tracks")
@@ -232,16 +211,10 @@ def _export_directory(filesystem, fs_path: str, destination_parent: Path, *, ove
 
 
 def list_files(path: Path, layout_id: Optional[str], encoding: str, directory: str):
-    override = _service_override("list_files")
-    if override is not None:
-        return override(path, layout_id, encoding, directory)
     return list_files_with_info(path, layout_id, encoding, directory).entries
 
 
 def list_files_with_info(path: Path, layout_id: Optional[str], encoding: str, directory: str):
-    override = _service_override("list_files_with_info")
-    if override is not None:
-        return override(path, layout_id, encoding, directory)
     models = _models()
     load_builtin_filesystems()
     image = prepare_image(path, layout_id, encoding)
@@ -272,9 +245,6 @@ def list_files_with_info(path: Path, layout_id: Optional[str], encoding: str, di
 
 
 def file_allocation_for_image(path: Path, layout_id: Optional[str], encoding: str, file_path: str):
-    override = _service_override("file_allocation_for_image")
-    if override is not None:
-        return override(path, layout_id, encoding, file_path)
     load_builtin_filesystems()
     filesystem = _mount_filesystem(path, layout_id, encoding)
     if not hasattr(filesystem, "file_sector_addresses"):
@@ -293,9 +263,6 @@ def file_hex_dump(
     file_path: str,
     max_bytes: Optional[int] = 65536,
 ):
-    override = _service_override("file_hex_dump")
-    if override is not None:
-        return override(path, layout_id, encoding, file_path, max_bytes=max_bytes)
     filesystem = _mount_filesystem(path, layout_id, encoding)
     data = filesystem.extract_file(file_path)
     return _models().HexDumpView(
@@ -375,50 +342,138 @@ def export_filesystem_entries(path: Path, layout_id: Optional[str], encoding: st
     return _models().ExportResult(path=str(destination), files=files, bytes=byte_count)
 
 
+def _read_mutation_source(path: Path, output: Path) -> bytes:
+    if path.resolve() == output.resolve():
+        raise ValueError("Output image must be a new copy, not the original image")
+    if output.exists():
+        raise ValueError(f"Output image already exists: {output}")
+    return path.read_bytes()
+
+
+def _probe_mutation_filesystem(data: bytes, suffix: str, layout_id: Optional[str]):
+    if suffix == ".img" and layout_id and cpm_disk_parameters_for_layout(layout_id):
+        params = cpm_disk_parameters_for_layout(layout_id)
+        image = RawSectorImage(data, bytes_per_sector=params.sector_size)
+        image.layout = ensure_layout_loaded(layout_id)
+        fs = CPMFilesystem()
+        if not fs.probe(image):
+            raise ValueError("CP/M mutation is currently supported only for formatted modelled CP/M images")
+        return fs, "cpm"
+    if suffix == ".img":
+        fs = FAT12()
+        if not fs.probe(RawSectorImage(data)):
+            raise ValueError("FAT12 mutation is currently supported only for FAT12 images")
+        return fs, "fat12"
+    if suffix in {".d64", ".d71"}:
+        fs = CBMDOS()
+        if not fs.probe(RawSectorImage(data, bytes_per_sector=256)):
+            raise ValueError("CBM DOS mutation is currently supported only for formatted .d64/.d71 images")
+        return fs, "cbm_dos_1571" if suffix == ".d71" else "cbm_dos"
+    if suffix == ".d81":
+        fs = CBMDOS1581()
+        if not fs.probe(RawSectorImage(data, bytes_per_sector=256)):
+            raise ValueError("1581 mutation is currently supported only for formatted .d81 images")
+        return fs, "cbm_dos_1581"
+    raise ValueError("Mutation is currently supported only for flat .img, .d64/.d71, and .d81 images")
+
+
+def _write_mutation(output: Path, data: bytes, source: Path) -> None:
+    atomic_write_bytes(output, data, source_paths=[source])
+
+
 def replace_file_with_copy(path: Path, layout_id: Optional[str], encoding: str, file_path: str, replacement: Path, output: Path):
-    override = _service_override("replace_file_with_copy")
-    if override is not None:
-        return override(path, layout_id, encoding, file_path, replacement, output)
-    return _services()._legacy_replace_file_with_copy(path, layout_id, encoding, file_path, replacement, output)
+    data = replacement.read_bytes()
+    original = _read_mutation_source(path, output)
+    fs, name = _probe_mutation_filesystem(original, path.suffix.lower(), layout_id)
+    patched = (fs.replace_file_allocating_clusters(original, file_path, data)
+               if name in {"fat12", "cpm"} and hasattr(fs, "replace_file_allocating_clusters")
+               else fs.replace_file(original, file_path, data))
+    _write_mutation(output, patched, path)
+    return _models().ReplaceResult(str(output), file_path, len(data), name)
 
 
 def delete_filesystem_entry_with_copy(path: Path, layout_id: Optional[str], encoding: str, file_path: str, output: Path):
-    override = _service_override("delete_filesystem_entry_with_copy")
-    if override is not None:
-        return override(path, layout_id, encoding, file_path, output)
-    return _services()._legacy_delete_filesystem_entry_with_copy(path, layout_id, encoding, file_path, output)
+    original = _read_mutation_source(path, output)
+    fs, name = _probe_mutation_filesystem(original, path.suffix.lower(), layout_id)
+    entry = _find_entry(fs, file_path)
+    _write_mutation(output, fs.delete_entry(original, file_path), path)
+    return _models().MutationResult(str(output), "delete", 1, entry.size, name)
 
 
 def import_file_with_copy(path: Path, layout_id: Optional[str], encoding: str, directory: str, source: Path, output: Path):
-    override = _service_override("import_file_with_copy")
-    if override is not None:
-        return override(path, layout_id, encoding, source, directory, output)
-    return _services()._legacy_import_file_with_copy(path, layout_id, encoding, directory, source, output)
+    original = _read_mutation_source(path, output)
+    fs, name = _probe_mutation_filesystem(original, path.suffix.lower(), layout_id)
+    data = source.read_bytes()
+    patched = fs.import_file(original, directory, source.name, data)
+    _write_mutation(output, patched, path)
+    return _models().MutationResult(str(output), "import-file", 1, len(data), name)
 
 
 def import_directory_with_copy(path: Path, layout_id: Optional[str], encoding: str, directory: str, source: Path, output: Path):
-    override = _service_override("import_directory_with_copy")
-    if override is not None:
-        return override(path, layout_id, encoding, source, directory, output)
-    return _services()._legacy_import_directory_with_copy(path, layout_id, encoding, directory, source, output)
+    if not source.is_dir():
+        raise ValueError("Choose a host directory to import")
+    original = _read_mutation_source(path, output)
+    fs, fs_name = _probe_mutation_filesystem(original, path.suffix.lower(), layout_id)
+    payload = original
+    file_count = 0
+    byte_count = 0
+    def import_tree(parent: str, host: Path) -> None:
+        nonlocal payload, file_count, byte_count, fs
+        for child in sorted(host.iterdir(), key=lambda item: item.name.casefold()):
+            if child.is_dir():
+                if not hasattr(fs, "create_directory"):
+                    raise ValueError("Directory import is not supported for this filesystem")
+                payload = fs.create_directory(payload, parent, child.name)
+                fs, _ = _probe_mutation_filesystem(payload, path.suffix.lower(), layout_id)
+                file_count += 1
+                import_tree(_join_filesystem_path(parent, child.name), child)
+            else:
+                data = child.read_bytes()
+                payload = fs.import_file(payload, parent, child.name, data)
+                fs, _ = _probe_mutation_filesystem(payload, path.suffix.lower(), layout_id)
+                file_count += 1; byte_count += len(data)
+    if not hasattr(fs, "create_directory"):
+        raise ValueError("Directory import is not supported for this filesystem")
+    payload = fs.create_directory(payload, directory, source.name)
+    fs, _ = _probe_mutation_filesystem(payload, path.suffix.lower(), layout_id)
+    file_count += 1
+    import_tree(_join_filesystem_path(directory, source.name), source)
+    _write_mutation(output, payload, path)
+    return _models().MutationResult(str(output), "import-directory", file_count, byte_count, fs_name)
 
 
 def create_directory_with_copy(path: Path, layout_id: Optional[str], encoding: str, parent: str, name: str, output: Path):
-    override = _service_override("create_directory_with_copy")
-    if override is not None:
-        return override(path, layout_id, encoding, parent, name, output)
-    return _services()._legacy_create_directory_with_copy(path, layout_id, encoding, parent, name, output)
+    original = _read_mutation_source(path, output)
+    fs, fs_name = _probe_mutation_filesystem(original, path.suffix.lower(), layout_id)
+    if not hasattr(fs, "create_directory"):
+        raise ValueError("Directory creation is not supported for this filesystem")
+    _write_mutation(output, fs.create_directory(original, parent, name), path)
+    return _models().MutationResult(str(output), "create-directory", 1, 0, fs_name)
 
 
 def replace_file_bytes_with_copy(path: Path, layout_id: Optional[str], encoding: str, file_path: str, data: bytes, output: Path):
-    override = _service_override("replace_file_bytes_with_copy")
-    if override is not None:
-        return override(path, layout_id, encoding, file_path, data, output)
-    return _services()._legacy_replace_file_bytes_with_copy(path, layout_id, encoding, file_path, data, output)
+    original = _read_mutation_source(path, output)
+    fs, _ = _probe_mutation_filesystem(original, path.suffix.lower(), layout_id)
+    method = getattr(fs, "replace_file_allocating_clusters", None) or fs.replace_file
+    _write_mutation(output, method(original, file_path, data), path)
+    return _models().HexEditResult(str(output), file_path, len(data), "file")
 
 
 def replace_flat_sector_bytes_with_copy(path: Path, layout_id: str, track: int, head: int, sector: int, data: bytes, output: Path):
-    override = _service_override("replace_flat_sector_bytes_with_copy")
-    if override is not None:
-        return override(path, layout_id, track, head, sector, data, output)
-    return _services()._legacy_replace_flat_sector_bytes_with_copy(path, layout_id, track, head, sector, data, output)
+    original = _read_mutation_source(path, output)
+    layout = ensure_layout_loaded(layout_id)
+    if path.suffix.lower() not in {".img", ".ima", ".raw", ".adf", ".d64", ".d71", ".d81"}:
+        raise ValueError("Advanced sector hex editing requires a flat sector image container")
+    offset = 0
+    if track < 0 or head < 0 or track >= layout.tracks or head >= layout.sides:
+        raise ValueError("Target sector is outside the image layout")
+    counts = list(layout.track_sectors) if layout.track_sectors else [layout.sectors_per_track] * layout.tracks
+    base = int(layout.id_rules.get("sector_number_base", 1))
+    for cylinder in range(track):
+        offset += counts[cylinder] * layout.sector_size * layout.sides
+    offset += head * counts[track] * layout.sector_size + (sector - base) * layout.sector_size
+    if len(data) != layout.sector_size or offset < 0 or offset + len(data) > len(original):
+        raise ValueError("Edited sector size or location is invalid")
+    patched = bytearray(original); patched[offset:offset + len(data)] = data
+    _write_mutation(output, bytes(patched), path)
+    return _models().HexEditResult(str(output), f"T{track} H{head} S{sector}", len(data), "sector")
