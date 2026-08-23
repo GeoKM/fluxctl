@@ -42,6 +42,7 @@ from .application.report_operations import (
     export_qc_json,
 )
 from .gui_jobs import Job
+from .gui_job_controller import StudioJobController
 
 
 try:  # pragma: no cover - exercised only when GUI dependencies are installed.
@@ -479,6 +480,7 @@ class FluxctlStudio(QMainWindow):
         self.greaseweazle_formats = greaseweazle_formats()
         self._advanced_hex_dump: Optional[services.HexDumpView] = None
         self._build_ui()
+        self.job_controller = StudioJobController(self)
         self._restore_settings()
         self._apply_style()
         self._update_hardware_controls()
@@ -1103,90 +1105,28 @@ class FluxctlStudio(QMainWindow):
         super().closeEvent(event)
 
     def _update_job_elapsed(self) -> None:
-        if self.current_job is None or self.current_job not in self.active_jobs:
-            return
-        elapsed = time.monotonic() - self._job_started_at
-        label = self.job_status_label.text().split(" (")[0]
-        self.job_status_label.setText(f"{label} ({elapsed:.1f}s)")
+        self.job_controller.update_elapsed()
 
     def _set_job_finished_state(self) -> None:
-        self._job_timer.stop()
-        self.current_job = None
-        self.job_cancel_button.setEnabled(False)
-        self.job_progress.setVisible(False)
-        self.job_status_label.setText("No active jobs")
+        self.job_controller.set_finished_state()
 
     def cancel_current_job(self) -> None:
-        job = self.current_job
-        if job is None or job not in self.active_jobs:
-            return
-        job.cancel()
-        self.job_cancel_button.setEnabled(False)
-        self.activity_label.setText("Cancellation requested; finishing the current operation...")
-        self.job_status_label.setText("Cancellation requested")
-        self._append_log("Cancellation requested for the active job.")
+        self.job_controller.cancel_current()
 
     def _run_job(self, label: str, fn: Callable[[], object], done: Callable[[object], None]) -> None:
-        self._job_generation += 1
-        generation = self._job_generation
-        self.summary_labels["status"].setText("running")
-        self.activity_label.setText(f"Running {label}...")
-        self._append_log(f"$ {label}")
-        job = Job(fn)
-        self.active_jobs.add(job)
-        self.current_job = job
-        self._job_started_at = time.monotonic()
-        self.job_status_label.setText(f"Running {label}")
-        self.job_progress.setRange(0, 0)
-        self.job_progress.setVisible(True)
-        self.job_cancel_button.setEnabled(True)
-        self._job_timer.start()
-        job.signals.progress.connect(lambda value, current_job=job: self._show_job_progress(current_job, value))
-        job.signals.finished.connect(
-            lambda result, current_job=job: self._finish_job(current_job, generation, label, result, done)
-        )
-        job.signals.failed.connect(lambda message, current_job=job: self._fail_job(current_job, generation, label, message))
-        job.signals.cancelled.connect(lambda current_job=job: self._cancelled_job(current_job, generation, label))
-        self.thread_pool.start(job)
+        self.job_controller.run(label, fn, done)
 
     def _show_job_progress(self, job: Job, value: int) -> None:
-        if job is not self.current_job:
-            return
-        self.job_progress.setRange(0, 100)
-        self.job_progress.setValue(value)
+        self.job_controller.show_progress(job, value)
 
     def _finish_job(self, job: Job, generation: int, label: str, result: object, done: Callable[[object], None]) -> None:
-        self.active_jobs.discard(job)
-        if job is self.current_job:
-            self._set_job_finished_state()
-        if generation != self._job_generation:
-            self._append_log(f"Discarded stale result from {label}.")
-            return
-        self.activity_label.setText(f"Finished {label}.")
-        if self.summary_labels["status"].text() == "running":
-            self.summary_labels["status"].setText("ready")
-        done(result)
+        self.job_controller.finish(job, generation, label, result, done)
 
     def _fail_job(self, job: Job, generation: int, label: str, message: str) -> None:
-        self.active_jobs.discard(job)
-        if job is self.current_job:
-            self._set_job_finished_state()
-        if generation != self._job_generation:
-            self._append_log(f"Discarded stale error from {label}: {message}")
-            return
-        self.summary_labels["status"].setText("error")
-        self.activity_label.setText(f"{label} failed: {message}")
-        self._append_log(f"Error: {message}")
+        self.job_controller.fail(job, generation, label, message)
 
     def _cancelled_job(self, job: Job, generation: int, label: str) -> None:
-        self.active_jobs.discard(job)
-        if job is self.current_job:
-            self._set_job_finished_state()
-        if generation != self._job_generation:
-            return
-        self.summary_labels["status"].setText("ready")
-        self.activity_label.setText(f"Cancelled {label}.")
-        self._append_log(f"Cancelled {label}.")
+        self.job_controller.cancelled(job, generation, label)
 
     def open_image(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
