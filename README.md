@@ -143,6 +143,13 @@ fluxctl dump disk.scp --layout ibm_mfm_720k --track 0 --side 0 --sector 1
 fluxctl patch disk.scp --layout ibm_mfm_720k --write-sector 0:0:1:DEADBEEF... --out patched.img
 ```
 
+Conversion targets are checked against the resolved layout, encoding, geometry,
+and container semantics before an exporter runs. The CLI and Fluxctl Studio use
+the same compatibility planner. A route is reported as `sector-lossless`,
+`logically-equivalent`, or `lossy-but-useful`; incompatible targets are rejected
+before an output file is created. A sector-equivalent conversion may still lose
+physical flux timing, track encoding, weak bits, or copy-protection details.
+
 ### Safe output handling
 
 Commands that create user-visible files refuse to overwrite an existing path

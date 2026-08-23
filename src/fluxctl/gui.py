@@ -9,6 +9,7 @@ from typing import Callable, Optional
 
 from .application.compare_operations import compare_images
 from .application.conversion_operations import convert_image, roundtrip_image
+from .application.conversion_planner import ConversionContext, available_conversion_plans, plan_conversion
 from .application.diagnostic_operations import summarize_image
 from .application.diagnostic_operations import doctor_report, provenance_json
 from .application.hardware_operations import greaseweazle_formats, greaseweazle_status, read_disk_with_greaseweazle
@@ -1224,28 +1225,30 @@ class FluxctlStudio(QMainWindow):
         return "raw"
 
     def _exporter_choices_for_image(self, kind: str, layout_id: str = "", encoding: str = "") -> list[tuple[str, str]]:
-        if layout_id.startswith("apple2_") or kind in {"woz", "po", "do", "nib"}:
-            return [
-                ("po", "Apple ProDOS-order sector image (.po)"),
-                ("do", "Apple DOS-order sector image (.do)"),
-            ]
-        choices = [
-            ("raw", "Raw sector image (.img)"),
-            ("imd", "ImageDisk (.imd)"),
+        context = ConversionContext(
+            source_kind=kind,
+            layout_id=layout_id,
+            encoding=encoding,
+        )
+        labels = {
+            "raw": "Raw sector image (.img)",
+            "imd": "ImageDisk (.imd)",
+            "adf": "Amiga Disk File (.adf)",
+            "d64": "Commodore 1541 image (.d64)",
+            "d71": "Commodore 1571 image (.d71)",
+            "d81": "Commodore 1581 image (.d81)",
+            "g64": "Commodore GCR track image (.g64)",
+            "po": "Apple ProDOS-order sector image (.po)",
+            "do": "Apple DOS-order sector image (.do)",
+        }
+        return [
+            (plan.target, labels.get(plan.target, f"{plan.target} image"))
+            for plan in available_conversion_plans(context)
+            if not (
+                (layout_id.startswith("apple2_") or kind in {"woz", "po", "do", "nib"})
+                and plan.target not in {"po", "do"}
+            )
         ]
-        if layout_id == "amiga_mfm_880k" or kind == "adf":
-            choices.append(("adf", "Amiga Disk File (.adf)"))
-        if layout_id.startswith("commodore_gcr_1541") or kind == "d64":
-            choices.append(("d64", "Commodore 1541 image (.d64)"))
-        if layout_id == "commodore_gcr_1571_341k" or kind == "d71":
-            choices.append(("d71", "Commodore 1571 image (.d71)"))
-        if layout_id == "commodore_mfm_1581_800k" or kind == "d81":
-            choices.append(("d81", "Commodore 1581 image (.d81)"))
-        if encoding == "gcr" or kind == "g64":
-            choices.append(("g64", "Commodore GCR track image (.g64)"))
-        if kind in {"adf", "d64", "d71", "d81", "g64"} and all(choice[0] != kind for choice in choices):
-            choices.append((kind, f"Same container (.{kind})"))
-        return choices
 
     def _default_roundtrip_back_exporter_for_image(self, kind: str) -> str:
         if kind in {"woz", "po", "do", "nib"}:
@@ -2242,11 +2245,26 @@ class FluxctlStudio(QMainWindow):
         exporter = self._choose_convert_exporter(default_exporter, current_kind, layout_id, encoding)
         if not exporter:
             return
-        if exporter == "imd" and self._is_amiga_context(current_kind, layout_id):
-            self._warn(
-                "IMD will store decoded Amiga sectors only. It will not preserve Amiga physical track "
-                "encoding. Use ADF for native Amiga images or SCP for preservation."
-            )
+        plan = plan_conversion(
+            ConversionContext(
+                source_kind=current_kind,
+                layout_id=layout_id,
+                encoding=encoding,
+                filesystem=self.current_summary.filesystem if self.current_summary else "",
+            ),
+            exporter,
+        )
+        if not plan.allowed:
+            self._warn(plan.reason)
+            return
+        if plan.warnings:
+            if exporter == "imd" and self._is_amiga_context(current_kind, layout_id):
+                self._warn(
+                    "IMD will store decoded Amiga sectors only. It will not preserve Amiga physical track "
+                    "encoding. Use ADF for native Amiga images or SCP for preservation."
+                )
+            else:
+                self._warn(f"{plan.reason}\n\n" + "\n".join(plan.warnings))
         suffix = ".img" if exporter == "raw" else f".{exporter}"
         default_output = self._default_converted_output_path(suffix)
         filename, _ = QFileDialog.getSaveFileName(
@@ -2279,9 +2297,17 @@ class FluxctlStudio(QMainWindow):
         self.summary_labels["status"].setText("ready")
         self.activity_label.setText(
             f"Converted to {result.output_path} ({result.output_size:,} bytes)"
+            f" via {result.conversion_classification.replace('-', ' ')}"
         )
+        if result.conversion_reason:
+            self._append_log(f"Conversion route: {result.conversion_reason}")
+        for warning in result.conversion_warnings:
+            self._append_log(f"Conversion warning: {warning}")
         if result.lossy_warning:
-            self._append_log("Warning: conversion may be lossy due to missing or low-confidence sectors")
+            if result.conversion_classification == "lossy-but-useful":
+                self._append_log("Warning: this conversion route is lossy but useful")
+            else:
+                self._append_log("Warning: conversion may be lossy due to missing or low-confidence sectors")
 
     def _choose_convert_exporter(self, default_exporter: str, kind: str, layout_id: str, encoding: str) -> str:
         choices = self._exporter_choices_for_image(kind, layout_id, encoding)
@@ -2366,7 +2392,16 @@ class FluxctlStudio(QMainWindow):
         layout.addWidget(intro)
 
         form = QFormLayout()
-        exporters = ["raw", "imd", "adf", "d64", "d71", "d81", "g64"]
+        context = ConversionContext(
+            source_kind=self.current_summary.kind if self.current_summary else "",
+            layout_id=self.current_summary.layout_id if self.current_summary else "",
+            encoding=self.current_summary.encoding if self.current_summary else "",
+            filesystem=self.current_summary.filesystem if self.current_summary else "",
+        )
+        exporters = [plan.target for plan in available_conversion_plans(context)]
+        if not exporters:
+            self._warn("No semantically compatible conversion targets are available for this image.")
+            return None
         to_combo = QComboBox()
         to_combo.addItems(exporters)
         self._select_combo_text(to_combo, default_to)

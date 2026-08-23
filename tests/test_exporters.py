@@ -298,6 +298,20 @@ def test_convert_scp_auto_detects_layout_before_decoding(tmp_path: Path) -> None
     assert provenance["parameters"]["encoding"] == "gcr"
 
 
+def test_convert_rejects_semantically_incompatible_target(tmp_path: Path) -> None:
+    d64_fixture = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64-170K.d64")
+    out_path = tmp_path / "disk.adf"
+
+    result = runner.invoke(
+        app,
+        ["convert", str(d64_fixture), "--layout", "commodore_gcr_1541_170k", "--to", "adf", "--out", str(out_path)],
+    )
+
+    assert result.exit_code != 0
+    assert "ADF is only valid for an Amiga layout" in result.output
+    assert not out_path.exists()
+
+
 def test_convert_amiga_scp_to_adf_preserves_filesystem(tmp_path: Path) -> None:
     scp_fixture = Path("tests/fixtures/3.5inch/Commodore/Commodore-1010-DSDD-MFM-Amiga-880K.scp")
     out_path = tmp_path / "amiga.adf"
