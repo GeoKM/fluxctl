@@ -14,6 +14,7 @@ from ..filesystem_detection import detect_filesystem
 from ..filesystems import TrackSectorImage, load_builtin_filesystems
 from ..filesystems.cbm_dos import cbm_file_type_label
 from ..output import atomic_write_bytes
+from . import models
 from .image_operations import prepare_image
 
 
@@ -24,9 +25,7 @@ def _services():
 
 
 def _models():
-    """Load Studio-facing result models without importing them at module load."""
-
-    return _services()
+    return models
 
 
 def _service_override(name: str):
