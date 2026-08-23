@@ -1107,7 +1107,7 @@ def sector_list(
     return TextView(title=f"Sectors T{track} H{head}", text="\n".join(lines))
 
 
-def file_hex_dump(
+def _legacy_file_hex_dump(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1133,7 +1133,7 @@ def file_hex_dump(
     )
 
 
-def file_allocation_for_image(
+def _legacy_file_allocation_for_image(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1213,7 +1213,7 @@ def _find_entry(filesystem, fs_path: str) -> FileEntryView:
     raise ValueError(f"Filesystem entry '{fs_path}' was not found")
 
 
-def export_filesystem_entry(
+def _legacy_export_filesystem_entry(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1232,7 +1232,7 @@ def export_filesystem_entry(
     return ExportResult(path=str(destination), files=1, bytes=len(data))
 
 
-def export_filesystem_entries(
+def _legacy_export_filesystem_entries(
     path: Path,
     layout_id: Optional[str],
     encoding: str,
@@ -1743,7 +1743,7 @@ def _export_directory_contents(filesystem, fs_path: str, host_directory: Path) -
     return files, byte_count
 
 
-def list_files(
+def _legacy_list_files(
     path: Path,
     layout_id: Optional[str],
     encoding: str = "mfm",
@@ -1754,7 +1754,7 @@ def list_files(
     return list_files_with_info(path, layout_id, encoding, directory).entries
 
 
-def list_files_with_info(
+def _legacy_list_files_with_info(
     path: Path,
     layout_id: Optional[str],
     encoding: str = "mfm",
@@ -1816,6 +1816,68 @@ def _filesystem_volume_text(filesystem) -> str:
         catalog = f"{catalog_entries} cataloged file(s)" if catalog_entries else "empty catalog"
         return f"Apple DOS 3.3  Volume: {volume_number}  {catalog}"
     return ""
+
+
+def list_files(path: Path, layout_id: Optional[str], encoding: str = "mfm", directory: str = "/"):
+    from .application.filesystem_operations import list_files as operation
+
+    return operation(path, layout_id, encoding, directory)
+
+
+def list_files_with_info(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str = "mfm",
+    directory: str = "/",
+):
+    from .application.filesystem_operations import list_files_with_info as operation
+
+    return operation(path, layout_id, encoding, directory)
+
+
+def file_allocation_for_image(path: Path, layout_id: Optional[str], encoding: str, file_path: str):
+    from .application.filesystem_operations import file_allocation_for_image as operation
+
+    return operation(path, layout_id, encoding, file_path)
+
+
+def file_hex_dump(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    file_path: str,
+    *,
+    max_bytes: Optional[int] = None,
+):
+    from .application.filesystem_operations import file_hex_dump as operation
+
+    return operation(path, layout_id, encoding, file_path, max_bytes=max_bytes)
+
+
+def export_filesystem_entry(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    fs_path: str,
+    destination: Path,
+    overwrite: bool = False,
+):
+    from .application.filesystem_operations import export_filesystem_entry as operation
+
+    return operation(path, layout_id, encoding, fs_path, destination, overwrite=overwrite)
+
+
+def export_filesystem_entries(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    fs_paths: list[str],
+    destination_parent: Path,
+    overwrite: bool = False,
+):
+    from .application.filesystem_operations import export_filesystem_entries as operation
+
+    return operation(path, layout_id, encoding, fs_paths, destination_parent, overwrite=overwrite)
 
 
 def provenance_json(path: Path) -> dict:
