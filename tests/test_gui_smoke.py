@@ -10,9 +10,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QItemSelectionModel, QTimer, Qt
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QApplication, QAbstractItemView, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QFileDialog, QInputDialog, QMessageBox
 
 from fluxctl import studio_services as services
+import fluxctl.gui as gui
 from fluxctl.gui import DiskMapWidget, FluxctlStudio, Job
 from fluxctl.reports.map import DiskMap, SectorMapEntry
 
@@ -468,12 +469,12 @@ def test_left_panel_disables_greaseweazle_read_when_missing(monkeypatch) -> None
 def test_left_panel_runs_greaseweazle_read_to_scp(monkeypatch, tmp_path) -> None:
     captured = {}
     monkeypatch.setattr(
-        services,
+        gui,
         "greaseweazle_status",
         lambda: services.GreaseweazleStatus(True, str(tmp_path / "gw"), "gw available"),
     )
     monkeypatch.setattr(
-        services,
+        gui,
         "greaseweazle_formats",
         lambda: [services.GreaseweazleFormat("ibm.1440", "ibm.1440")],
     )
@@ -498,7 +499,7 @@ def test_left_panel_runs_greaseweazle_read_to_scp(monkeypatch, tmp_path) -> None
         )
 
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_args, **_kwargs: (str(tmp_path / "capture.scp"), ""))
-    monkeypatch.setattr(services, "read_disk_with_greaseweazle", fake_read)
+    monkeypatch.setattr(gui, "read_disk_with_greaseweazle", fake_read)
     monkeypatch.setattr(window, "_run_job", run_immediate)
     monkeypatch.setattr(window, "run_probe", lambda: captured.setdefault("probed", True))
 
@@ -514,6 +515,60 @@ def test_left_panel_runs_greaseweazle_read_to_scp(monkeypatch, tmp_path) -> None
     assert window.current_path == tmp_path / "capture.scp"
     assert window.main_tabs.currentIndex() == window.jobs_tab_index
 
+    window.close()
+
+
+def test_left_panel_requires_typed_confirmation_and_runs_verified_write(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+    source = tmp_path / "disk.img"
+    source.write_bytes(b"sector-image")
+    monkeypatch.setattr(
+        gui,
+        "greaseweazle_status",
+        lambda: services.GreaseweazleStatus(True, str(tmp_path / "gw"), "gw available"),
+    )
+    monkeypatch.setattr(
+        gui,
+        "greaseweazle_formats",
+        lambda: [services.GreaseweazleFormat("ibm.720", "ibm.720")],
+    )
+    window = FluxctlStudio()
+    window.current_path = source
+    window.layout_combo.setCurrentIndex(window.layout_combo.findData("ibm_mfm_720k"))
+    window.greaseweazle_format_combo.setCurrentIndex(window.greaseweazle_format_combo.findData("ibm.720"))
+    window._update_hardware_controls()
+    assert window.greaseweazle_write_button.isEnabled()
+
+    def run_immediate(label, fn, done):
+        captured["label"] = label
+        done(fn())
+
+    def fake_write(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(
+            write_command_display="gw write --format ibm.720 disk.img",
+            write_stdout="write verified",
+            write_stderr="",
+            read_command_display="gw read --raw readback.scp",
+            read_stdout="read ok",
+            read_stderr="",
+            readback_path=str(args[1]),
+            manifest_path=str(args[2]),
+            comparison={"identical": True},
+        )
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_args, **_kwargs: ("WRITE", True))
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_args, **_kwargs: (str(tmp_path / "readback.scp"), ""))
+    monkeypatch.setattr(gui, "write_and_verify_with_greaseweazle", fake_write)
+    monkeypatch.setattr(window, "_run_job", run_immediate)
+
+    window.write_disk_with_greaseweazle_dialog()
+
+    assert captured["label"] == "greaseweazle write A"
+    assert captured["args"][:3] == (source, tmp_path / "readback.scp", tmp_path / "readback.scp.write-verify.json")
+    assert captured["kwargs"]["confirmed"] is True
+    assert "read-back match" in window.activity_label.text().lower()
     window.close()
 
 

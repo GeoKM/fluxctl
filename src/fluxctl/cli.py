@@ -55,6 +55,10 @@ from .application.conversion_planner import ConversionContext, ConversionPlan, p
 from .application.filesystem_operations import file_hex_dump, list_files_with_info, sector_list
 from .application.report_operations import build_disk_map_for_image
 from .application.recovery_operations import recover_image
+from .application.hardware_operations import (
+    synthesize_scp_with_greaseweazle,
+    write_and_verify_with_greaseweazle,
+)
 from .geohints import LayoutHint
 from .trs80 import load_trs80_image
 from .native import (
@@ -75,6 +79,7 @@ Typical workflows:
   fluxctl recover disk.scp --layout ibm_mfm_720k --policy strict-crc --out repaired.img
   fluxctl convert disk.scp --layout ibm_mfm_720k --to raw --out disk.img
   fluxctl roundtrip disk.scp --layout amiga_mfm_880k --to adf
+  fluxctl synthesize-scp disk.img --format ibm.720 --out disk.scp
   fluxctl extract disk.img --list
 
 \b
@@ -111,6 +116,18 @@ ROUNDTRIP_EXAMPLES = """Examples:
   fluxctl roundtrip disk.adf --to raw --back-to adf
 
   fluxctl roundtrip disk.img --layout amiga_mfm_880k --to adf --back-to raw"""
+
+HARDWARE_EXAMPLES = """Examples:
+
+  # Generate a calibrated SCP from a logical sector image. This is not a
+  # preservation-grade recreation of an original flux capture.
+  fluxctl synthesize-scp disk.img --format ibm.720 --out disk-synthesized.scp
+
+  # This is destructive. Greaseweazle verifies the write, Fluxctl retains a
+  # raw SCP read-back, compares decoded sectors, and writes a JSON manifest.
+  fluxctl write disk.img --format ibm.720 --layout ibm_mfm_720k \\
+      --readback-out disk-readback.scp --confirm-write
+"""
 app.add_typer(provenance_app, name="provenance")
 
 
@@ -2201,6 +2218,85 @@ def recover(
     typer.echo(f"Recovered {summary['selected_sectors']} sectors into {result.output_path}")
     typer.echo(f"Policy: {summary['policy']}; missing sectors: {summary['missing_sectors']}")
     typer.echo(f"Recovery manifest: {result.manifest_path}")
+
+
+@app.command("synthesize-scp", epilog=HARDWARE_EXAMPLES, context_settings={"terminal_width": 120})
+@_handle_cli_errors
+def synthesize_scp(
+    path: Path = typer.Argument(..., exists=True, readable=True, help="Source sector image accepted by Greaseweazle"),
+    gw_format: str = typer.Option(..., "--format", help="Greaseweazle format, for example ibm.720 or commodore.1541"),
+    out: Path = typer.Option(..., "--out", help="New calibrated SCP output path"),
+    tracks: str = typer.Option("", "--tracks", help="Optional Greaseweazle track selection override"),
+    force: bool = typer.Option(False, "--force", help="Replace an existing output SCP"),
+):
+    """Synthesize a calibrated SCP from a logical sector image via Greaseweazle.
+
+    The result preserves the supplied logical sector image through a standard
+    format encoder. It cannot recreate original analogue flux timing, weak
+    bits, or copy-protection characteristics.
+    """
+
+    result = synthesize_scp_with_greaseweazle(
+        path,
+        out,
+        gw_format=gw_format,
+        tracks=tracks,
+        overwrite=force,
+    )
+    typer.echo(f"Synthesized SCP: {result.path}")
+    typer.echo(f"Greaseweazle format: {result.format_id}")
+    typer.secho(
+        "Note: synthesized SCP is calibrated logical flux, not an original preservation capture.",
+        fg=typer.colors.YELLOW,
+    )
+
+
+@app.command(epilog=HARDWARE_EXAMPLES, context_settings={"terminal_width": 120})
+@_handle_cli_errors
+def write(
+    path: Path = typer.Argument(..., exists=True, readable=True, help="Image to write; the source is never changed"),
+    gw_format: str = typer.Option(..., "--format", help="Greaseweazle format used for write and read-back verification"),
+    layout: str = typer.Option(..., "--layout", help="Fluxctl layout used to compare source and SCP read-back sectors"),
+    drive: str = typer.Option("A", "--drive", help="Greaseweazle drive identifier"),
+    encoding: str = typer.Option("mfm", "--encoding", help="Fluxctl decoder encoding for SCP source/read-back"),
+    tracks: str = typer.Option("", "--tracks", help="Optional Greaseweazle track selection override"),
+    readback_out: Path = typer.Option(..., "--readback-out", help="New raw SCP created after writing"),
+    manifest: Optional[Path] = typer.Option(None, "--manifest", help="JSON write/verify manifest path"),
+    readback_revs: int = typer.Option(3, "--readback-revs", min=1, help="Raw SCP revolutions per track for independent read-back"),
+    confirm_write: bool = typer.Option(False, "--confirm-write", help="Required acknowledgement that this overwrites a physical disk"),
+    force: bool = typer.Option(False, "--force", help="Replace existing read-back SCP and manifest"),
+):
+    """Destructively write media, then retain and compare an SCP read-back.
+
+    Greaseweazle's native write verification is left enabled. Fluxctl then
+    reads the disk again as raw SCP and performs a separate decoded-sector
+    comparison. A JSON manifest is written even when Greaseweazle reports an
+    error, where its destination path permits that.
+    """
+
+    readback_path = readback_out if readback_out.suffix.lower() == ".scp" else readback_out.with_suffix(".scp")
+    manifest_path = manifest or readback_path.with_suffix(readback_path.suffix + ".write-verify.json")
+    result = write_and_verify_with_greaseweazle(
+        path,
+        readback_path,
+        manifest_path,
+        drive=drive,
+        gw_format=gw_format,
+        layout=layout,
+        encoding=encoding,
+        tracks=tracks,
+        readback_revs=readback_revs,
+        overwrite=force,
+        confirmed=confirm_write,
+    )
+    typer.echo(f"Greaseweazle write verification completed for drive {drive}.")
+    typer.echo(f"Read-back SCP: {result.readback_path}")
+    typer.echo(f"Write manifest: {result.manifest_path}")
+    if result.comparison.get("identical"):
+        typer.secho("Independent decoded-sector read-back: MATCH", fg=typer.colors.GREEN)
+    else:
+        typer.secho("Independent decoded-sector read-back: DIFFER", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
 
 
 @app.command()

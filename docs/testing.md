@@ -50,6 +50,21 @@ with a Greaseweazle and suitable drive can run them with:
 The hardware tier must use disposable output paths and real media only with
 explicit operator approval.
 
+For a verified write trial, choose a disposable disk and retain both generated
+artifacts. A write requires an explicit command acknowledgement and never
+modifies the source image:
+
+```sh
+./.venv/bin/fluxctl write disk.img --format ibm.720 --layout ibm_mfm_720k \
+  --readback-out results/disk-readback.scp --confirm-write
+```
+
+Greaseweazle performs its normal write verification. Fluxctl then makes an
+independent raw SCP read-back, compares decoded sectors, and writes
+`disk-readback.scp.write-verify.json`. A synthesized SCP may be prepared
+without hardware using `fluxctl synthesize-scp`; it is standard calibrated flux
+and must not be described as a preservation capture.
+
 ## Fixture Storage
 
 Large SCP captures are stored with Git LFS using `.gitattributes`. New large
