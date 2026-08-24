@@ -139,7 +139,7 @@ def _classify_sector(sector: Sector) -> str:
     return "good"
 
 
-def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor | None = None) -> DiskMap:
+def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor | None = None, operation=None) -> DiskMap:
     """Decode an image and produce a :class:`DiskMap`.
 
     The mapper walks every track/head pair present in the image, decodes the
@@ -165,7 +165,11 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
     sector_details: List[List[SectorMapEntry]] = []
     max_sectors = 0
 
-    for track_flux in sorted(image.tracks, key=lambda t: (t.track, t.side)):
+    ordered_tracks = sorted(image.tracks, key=lambda t: (t.track, t.side))
+    track_total = len(ordered_tracks)
+    for track_index, track_flux in enumerate(ordered_tracks, start=1):
+        if operation is not None:
+            operation.checkpoint("track", track_index, track_total)
         if layout and (track_flux.track >= layout.tracks or track_flux.side >= layout.sides):
             continue
         expected_this = expected_sectors
@@ -197,6 +201,8 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
                         reconstruct_amiga_with_pll,
                     )
 
+                    if operation is not None:
+                        operation.checkpoint("candidate decoder", track_index, track_total)
                     candidate = reconstruct_amiga_greaseweazle(
                         track_flux.revolutions,
                         track_flux.track,
@@ -204,6 +210,8 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
                         timebase_ns=image.timebase_ns,
                     )
                     if candidate is None:
+                        if operation is not None:
+                            operation.checkpoint("candidate decoder fallback", track_index, track_total)
                         candidate = reconstruct_amiga_with_pll(
                             track_flux.revolutions,
                             track_flux.track,
@@ -220,6 +228,7 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
                         expected_sectors=expected_this or None,
                         encoding=layout.encoding if layout else getattr(decoder, "encoding", None),
                         timebase_ns=image.timebase_ns,
+                        operation=operation,
                     )
                 confidence = (
                     sum(sec.confidence for sec in track_data.sectors) / len(track_data.sectors)
@@ -238,6 +247,8 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
                     details.sort(key=lambda entry: entry.sector_id)
                 sectors = [entry.state for entry in details]
             except (FluxDecodeError, Exception):
+                if operation is not None:
+                    operation.checkpoint("cancelled")
                 # Future refinement: capture decoder metrics so we can visualise
                 # why a track failed, or try secondary revolutions for multi-pass
                 # recovery.

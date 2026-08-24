@@ -51,6 +51,7 @@ def _recover_tracks(
     layout_id: str,
     encoding: str,
     policy: str,
+    operation=None,
 ) -> tuple[list[TrackSectors], list[dict[str, Any]], dict[str, Any]]:
     """Decode each revolution independently and select sector candidates."""
 
@@ -70,15 +71,23 @@ def _recover_tracks(
     rejected_count = 0
     missing_count = 0
 
-    for track_flux in image.tracks:
+    track_total = len(image.tracks)
+    for track_index, track_flux in enumerate(image.tracks, start=1):
+        if operation is not None:
+            operation.checkpoint("track", track_index, track_total)
         if track_flux.track >= layout.tracks or track_flux.side >= layout.sides:
             continue
         expected = layout.expected_sectors_for_track(track_flux.track, track_flux.side)
         candidates: list[tuple[int, TrackSectors]] = []
-        for revolution in track_flux.revolutions:
+        revolution_total = len(track_flux.revolutions)
+        for revolution_index, revolution in enumerate(track_flux.revolutions, start=1):
+            if operation is not None:
+                operation.checkpoint("revolution", revolution_index, revolution_total)
             if not getattr(revolution, "interval_ns", None):
                 continue
             try:
+                if operation is not None:
+                    operation.checkpoint("candidate decoder", revolution_index, revolution_total)
                 candidate = build_track_sectors(
                     revolution,
                     decoder,
@@ -88,6 +97,8 @@ def _recover_tracks(
                     encoding=layout.encoding,
                 )
             except Exception:
+                if operation is not None:
+                    operation.checkpoint("cancelled")
                 continue
             candidates.append((int(getattr(revolution, "index", len(candidates))), candidate))
 
@@ -170,6 +181,7 @@ def recover_image(
     exporter_name: str = "raw",
     *,
     force: bool = False,
+    operation=None,
 ) -> RecoveryResult:
     """Recover an SCP into a new image and write a decision manifest."""
 
@@ -182,7 +194,7 @@ def recover_image(
     layout = ensure_layout_loaded(layout_id)
     effective_encoding = layout.encoding if encoding.lower() == "auto" else encoding
     source_hash = sha256_file(path)
-    tracks, track_reports, summary = _recover_tracks(path, layout_id, effective_encoding, policy)
+    tracks, track_reports, summary = _recover_tracks(path, layout_id, effective_encoding, policy, operation=operation)
     if not tracks:
         raise FluxDecodeError("No recoverable tracks were decoded from the SCP")
 

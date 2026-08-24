@@ -12,7 +12,7 @@ from ..imd import load_imd_image
 from ..trs80 import load_trs80_image
 
 
-def prepare_image(path: Path, layout_id: Optional[str], encoding: str):
+def prepare_image(path: Path, layout_id: Optional[str], encoding: str, operation=None):
     """Reconstruct an image container for reports and filesystem operations."""
 
     from ..apple2 import Apple2SectorImage
@@ -99,7 +99,7 @@ def prepare_image(path: Path, layout_id: Optional[str], encoding: str):
             image.layout = layout_desc
             _apply_layout_geometry(image, layout_desc)
             return image
-        track_data = decode_tracks(path, layout_id, encoding=encoding)
+        track_data = decode_tracks(path, layout_id, encoding=encoding, operation=operation)
         if layout_desc and layout_desc.layout_id.startswith("apple2_"):
             return Apple2SectorImage(track_data, layout_desc)
         image = TrackSectorImage(
@@ -123,7 +123,7 @@ def prepare_image(path: Path, layout_id: Optional[str], encoding: str):
         tracks, geom, _meta = load_trs80_image(path)
         return image_from_tracks(tracks, geom, layout_desc)
     if layout_desc:
-        track_data = decode_tracks(path, layout_id, encoding=encoding)
+        track_data = decode_tracks(path, layout_id, encoding=encoding, operation=operation)
         image = TrackSectorImage(track_data, bytes_per_sector=layout_desc.sector_size)
         image.layout = layout_desc
         return image

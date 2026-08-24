@@ -12,6 +12,7 @@ from .reports.map import DiskMap
 
 class DiskMapWidget(QWidget):
     sectorClicked = Signal(int, int, int)
+    sectorDiagnosticRequested = Signal(int, int, int)
     STATE_COLORS = {
         "good": QColor("#35d07f"),
         "weak": QColor("#f2c94c"),
@@ -92,7 +93,8 @@ class DiskMapWidget(QWidget):
             f"Sector ID {detail.sector_id}  Position {sector_index + 1}\n"
             f"State: {state_label}  CRC: {crc}\n"
             f"Confidence: {detail.confidence:.2f}\n"
-            f"Size: {detail.size} bytes  Data: {data}  Deleted: {deleted}"
+            f"Size: {detail.size} bytes  Data: {data}  Deleted: {deleted}\n"
+            "Double-click for preservation diagnostics"
         )
 
     def paintEvent(self, _event) -> None:  # pragma: no cover - visual rendering.
@@ -314,6 +316,13 @@ class DiskMapWidget(QWidget):
         if address is not None:
             track, head, sector_id = address
             self.sectorClicked.emit(track, head, sector_id)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # pragma: no cover - GUI interaction.
+        if event.button() != Qt.LeftButton:
+            return
+        address = self.sector_address_at(event.position().x(), event.position().y())
+        if address is not None:
+            self.sectorDiagnosticRequested.emit(*address)
 
     def sector_address_at(self, x: float, y: float) -> Optional[tuple[int, int, int]]:
         hit = self._hit_test(x, y)

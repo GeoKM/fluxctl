@@ -1,4 +1,5 @@
 from pathlib import Path
+from threading import Event
 from typing import List
 
 import pytest
@@ -7,6 +8,7 @@ from fluxctl.decoding.mfm import mfm_decoder
 from fluxctl.models import BitDecodeMetrics, Bitstream
 from fluxctl.models import RevolutionFlux
 from fluxctl.scp import parse_scp
+from fluxctl.application.progress import OperationCancelled, OperationContext
 from fluxctl.sector.reconstruct import (
     ID_ADDRESS_MARK,
     SYNC_WORD,
@@ -193,6 +195,46 @@ def test_multi_revolution_reconstruction_stops_after_complete_good_track() -> No
     assert len(track.sectors) == 1
     assert track.sectors[0].crc_ok is True
     assert decoder.calls == [0]
+
+
+def test_reconstruction_reports_revolution_and_decoder_boundaries() -> None:
+    data_bytes = bytes(range(128))
+    good_bits = _build_mfm_sector_bits(0, 0, 1, 0, data_bytes)
+    decoder = _SequenceDecoder({0: Bitstream(bits=good_bits, metrics=BitDecodeMetrics(confidence=0.9), source_revs=[0])})
+    events: list[tuple[str, int, int]] = []
+    operation = OperationContext(Event(), lambda stage, current, total: events.append((stage, current, total)))
+
+    track = build_track_sectors_from_revolutions(
+        [RevolutionFlux(index=0, interval_ns=[1])],
+        decoder,
+        cylinder=0,
+        head=0,
+        expected_sectors=1,
+        encoding="mfm",
+        operation=operation,
+    )
+
+    assert track.sectors[0].crc_ok is True
+    assert [stage for stage, _, _ in events] == [
+        "revolution",
+        "candidate decoder",
+        "candidate reconstruction",
+    ]
+
+
+def test_reconstruction_raises_at_cancellation_checkpoint() -> None:
+    cancel = Event()
+    cancel.set()
+    operation = OperationContext(cancel)
+
+    with pytest.raises(OperationCancelled):
+        build_track_sectors_from_revolutions(
+            [RevolutionFlux(index=0, interval_ns=[1])],
+            _SequenceDecoder({}),
+            expected_sectors=1,
+            encoding="mfm",
+            operation=operation,
+        )
 
 
 def test_bad_header_crc_still_yields_sector_with_valid_data() -> None:

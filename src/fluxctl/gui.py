@@ -48,6 +48,7 @@ from .application.report_operations import (
     build_qc_for_image,
     export_disk_map_svg,
     export_qc_json,
+    sector_diagnostic_for_image,
 )
 from .application.recovery_operations import recover_image
 from .gui_pages import AdvancedPageController, FilesPageController, HexPageController, JobsPageController, MainPageController
@@ -330,6 +331,7 @@ class FluxctlStudio(QMainWindow):
             actions.addWidget(button)
         self.map_widget = DiskMapWidget()
         self.map_widget.sectorClicked.connect(self.load_sector_hex_from_map)
+        self.map_widget.sectorDiagnosticRequested.connect(self.show_sector_diagnostic_from_map)
         self.file_path_label = QLabel("/")
         self.file_path_label.setObjectName("filePath")
         self.file_path_label.setWordWrap(True)
@@ -1511,7 +1513,7 @@ class FluxctlStudio(QMainWindow):
         assert self.current_path is not None
         layout = self._selected_layout() or None
         encoding = self._selected_encoding()
-        self._run_job("qc", lambda: build_qc_for_image(self.current_path, layout, encoding), self._show_qc)
+        self._run_job("qc", lambda operation: build_qc_for_image(self.current_path, layout, encoding, operation), self._show_qc)
 
     def _show_qc(self, report: object) -> None:
         self.summary_labels["status"].setText(report.status)
@@ -1536,7 +1538,7 @@ class FluxctlStudio(QMainWindow):
         map_view = self._selected_map_view()
         self._run_job(
             "map",
-            lambda: build_disk_map_for_image(self.current_path, layout, encoding, map_view),
+            lambda operation: build_disk_map_for_image(self.current_path, layout, encoding, map_view, operation),
             self._show_map,
         )
 
@@ -2070,6 +2072,35 @@ class FluxctlStudio(QMainWindow):
                 input_widget.blockSignals(False)
         self.view_sector_hex()
 
+    def show_sector_diagnostic_from_map(self, track: int, head: int, sector: int) -> None:
+        """Open read-only preservation diagnostics for a double-clicked sector."""
+
+        if self.current_path is None:
+            return
+        layout = self._selected_layout() or None
+        encoding = self._selected_encoding()
+        self._run_job(
+            f"sector diagnostics {track}:{head}:{sector}",
+            lambda: sector_diagnostic_for_image(
+                self.current_path, layout, encoding, track, head, sector
+            ),
+            self._show_sector_diagnostic,
+        )
+
+    def _show_sector_diagnostic(self, diagnostic: object) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Sector preservation diagnostics")
+        dialog.resize(900, 700)
+        layout = QVBoxLayout(dialog)
+        text = QTextEdit()
+        text.setReadOnly(True)
+        text.setPlainText(diagnostic.to_text())
+        layout.addWidget(text)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+        dialog.exec()
+
     def _show_hex_dump(self, dump: object) -> None:
         if self.mode.currentIndex() == 1:
             self._show_advanced_hex_dump(dump)
@@ -2556,7 +2587,7 @@ class FluxctlStudio(QMainWindow):
         manifest = output.with_suffix(output.suffix + ".recovery.json")
         self._run_job(
             f"recover {self.current_path.name} ({policy})",
-            lambda: recover_image(
+            lambda operation: recover_image(
                 self.current_path,
                 output,
                 manifest,
@@ -2564,6 +2595,7 @@ class FluxctlStudio(QMainWindow):
                 self._selected_encoding(),
                 policy,
                 exporter,
+                operation=operation,
             ),
             self._show_recovery_result,
         )
