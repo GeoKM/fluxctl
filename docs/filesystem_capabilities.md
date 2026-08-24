@@ -12,6 +12,10 @@ document includes every current blank-image preset and the major media families;
 format-specific behavior remains deliberately explicit below rather than being
 inferred from filenames.
 
+The machine-readable source of truth is the [capability registry](capability_registry.md),
+generated from `src/fluxctl/capabilities.py`. The GUI action states and generated
+registry table use the same declarations.
+
 | Filesystem | Detect | List files | Extract/export files | Directory traversal | Copy-only mutation | Main limitations |
 | --- | --- | --- | --- | --- | --- | --- |
 | FAT12 | Yes | Yes | Yes | Yes | Yes for flat `.img` | Uses 8.3 ASCII names for import/create. Delete supports files and empty directories. Replacement/import/write actions currently require flat `.img` containers. |
