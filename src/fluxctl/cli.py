@@ -72,15 +72,46 @@ from .native import (
 APP_HELP = """Inspect, verify, recover, and convert floppy flux captures.
 
 \b
-Typical workflows:
+Human-readable workflows:
+
   fluxctl doctor
+
   fluxctl probe disk.scp
-  fluxctl qc disk.scp --layout ibm_mfm_720k --json-out qc.json
-  fluxctl recover disk.scp --layout ibm_mfm_720k --policy strict-crc --out repaired.img
+
+  fluxctl qc disk.scp --layout ibm_mfm_720k
+
+  fluxctl recover disk.scp --layout ibm_mfm_720k --policy strict-crc \\
+      --out repaired.img
+
   fluxctl convert disk.scp --layout ibm_mfm_720k --to raw --out disk.img
+
   fluxctl roundtrip disk.scp --layout amiga_mfm_880k --to adf
-  fluxctl synthesize-scp disk.img --format ibm.720 --out disk.scp
+
   fluxctl extract disk.img --list
+
+Hardware workflows:
+
+  fluxctl synthesize-scp disk.img --format ibm.720 --out disk.scp
+
+  fluxctl write disk.img --format ibm.720 --layout ibm_mfm_720k \\
+      --readback-out disk-readback.scp --confirm-write
+
+Machine-readable reports:
+
+  fluxctl doctor --json
+
+  fluxctl qc disk.scp --layout ibm_mfm_720k --json-out qc.json
+
+  fluxctl compare before.img after.img --json-out diff.json
+
+  fluxctl roundtrip disk.scp --layout amiga_mfm_880k --to adf \\
+      --json-out roundtrip.json
+
+  fluxctl recover disk.scp --layout ibm_mfm_720k --policy best-effort \\
+      --out repaired.img --manifest recovery.json
+
+Conversion and extraction commands print human-readable status by default;
+their structured reports are written with the command-specific JSON options.
 
 \b
 Use `fluxctl COMMAND --help` for command-specific examples.

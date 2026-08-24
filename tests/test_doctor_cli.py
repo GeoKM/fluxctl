@@ -151,6 +151,9 @@ def test_top_level_help_guides_real_workflows() -> None:
     assert "Inspect, verify, recover, and convert floppy flux captures" in result.output
     assert "fluxctl doctor" in result.output
     assert "fluxctl convert disk.scp" in result.output
+    assert "Human-readable workflows:" in result.output
+    assert "Machine-readable reports:" in result.output
+    assert "--json-out qc.json" in result.output
     assert "doctor" in result.output
 
 
