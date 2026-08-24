@@ -232,8 +232,8 @@ step, not the raw container bytes.
 | --- | --- | --- |
 | SCP to emulator image | `fluxctl roundtrip source.scp --layout amiga_mfm_880k --to adf --json-out roundtrip.json` | Forward and round-trip checks both report `MATCH`. |
 | Flat image through raw | `fluxctl roundtrip source.adf --to raw --back-to adf --work-dir scratch` | The final decoded hash matches the original. |
-| Future SCP export | `fluxctl roundtrip source.adf --to scp --back-to adf` | Once SCP export exists, the generated SCP should decode back to the same sector image. |
-| Future raw-to-SCP export | `fluxctl roundtrip source.img --layout ibm_mfm_720k --to scp --back-to raw` | Once SCP export exists, the generated SCP should decode back to the same raw sector bytes. |
+| Sector image to synthesized SCP | `fluxctl synthesize-scp source.img --format ibm.720 --out generated.scp`, then `fluxctl compare source.img generated.scp --layout-a ibm_mfm_720k --layout-b ibm_mfm_720k` | The generated SCP decodes to matching sector data. It is calibrated logical flux, not original preservation flux. |
+| Verified physical write | `fluxctl write source.img --format ibm.720 --layout ibm_mfm_720k --readback-out readback.scp --confirm-write` | Greaseweazle write verification succeeds, the retained raw SCP read-back compares as a match, and the JSON manifest includes hashes, commands, and both tool outputs. |
 
 Round-trip JSON reports also contain separate `data_equivalence`,
 `logical_geometry_equivalence`, and `preservation_equivalence` results. Check

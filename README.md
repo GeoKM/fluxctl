@@ -117,9 +117,18 @@ fluxctl roundtrip disk.adf --to raw --back-to adf --work-dir /tmp/fluxctl-roundt
 fluxctl recover damaged.scp --layout ibm_mfm_720k --policy strict-crc \
   --out damaged-recovered.img
 
-# Planned once SCP export exists:
-# fluxctl roundtrip disk.adf --to scp --back-to adf
-# fluxctl roundtrip disk.img --layout ibm_mfm_720k --to scp --back-to raw
+# Generate a calibrated SCP via Greaseweazle's selected format encoder. This
+# is useful for hardware writing and sector-level round-trip checking, but it
+# cannot recreate the original capture's analogue timing or protection data.
+fluxctl synthesize-scp disk.img --format ibm.720 --out disk-synthesized.scp
+fluxctl compare disk.img disk-synthesized.scp \
+  --layout-a ibm_mfm_720k --layout-b ibm_mfm_720k
+
+# Destructive hardware write: Greaseweazle verifies the write, Fluxctl then
+# captures a new raw SCP and compares decoded sectors. Source images are never
+# modified and the JSON manifest records both commands and results.
+fluxctl write disk.img --format ibm.720 --layout ibm_mfm_720k \
+  --readback-out disk-readback.scp --confirm-write
 
 # Quality reports and maps
 fluxctl qc disk.scp --json-out qc.json
@@ -293,6 +302,26 @@ Steps:
    .venv/bin/pip install -e ../greaseweazle
    ```
 No configuration is required; fluxctl will auto-detect the import at runtime when present.
+
+### Greaseweazle synthesis and verified disk writing
+
+With the `gw` command available, `fluxctl synthesize-scp` creates a new SCP
+using Greaseweazle's selected disk format encoder. This is **calibrated logical
+flux**, not a preservation-grade recreation of a capture: it cannot retain weak
+bits, original timing variation, non-standard gaps, or copy protection.
+
+`fluxctl write` is deliberately destructive and requires `--confirm-write`.
+It leaves Greaseweazle's own verification enabled, then performs a separate raw
+SCP read-back for the requested number of revolutions and compares decoded
+sector data using the supplied Fluxctl `--layout`. It retains the read-back SCP
+and a JSON manifest containing hashes, commands, Greaseweazle output, and the
+comparison result. Use a specific Greaseweazle `--format`; format-free writes
+are refused.
+
+Fluxctl Studio exposes the same flow in the **Hardware** panel. Load and probe
+an image, select a Greaseweazle format, then use **Synthesize SCP...** or
+**Write Disk...**. Writing requires typing `WRITE` and choosing a read-back SCP
+destination.
 
 ### HxC Floppy Emulator (hxcfe) hints / conversions
 HxCFE can provide layout hints and ADF conversions for Amiga and other formats.

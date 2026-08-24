@@ -1837,6 +1837,34 @@ def read_disk_with_greaseweazle(
     return operation(output, drive=drive, gw_format=gw_format, tracks=tracks, revs=revs, overwrite=overwrite)
 
 
+def synthesize_scp_with_greaseweazle(
+    source: Path,
+    output: Path,
+    *,
+    gw_format: str,
+    tracks: str = "",
+    overwrite: bool = False,
+):
+    """Generate a calibrated SCP through the shared hardware operation."""
+
+    from .application.hardware_operations import synthesize_scp_with_greaseweazle as operation
+
+    return operation(source, output, gw_format=gw_format, tracks=tracks, overwrite=overwrite)
+
+
+def write_and_verify_with_greaseweazle(
+    source: Path,
+    readback: Path,
+    manifest: Path,
+    **kwargs,
+):
+    """Write and independently verify media through the shared operation."""
+
+    from .application.hardware_operations import write_and_verify_with_greaseweazle as operation
+
+    return operation(source, readback, manifest, **kwargs)
+
+
 def provenance_json(path: Path) -> dict:
     """Load a provenance sidecar for display."""
 

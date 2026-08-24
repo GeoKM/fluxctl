@@ -12,7 +12,13 @@ from .application.conversion_operations import convert_image, roundtrip_image
 from .application.conversion_planner import ConversionContext, available_conversion_plans, plan_conversion
 from .application.diagnostic_operations import summarize_image
 from .application.diagnostic_operations import doctor_report, provenance_json
-from .application.hardware_operations import greaseweazle_formats, greaseweazle_status, read_disk_with_greaseweazle
+from .application.hardware_operations import (
+    greaseweazle_formats,
+    greaseweazle_status,
+    read_disk_with_greaseweazle,
+    synthesize_scp_with_greaseweazle,
+    write_and_verify_with_greaseweazle,
+)
 from .capabilities import WRITE_ACTIONS_SUPPORT_SUMMARY, filesystem_capability
 from .application.image_creation_operations import blank_image_presets, create_blank_image
 from .application.layout_operations import load_layout_options
@@ -285,11 +291,10 @@ class FluxctlStudio(QMainWindow):
         self.greaseweazle_revs_input.setPlaceholderText("Revs, default")
         self.greaseweazle_read_button = QPushButton("Read Disk...")
         self.greaseweazle_read_button.clicked.connect(self.read_disk_with_greaseweazle_dialog)
+        self.greaseweazle_synthesize_button = QPushButton("Synthesize SCP...")
+        self.greaseweazle_synthesize_button.clicked.connect(self.synthesize_scp_with_greaseweazle_dialog)
         self.greaseweazle_write_button = QPushButton("Write Disk...")
-        self.greaseweazle_write_button.setEnabled(False)
-        self.greaseweazle_write_button.setToolTip(
-            "Write-to-disk is not enabled yet. It needs destructive confirmation and read-back verification."
-        )
+        self.greaseweazle_write_button.clicked.connect(self.write_disk_with_greaseweazle_dialog)
 
         layout.addWidget(title)
         layout.addWidget(self.greaseweazle_status_label)
@@ -299,6 +304,7 @@ class FluxctlStudio(QMainWindow):
         layout.addWidget(self.greaseweazle_tracks_input)
         layout.addWidget(self.greaseweazle_revs_input)
         layout.addWidget(self.greaseweazle_read_button)
+        layout.addWidget(self.greaseweazle_synthesize_button)
         layout.addWidget(self.greaseweazle_write_button)
         return section
 
@@ -887,9 +893,19 @@ class FluxctlStudio(QMainWindow):
             widget.setToolTip(tooltip)
             if widget is not self.greaseweazle_status_label:
                 widget.setEnabled(status.available)
-        self.greaseweazle_write_button.setEnabled(False)
+        synthesize_available = status.available and self.current_path is not None
+        self.greaseweazle_synthesize_button.setEnabled(synthesize_available)
+        self.greaseweazle_synthesize_button.setToolTip(
+            "Generate calibrated logical flux in a new SCP file; it is not an original preservation capture."
+            if synthesize_available
+            else "Load an image and install Greaseweazle before synthesizing an SCP file."
+        )
+        write_available = status.available and self.current_path is not None
+        self.greaseweazle_write_button.setEnabled(write_available)
         self.greaseweazle_write_button.setToolTip(
-            "Write-to-disk is not enabled yet. It needs destructive confirmation and read-back verification."
+            "Writes the loaded image, retains a raw SCP read-back, and compares decoded sectors."
+            if write_available
+            else "Load an image and install Greaseweazle before writing a physical disk."
         )
 
     def _refresh_greaseweazle_format_combo(self) -> None:
@@ -973,6 +989,120 @@ class FluxctlStudio(QMainWindow):
             self._show_greaseweazle_read_result,
         )
 
+    def write_disk_with_greaseweazle_dialog(self) -> None:
+        """Write the loaded image only after typed acknowledgement.
+
+        The operation itself keeps Greaseweazle verification enabled and also
+        captures a raw SCP read-back for Fluxctl's independent comparison.
+        """
+
+        if not self._require_image() or not self.greaseweazle_status.available:
+            return
+        assert self.current_path is not None
+        selected_data = self.greaseweazle_format_combo.currentData()
+        gw_format = str(selected_data or self.greaseweazle_format_combo.currentText()).strip()
+        if not gw_format or gw_format == "Auto / no format":
+            self._warn("Select a Greaseweazle format before writing so both write and read-back can be verified.")
+            return
+        layout = self._selected_layout()
+        if not layout:
+            self._warn("Probe the loaded image or select a Fluxctl layout before writing.")
+            return
+        phrase, accepted = QInputDialog.getText(
+            self,
+            "Write Physical Disk",
+            "This permanently overwrites the disk in the selected drive.\n"
+            "Greaseweazle verification and a separate SCP read-back will run.\n\n"
+            "Type WRITE to continue:",
+        )
+        if not accepted or phrase.strip() != "WRITE":
+            self.activity_label.setText("Physical disk write cancelled.")
+            return
+        default_name = self._hardware_default_directory() / f"{self.current_path.stem}-readback.scp"
+        output_name, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save independent SCP read-back",
+            str(default_name),
+            "SuperCard Pro flux (*.scp);;All files (*)",
+        )
+        if not output_name:
+            return
+        readback = Path(output_name)
+        if readback.suffix == "":
+            readback = readback.with_suffix(".scp")
+        if not readback.is_absolute():
+            readback = self._hardware_default_directory() / readback
+        manifest = readback.with_suffix(readback.suffix + ".write-verify.json")
+        overwrite = readback.exists() or manifest.exists()
+        if overwrite and not self._confirm_overwrite_output(readback if readback.exists() else manifest):
+            return
+        try:
+            revs = self._selected_greaseweazle_revs() or 3
+        except ValueError as exc:
+            self._warn(str(exc))
+            return
+        drive = str(self.greaseweazle_drive_combo.currentData() or "A")
+        tracks = self.greaseweazle_tracks_input.text().strip()
+        encoding = self._selected_encoding()
+        self._run_job(
+            f"greaseweazle write {drive}",
+            lambda: write_and_verify_with_greaseweazle(
+                self.current_path,
+                readback,
+                manifest,
+                drive=drive,
+                gw_format=gw_format,
+                layout=layout,
+                encoding=encoding,
+                tracks=tracks,
+                readback_revs=revs,
+                overwrite=overwrite,
+                confirmed=True,
+            ),
+            self._show_greaseweazle_write_result,
+        )
+
+    def synthesize_scp_with_greaseweazle_dialog(self) -> None:
+        """Create a new calibrated SCP from the current logical sector image."""
+
+        if not self._require_image() or not self.greaseweazle_status.available:
+            return
+        assert self.current_path is not None
+        selected_data = self.greaseweazle_format_combo.currentData()
+        gw_format = str(selected_data or self.greaseweazle_format_combo.currentText()).strip()
+        if not gw_format or gw_format == "Auto / no format":
+            self._warn("Select a Greaseweazle format before synthesizing an SCP image.")
+            return
+        default_name = self.current_path.with_name(f"{self.current_path.stem}-synthesized.scp")
+        output_name, _ = QFileDialog.getSaveFileName(
+            self,
+            "Synthesize calibrated SCP",
+            str(default_name),
+            "SuperCard Pro flux (*.scp);;All files (*)",
+        )
+        if not output_name:
+            return
+        output = Path(output_name)
+        if output.suffix == "":
+            output = output.with_suffix(".scp")
+        if not output.is_absolute():
+            output = self.current_path.parent / output
+        overwrite = output.exists()
+        if overwrite and not self._confirm_overwrite_output(output):
+            return
+        tracks = self.greaseweazle_tracks_input.text().strip()
+        self._run_job(
+            "greaseweazle synthesize SCP",
+            lambda: synthesize_scp_with_greaseweazle(
+                self.current_path,
+                output,
+                gw_format=gw_format,
+                tracks=tracks,
+                overwrite=overwrite,
+            ),
+            self._show_greaseweazle_synthesis_result,
+        )
+
     def _show_greaseweazle_read_result(self, result: object) -> None:
         output = Path(result.path)
         self.current_path = output
@@ -986,6 +1116,42 @@ class FluxctlStudio(QMainWindow):
             self._append_log(result.stderr.strip())
         self._show_jobs_tab()
         self.run_probe()
+
+    def _show_greaseweazle_write_result(self, result: object) -> None:
+        self._append_log(f"$ {result.write_command_display}")
+        if result.write_stdout:
+            self._append_log(result.write_stdout.strip())
+        if result.write_stderr:
+            self._append_log(result.write_stderr.strip())
+        self._append_log(f"$ {result.read_command_display}")
+        if result.read_stdout:
+            self._append_log(result.read_stdout.strip())
+        if result.read_stderr:
+            self._append_log(result.read_stderr.strip())
+        self._append_log(json.dumps(result.comparison, indent=2))
+        if result.comparison.get("identical"):
+            self.activity_label.setText(
+                "Disk write and independent read-back match. "
+                f"Read-back: {result.readback_path}; manifest: {result.manifest_path}"
+            )
+        else:
+            self.summary_labels["status"].setText("error")
+            self.activity_label.setText(
+                "Disk write completed but independent read-back differs. "
+                f"Inspect Jobs and {result.manifest_path}."
+            )
+        self._show_jobs_tab()
+
+    def _show_greaseweazle_synthesis_result(self, result: object) -> None:
+        self._append_log(f"$ {result.command_display}")
+        if result.stdout:
+            self._append_log(result.stdout.strip())
+        if result.stderr:
+            self._append_log(result.stderr.strip())
+        self.activity_label.setText(
+            f"Synthesized calibrated SCP at {result.path}. It is not an original preservation capture."
+        )
+        self._show_jobs_tab()
 
     def _show_blank_image_result(self, result: object) -> None:
         self.current_path = Path(result.path)
@@ -1016,6 +1182,7 @@ class FluxctlStudio(QMainWindow):
         self.summary_labels["size"].setText("-")
         self.activity_label.setText("Ready")
         self._update_filesystem_write_actions()
+        self._update_hardware_controls()
         self._update_advanced_context()
 
     def run_doctor(self) -> None:
@@ -1061,6 +1228,7 @@ class FluxctlStudio(QMainWindow):
         self.activity_label.setText(activity)
         self._append_log(json.dumps(summary.__dict__, indent=2))
         self._update_filesystem_write_actions()
+        self._update_hardware_controls()
         self._update_advanced_context()
         self.run_map()
 
