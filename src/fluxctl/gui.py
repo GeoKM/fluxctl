@@ -13,6 +13,7 @@ from .application.conversion_planner import ConversionContext, available_convers
 from .application.diagnostic_operations import summarize_image
 from .application.diagnostic_operations import doctor_report, provenance_json
 from .application.hardware_operations import greaseweazle_formats, greaseweazle_status, read_disk_with_greaseweazle
+from .capabilities import WRITE_ACTIONS_SUPPORT_SUMMARY, filesystem_capability
 from .application.image_creation_operations import blank_image_presets, create_blank_image
 from .application.layout_operations import load_layout_options
 from .application.models import FileListView, HexDumpView
@@ -1306,56 +1307,29 @@ class FluxctlStudio(QMainWindow):
         default = {button: (False, closed_reason) for button in self._filesystem_write_buttons()}
         if self.current_path is None or self.current_summary is None:
             return default
-        suffix = self.current_path.suffix.lower()
+        suffix = self.current_path.suffix.lower().lstrip(".")
         filesystem = self.current_summary.filesystem or "unknown"
-        if suffix == ".img" and filesystem == "fat12":
-            reason = "Available for FAT12 flat .img images. Operations write a new image copy."
-            return {button: (True, reason) for button in self._filesystem_write_buttons()}
-        if suffix == ".img" and filesystem == "cpm":
-            reason = (
-                "Available for modelled CP/M flat .img images. File import and delete write a new image copy. "
-                "Replace and directory actions are not implemented yet."
-            )
-            return {
-                self.file_replace_button: (False, reason),
-                self.file_delete_button: (True, reason),
-                self.file_import_button: (True, reason),
-                self.directory_import_button: (False, reason),
-                self.directory_create_button: (False, reason),
-            }
-        if suffix in {".d64", ".d71"} and filesystem in {"cbm_dos", "cbm_dos_1571"}:
-            unsupported = (
-                "This CBM DOS image supports root-level file import, replace, and delete in a new image copy. "
-                "Directory import and directory creation are not implemented yet."
-            )
-            return {
-                self.file_replace_button: (True, unsupported),
-                self.file_delete_button: (True, unsupported),
-                self.file_import_button: (
-                    True,
-                    "Available for CBM DOS .d64/.d71 root-level PRG import by default. .SEQ/.USR suffixes set the corresponding type; REL import requires side-sector support. The operation writes a new image copy.",
-                ),
-                self.directory_import_button: (False, unsupported),
-                self.directory_create_button: (False, unsupported),
-            }
-        if suffix == ".d81" and filesystem == "cbm_dos_1581":
-            reason = "Available for CBM DOS 1581 .d81 images. Operations write a new image copy."
-            return {
-                self.file_replace_button: (True, reason),
-                self.file_delete_button: (True, reason),
-                self.file_import_button: (
-                    True,
-                    "Available for CBM DOS 1581 .d81 PRG import by default. .SEQ/.USR suffixes set the corresponding type; REL import requires side-sector support. The operation writes a new image copy.",
-                ),
-                self.directory_import_button: (True, reason),
-                self.directory_create_button: (True, reason),
-            }
-        if suffix not in {".img", ".d64", ".d71", ".d81"}:
-            reason = "Write actions currently support FAT12 .img, modelled CP/M .img, and CBM DOS .d64/.d71/.d81 images only."
-        else:
-            filesystem = self.current_summary.filesystem or "unknown"
+        capability = filesystem_capability(filesystem, suffix)
+        if capability is None:
             reason = f"Write actions are not available for filesystem {filesystem} in this container yet."
-        return {button: (False, reason) for button in self._filesystem_write_buttons()}
+            return {button: (False, reason) for button in self._filesystem_write_buttons()}
+        reason = f"{capability.label}: {capability.limitations} {WRITE_ACTIONS_SUPPORT_SUMMARY}"
+        actions = {
+            self.file_replace_button: "replace_file",
+            self.file_delete_button: "delete_entry",
+            self.file_import_button: "import_file",
+            self.directory_import_button: "import_directory",
+            self.directory_create_button: "create_directory",
+        }
+        return {
+            button: (
+                action in capability.mutation_actions,
+                f"{capability.reason_for(action)} Operations write a new image copy."
+                if action in capability.mutation_actions
+                else f"{capability.label}: {capability.limitations} {WRITE_ACTIONS_SUPPORT_SUMMARY}",
+            )
+            for button, action in actions.items()
+        }
 
     def _update_filesystem_write_actions(self) -> None:
         support = self._filesystem_write_action_support()
