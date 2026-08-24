@@ -58,10 +58,10 @@ class FileEntry:
 class RawSectorImage:
     """Sector access wrapper for flat disk images."""
 
-    def __init__(self, data: bytes, bytes_per_sector: int = 512):
+    def __init__(self, data: bytes, bytes_per_sector: Optional[int] = 512):
         self.data = data
-        self.bytes_per_sector = bytes_per_sector
-        self.total_sectors = len(data) // bytes_per_sector if bytes_per_sector else 0
+        self.bytes_per_sector = bytes_per_sector or 512
+        self.total_sectors = len(data) // self.bytes_per_sector
 
     def read_sector(self, lba: int, count: int = 1) -> bytes:
         start = lba * self.bytes_per_sector

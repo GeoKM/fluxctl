@@ -72,6 +72,74 @@ def test_raw_export_cli(tmp_path, img_fixture: Path) -> None:
     assert provenance["output_sha256"] == hashlib.sha256(out_path.read_bytes()).hexdigest()
 
 
+def test_native_scp_convert_and_roundtrip_cli(tmp_path: Path, img_fixture: Path) -> None:
+    scp_path = tmp_path / "disk.scp"
+    converted = runner.invoke(
+        app,
+        [
+            "convert",
+            str(img_fixture),
+            "--layout",
+            "ibm_mfm_720k",
+            "--to",
+            "scp",
+            "--out",
+            str(scp_path),
+        ],
+    )
+    assert converted.exit_code == 0, converted.output
+    assert scp_path.read_bytes().startswith(b"SCP")
+    assert "logically-equivalent" in converted.output
+
+    roundtrip_dir = tmp_path / "roundtrip"
+    checked = runner.invoke(
+        app,
+        [
+            "roundtrip",
+            str(img_fixture),
+            "--layout",
+            "ibm_mfm_720k",
+            "--to",
+            "scp",
+            "--back-to",
+            "raw",
+            "--work-dir",
+            str(roundtrip_dir),
+        ],
+    )
+    assert checked.exit_code == 0, checked.output
+    assert "Round-trip check: MATCH" in checked.output
+    assert "Logical geometry equivalence: MATCH" in checked.output
+
+
+def test_d71_roundtrip_through_scp_ignores_container_track_order(tmp_path: Path) -> None:
+    fixture = Path(
+        "tests/fixtures/5.25inch/Commodore/"
+        "Commodore-1571-DSDD-GCR-C128-341K.d71"
+    )
+    report_path = tmp_path / "roundtrip.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "roundtrip",
+            str(fixture),
+            "--to",
+            "scp",
+            "--back-to",
+            "d71",
+            "--json-out",
+            str(report_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Logical geometry equivalence: MATCH" in result.output
+    report = json.loads(report_path.read_text())
+    assert report["logical_geometry_equivalence"]["track_head_identity_match"] is True
+    assert report["logical_geometry_equivalence"]["sector_order_match"] is True
+
+
 def test_raw_export_from_scp_respects_layout_bounds(tmp_path: Path, img_fixture: Path) -> None:
     scp_fixture = Path("tests/fixtures/3.5inch/IBM/IBM-Generic-DSDD-MFM-IBMPC-720K.scp")
     out_path = tmp_path / "from_scp.img"

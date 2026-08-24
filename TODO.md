@@ -2,16 +2,6 @@
 
 ## Conversion Fidelity
 
-- Add a native SCP exporter to the normal conversion pipeline. Fluxctl already
-  provides Greaseweazle-backed `synthesize-scp` output and verified hardware
-  read-back, but sector images cannot yet use `convert --to scp` or the normal
-  exporter path. The native exporter should support round-trip validation such as
-  `fluxctl roundtrip disk.adf --to scp --back-to adf` and
-  `fluxctl roundtrip disk.img --layout ibm_mfm_720k --to scp --back-to raw`,
-  plus Commodore 1581 validation such as
-  `fluxctl roundtrip disk.d81 --to scp --back-to raw`.
-  The success criterion is decoded sector equality, not byte-identical flux
-  timing compared with an original hardware capture.
 - Complete the remaining copy-only manipulation paths for `.imd` and decoded
   `.scp` workflows, including clear GUI gating when a filesystem is writable
   but the current image container cannot preserve or rewrite the required

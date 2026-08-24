@@ -72,7 +72,8 @@ python3 scripts/install_fluxctl.py
 - **qc**: generate quality control reports (JSON or text).
 - **visualize**: render ASCII or SVG disk maps.
 - **extract**: detect filesystems and extract files or raw sectors.
-- **convert**: export to raw, IMD, ADF, D64, D71, D81, G64, and Apple II PO/DO images.
+- **convert**: export to raw, IMD, ADF, D64, D71, D81, G64, Apple II PO/DO,
+  and deterministic synthetic SCP images.
 - **sectors/dump/patch**: per-track listing, hex dump, and simple patching helpers.
 - **studio**: optional desktop GUI for guided and advanced workflows.
 
@@ -170,6 +171,10 @@ fluxctl convert c128.scp --to d71 --out disk.d71 --layout commodore_gcr_1571_341
 fluxctl convert 1581.scp --to d81 --out disk.d81 --layout commodore_mfm_1581_800k
 fluxctl convert disk.d81 --to raw --out disk.img
 fluxctl convert disk.img --to raw --out copy.img
+fluxctl convert disk.adf --to scp --out disk.scp
+fluxctl convert disk.img --layout ibm_mfm_720k --to scp --out disk.scp
+fluxctl roundtrip disk.adf --to scp --back-to adf
+fluxctl roundtrip disk.img --layout ibm_mfm_720k --to scp --back-to raw
 
 fluxctl extract disk.img --list
 fluxctl extract disk.img --path FILE.TXT --out output.bin
@@ -266,6 +271,17 @@ For SCP inputs, `convert` auto-detects the likely layout when `--layout` is not
 provided. Pass `--layout` when you want to force a specific interpretation or
 when a damaged/ambiguous capture cannot be identified confidently.
 
+Native `convert --to scp` uses the same compatibility planner as Studio. It
+supports standard IBM-style FM/MFM, native Amiga MFM, Commodore GCR, and Apple
+II 16-sector 6-and-2 GCR layouts. Dedicated containers such as ADF, D64, D71,
+and D81 resolve their layouts automatically; ambiguous flat IMG files require
+`--layout`. The result is deterministic logical flux suitable for conversion,
+round-trip testing, emulation, and supported hardware-writing workflows. It is
+not a preservation substitute for an original capture: analogue timing,
+write-splice placement, weak bits, and protection-specific patterns are not
+recreated. Specialised hard-sector, XDF, RX02, MMFM, and unsupported mixed-track
+formats are rejected instead of being encoded with an incorrect generic track.
+
 File replacement is intentionally conservative. Studio always writes a new
 image copy instead of modifying the original image. Current replacement support
 includes FAT12 files in flat `.img` images, root-level CBM DOS files in `.d64`
@@ -344,6 +360,12 @@ With the `gw` command available, `fluxctl synthesize-scp` creates a new SCP
 using Greaseweazle's selected disk format encoder. This is **calibrated logical
 flux**, not a preservation-grade recreation of a capture: it cannot retain weak
 bits, original timing variation, non-standard gaps, or copy protection.
+
+This Greaseweazle-backed command remains useful when its current disk-definition
+catalog has a specialised encoder. The self-contained `fluxctl convert --to
+scp` path instead uses Fluxctl's native exporter and participates directly in
+the standard compatibility planner, provenance, atomic-output, and `roundtrip`
+workflows.
 
 `fluxctl write` is deliberately destructive and requires `--confirm-write`.
 It leaves Greaseweazle's own verification enabled, then performs a separate raw
