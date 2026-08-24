@@ -94,11 +94,35 @@ python3 scripts/install_fluxctl.py
   limitations.
 
 ## Usage examples
+
+### Human-readable inspection
+
 ```bash
-# Quick identification
 fluxctl doctor
 fluxctl info disk.scp
 fluxctl probe disk.scp
+fluxctl qc disk.scp --layout ibm_mfm_720k
+fluxctl extract disk.img --list
+```
+
+### Machine-readable reports
+
+Use explicit JSON options when the result will be consumed by another program
+or retained as a regression artifact:
+
+```bash
+fluxctl doctor --json
+fluxctl qc disk.scp --layout ibm_mfm_720k --json-out qc.json
+fluxctl compare before.img after.img --json-out diff.json
+fluxctl roundtrip disk.scp --layout amiga_mfm_880k --to adf \\
+  --json-out roundtrip.json
+fluxctl recover disk.scp --layout ibm_mfm_720k --policy best-effort \\
+  --out repaired.img --manifest recovery.json
+```
+
+### Comparison, recovery, and conversion
+
+```bash
 
 # Compare two images (SCP decoded on the fly)
 fluxctl compare a.scp b.img --json-out diff.json
@@ -147,11 +171,14 @@ fluxctl convert 1581.scp --to d81 --out disk.d81 --layout commodore_mfm_1581_800
 fluxctl convert disk.d81 --to raw --out disk.img
 fluxctl convert disk.img --to raw --out copy.img
 
-# Extraction
 fluxctl extract disk.img --list
 fluxctl extract disk.img --path FILE.TXT --out output.bin
 fluxctl extract disk.scp --layout ibm_mfm_720k --path README.TXT --out readme.bin
+```
 
+### Sector inspection and patching
+
+```bash
 # Per-track inspection
 fluxctl sectors disk.scp --track 0 --head 0 --encoding mfm
 fluxctl dump disk.scp --layout ibm_mfm_720k --track 0 --side 0 --sector 1
@@ -222,9 +249,10 @@ Install the GUI dependency and launch it:
 .venv/bin/fluxctl-studio
 ```
 
-The GUI uses the same fluxctl package and CLI command paths as terminal
-workflows. Outputs such as converted images, QC reports, and provenance sidecars
-therefore follow the same behavior documented above.
+Studio calls the shared fluxctl application and domain operations directly; it
+does not drive the CLI through subprocess command paths. This keeps the GUI and
+CLI on the same conversion, filesystem, output-safety, provenance, and recovery
+rules while allowing each frontend to present results in its own workflow.
 
 Long-running Studio operations are shown in the Jobs & Logs tab with an elapsed
 time indicator and a cancellation control. Cancellation is cooperative: an
@@ -238,21 +266,28 @@ For SCP inputs, `convert` auto-detects the likely layout when `--layout` is not
 provided. Pass `--layout` when you want to force a specific interpretation or
 when a damaged/ambiguous capture cannot be identified confidently.
 
-File replacement is intentionally conservative. Studio currently supports
-replacement for FAT12 files in flat `.img` images only, and always writes a new
-image copy instead of modifying the original image. FAT12 replacements may grow
-the selected file by allocating free clusters in the copied image. Replacement
-for other filesystems or image containers that would require format-specific
-sector rewrites is rejected until dedicated writers exist.
+File replacement is intentionally conservative. Studio always writes a new
+image copy instead of modifying the original image. Current replacement support
+includes FAT12 files in flat `.img` images, root-level CBM DOS files in `.d64`
+and `.d71`, nested CBM DOS 1581 files in `.d81`, and same-size Amiga OFS/FFS
+files in `.adf`. FAT12 replacements may grow the selected file by allocating
+free clusters; CBM and Amiga operations apply their format-specific allocation
+and metadata rules. Replacement for other filesystems or image containers that
+would require unsupported sector rewrites is rejected until a dedicated writer
+exists.
 
 Studio also supports FAT12 `.img` file manipulation into new image copies:
 delete a file or empty directory, import a file, recursively import a directory
 tree, and create an empty directory. FAT12 import and directory creation
 currently require 8.3-compatible ASCII names and reject overwriting existing
 entries.
-CBM DOS `.d64` and `.d71` images also support root-level PRG file import into a
-new image copy. CBM DOS import currently uses ASCII names up to 16 characters
-and does not overwrite existing entries.
+CBM DOS `.d64` and `.d71` images support root-level file import, replacement,
+and scratch/delete in a new image copy. Import uses ASCII names up to 16
+characters; `.PRG`, `.SEQ`, and `.USR` suffixes select the CBM file type and
+unknown suffixes default to PRG. REL mutation remains unavailable because it
+requires side-sector allocation. CBM DOS 1581 `.d81` additionally supports
+nested file operations, recursive directory import, directory creation, and
+empty-directory deletion.
 For CBM DOS sector hex and dump controls, Studio accepts Commodore logical track
 numbers: the 1541/1571 BAM is entered as track 18, head 0, sector 0.
 
