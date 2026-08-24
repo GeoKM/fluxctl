@@ -16,7 +16,7 @@ LOGICALLY_EQUIVALENT = "logically-equivalent"
 LOSSY_BUT_USEFUL = "lossy-but-useful"
 UNSUPPORTED = "unsupported"
 
-KNOWN_EXPORTERS = ("raw", "imd", "adf", "d64", "d71", "d81", "g64", "po", "do")
+KNOWN_EXPORTERS = ("raw", "imd", "adf", "d64", "d71", "d81", "g64", "po", "do", "scp")
 PHYSICAL_CONTAINERS = {"scp", "imd", "dsk", "dmk", "woz", "nib"}
 LOGICAL_CONTAINERS = {"img", "raw", "d64", "d71", "d81", "adf", "po", "do"}
 
@@ -132,6 +132,23 @@ def _plan_known_target(context: ConversionContext, target: str) -> tuple[bool, s
     source = context.source_kind
     warnings: list[str] = []
 
+    if target == "scp":
+        if not context.layout_id:
+            return False, "SCP synthesis requires an explicit or detected layout.", ()
+        if context.encoding not in {"fm", "mfm", "gcr", "apple2_gcr"}:
+            return False, f"SCP synthesis does not support {context.encoding or 'unknown'} encoding.", ()
+        if context.encoding == "gcr" and family not in {"commodore1541", "commodore1571"}:
+            return False, "SCP GCR synthesis currently supports Commodore GCR layouts only.", ()
+        unsupported_markers = (
+            "wang_", "hs32", "hard_sector", "displaywriter", "rx02", "xdf",
+            "cpmplus", "mmfm", "apple_gcr", "victor_", "northstar_",
+        )
+        if any(marker in context.layout_id.lower() for marker in unsupported_markers):
+            return False, "This layout needs a specialised physical track encoder before SCP export is safe.", ()
+        return True, "The resolved logical sectors can be encoded as deterministic synthetic SCP flux.", (
+            "Synthetic SCP preserves logical track structure, not original analogue timing, weak bits, write splices, or copy protection.",
+        )
+
     if target == "raw":
         if family == "unknown" and not context.layout_id:
             return True, "The source geometry is not identified; raw sector serialization is the only generic route.", ()
@@ -201,7 +218,9 @@ def plan_conversion(context: ConversionContext, target: str) -> ConversionPlan:
     if not allowed:
         return ConversionPlan(normalised, UNSUPPORTED, False, reason, warnings)
 
-    if normalised == context.source_kind or (normalised == "raw" and context.source_kind in {"img", "raw"}):
+    if normalised == "scp":
+        classification = LOSSY_BUT_USEFUL if context.source_kind == "scp" else LOGICALLY_EQUIVALENT
+    elif normalised == context.source_kind or (normalised == "raw" and context.source_kind in {"img", "raw"}):
         classification = SECTOR_LOSSLESS
     elif normalised == "imd" and _layout_family(context) == "amiga":
         classification = LOSSY_BUT_USEFUL

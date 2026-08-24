@@ -138,7 +138,9 @@ CONVERT_EXAMPLES = """Examples:
 
   fluxctl convert c128.scp --layout commodore_gcr_1571_341k --to d71 --out disk.d71
 
-  fluxctl convert 1581.scp --layout commodore_mfm_1581_800k --to d81 --out disk.d81"""
+  fluxctl convert 1581.scp --layout commodore_mfm_1581_800k --to d81 --out disk.d81
+
+  fluxctl convert disk.adf --layout amiga_mfm_880k --to scp --out disk.scp"""
 
 ROUNDTRIP_EXAMPLES = """Examples:
 
@@ -146,7 +148,9 @@ ROUNDTRIP_EXAMPLES = """Examples:
 
   fluxctl roundtrip disk.adf --to raw --back-to adf
 
-  fluxctl roundtrip disk.img --layout amiga_mfm_880k --to adf --back-to raw"""
+  fluxctl roundtrip disk.img --layout amiga_mfm_880k --to adf --back-to raw
+
+  fluxctl roundtrip disk.adf --layout amiga_mfm_880k --to scp --back-to adf"""
 
 HARDWARE_EXAMPLES = """Examples:
 
@@ -2391,7 +2395,7 @@ def visualize(
 @_handle_cli_errors
 def convert(
     path: Path = typer.Argument(..., exists=True, readable=True),
-    to: str = typer.Option(..., "--to", help="Exporter key (raw, imd, adf, d64, d71, d81, g64)"),
+    to: str = typer.Option(..., "--to", help="Exporter key (raw, imd, adf, d64, d71, d81, g64, po, do, scp)"),
     out: Path = typer.Option(..., "--out", help="Destination image path"),
     layout: Optional[str] = typer.Option(None, "--layout", help="Layout ID for SCP reconstruction or flat image geometry"),
     encoding: str = typer.Option("mfm", "--encoding", help="Bitstream encoding for SCP sources"),
@@ -2445,7 +2449,7 @@ def convert(
 @_handle_cli_errors
 def roundtrip(
     path: Path = typer.Argument(..., exists=True, readable=True),
-    to: str = typer.Option(..., "--to", help="First exporter key to test (raw, imd, adf, d64, d71, d81, g64)"),
+    to: str = typer.Option(..., "--to", help="First exporter key to test (raw, imd, adf, d64, d71, d81, g64, po, do, scp)"),
     back_to: Optional[str] = typer.Option(
         None,
         "--back-to",

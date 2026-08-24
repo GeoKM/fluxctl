@@ -5,7 +5,8 @@ fluxctl is organised around plugins:
 - **Sector reconstruction** turns bitstreams into sector models.
 - **Filesystems** interpret sector images (FAT12, Amiga OFS/FFS, CBM DOS,
   CP/M, Apple II, Tandy, RT-11, DisplayWriter, Seiko, and Wang readers).
-- **Exporters** serialise images (raw, IMD, ADF).
+- **Exporters** serialise logical and physical containers (raw, IMD, ADF,
+  Commodore D64/D71/D81/G64, Apple II PO/DO, and synthetic SCP).
 - **Reports** provide QC summaries and visual maps.
 
 CLI commands wire these layers together using Typer.
@@ -19,6 +20,15 @@ separates data, logical geometry, and preservation equivalence; the legacy
 decoded byte match remains available as `roundtrip_match` for scripts.
 The comparison deliberately does not require regenerated flux containers to
 match original flux timing byte-for-byte.
+
+The native SCP exporter encodes reconstructed sectors into one deterministic,
+index-cued revolution per track. Standard IBM FM/MFM, Amiga odd/even MFM,
+Commodore GCR, and Apple II 6-and-2 GCR have separate track encoders. The SCP
+header, 168-entry track lookup table, revolution records, overflow words, and
+image checksum are written without invoking an external command. Conversion
+planning labels this output logically equivalent rather than preservation
+equivalent because original timing variation, weak-bit behaviour, write
+splices, and copy protection cannot be inferred from logical sectors.
 
 `recover` is the explicit multi-revolution repair path. It decodes each SCP
 revolution independently, records competing sector copies and the selected

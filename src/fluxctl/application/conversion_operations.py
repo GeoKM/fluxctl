@@ -52,18 +52,19 @@ def _track_snapshot(
     if tracks is None:
         return {"available": False, "synthesized": synthesized}
 
-    ordered: list[tuple[int, int, int]] = []
     sectors: dict[tuple[int, int, int], dict[str, Any]] = {}
     track_status: dict[tuple[int, int], dict[str, int]] = {}
+    sector_order: dict[tuple[int, int], list[int]] = {}
     for track in tracks:
         track_key = (int(track.track), int(track.head))
         track_status[track_key] = {
             "missing": int(getattr(track, "missing", 0)),
             "weak": int(getattr(track, "weak", 0)),
         }
+        sector_order[track_key] = []
         for sector in track.sectors:
             key = (int(track.track), int(track.head), int(sector.sector_id))
-            ordered.append(key)
+            sector_order[track_key].append(key[2])
             sectors[key] = {
                 "track": key[0],
                 "head": key[1],
@@ -78,8 +79,13 @@ def _track_snapshot(
     return {
         "available": True,
         "synthesized": synthesized,
-        "ordered_sectors": [list(key) for key in ordered],
-        "track_heads": [list(key) for key in track_status],
+        # Container formats may store track records in head-major or
+        # cylinder-major order. Identity is order-independent; only sector
+        # order within an individual track has logical meaning.
+        "track_heads": [list(key) for key in sorted(track_status)],
+        "sector_order": {
+            "%d:%d" % key: value for key, value in sorted(sector_order.items())
+        },
         "sectors": {"%d:%d:%d" % key: value for key, value in sectors.items()},
         "track_status": {"%d:%d" % key: value for key, value in track_status.items()},
     }
@@ -162,7 +168,7 @@ def _compare_snapshots(
         candidate_keys = set(candidate_sectors)
         common = sorted(original_keys & candidate_keys)
         identity_match = original_keys == candidate_keys
-        order_match = original["ordered_sectors"] == candidate["ordered_sectors"]
+        order_match = original.get("sector_order") == candidate.get("sector_order")
         sizes_match = all(original_sectors[key]["size"] == candidate_sectors[key]["size"] for key in common)
         data_differences = [
             key for key in common
@@ -352,11 +358,11 @@ def roundtrip_image(
         original_sector_snapshot = _track_snapshot(original_tracks)
         first_sector_snapshot = _track_snapshot(
             first_tracks,
-            synthesized=bool(first.exporter_metadata.get("padded_missing")),
+            synthesized=bool(first.exporter_metadata.get("padded_missing") or first.exporter_metadata.get("synthetic_flux")),
         )
         final_sector_snapshot = _track_snapshot(
             final_tracks,
-            synthesized=bool(second.exporter_metadata.get("padded_missing")),
+            synthesized=bool(second.exporter_metadata.get("padded_missing") or second.exporter_metadata.get("synthetic_flux")),
         )
         original_files = _filesystem_snapshot(path, resolved_layout, first.encoding)
         first_files = _filesystem_snapshot(first_path, resolved_layout, first.encoding)

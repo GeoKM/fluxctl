@@ -41,6 +41,7 @@ def load_builtin_exporters() -> list[PluginInfo]:
     from .d81 import D81Exporter
     from .g64 import G64Exporter
     from .apple2 import Apple2DOExporter, Apple2POExporter
+    from .scp import SCPExporter
 
     registry.register_exporter(
         "raw",
@@ -121,6 +122,15 @@ def load_builtin_exporters() -> list[PluginInfo]:
             version="0.1",
             entry=D81Exporter(),
             description="Commodore 1581 disk image (.d81)",
+        ),
+    )
+    registry.register_exporter(
+        "scp",
+        PluginInfo(
+            name="Native SCP exporter",
+            version="0.1",
+            entry=SCPExporter(),
+            description="Synthetic logical-flux SuperCard Pro image (.scp)",
         ),
     )
     return list(registry.exporter.values())

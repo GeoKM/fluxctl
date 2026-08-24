@@ -42,8 +42,17 @@ def prepare_convert_payload(path: Path, to: str, layout: Optional[str], encoding
     load_builtin_decoders(); load_builtin_layouts(); load_builtin_exporters()
     layout_desc = ensure_layout_loaded(layout) if layout else None
     decoder_used = layout_desc.encoding if layout_desc else encoding
-    if layout_desc is None and path.suffix.lower() == ".d81":
-        layout_desc = ensure_layout_loaded("commodore_mfm_1581_800k"); decoder_used = layout_desc.encoding
+    if layout_desc is None:
+        dedicated_layouts = {
+            ".adf": "amiga_mfm_880k",
+            ".d64": "commodore_gcr_1541_170k",
+            ".d71": "commodore_gcr_1571_341k",
+            ".d81": "commodore_mfm_1581_800k",
+        }
+        dedicated_layout = dedicated_layouts.get(path.suffix.lower())
+        if dedicated_layout:
+            layout_desc = ensure_layout_loaded(dedicated_layout)
+            decoder_used = layout_desc.encoding
     track_data = None
     track_nibbles = []
     ext = path.suffix.lower()

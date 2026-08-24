@@ -18,9 +18,10 @@ SYNC_WORD = 0x4489
 #   4  gap/padding bytes (ignored)
 DECODED_SECTOR_BYTES = 544
 ENCODED_SECTOR_BYTES = DECODED_SECTOR_BYTES * 2  # odd + even halves
-# MFM bitstreams from both our simple decoder and the Amiga PLL still include
-# clock bits (C D C D ...). Each encoded data byte occupies 16 bits.
-BYTES_PER_MFM_BYTE = 16
+# Amiga odd/even bytes already occupy the data lanes of one raw MFM byte.
+# The raw stream therefore stores each encoded byte in eight clock/data bits,
+# with four meaningful bits at positions 1, 3, 5, and 7.
+BYTES_PER_MFM_BYTE = 8
 
 
 def _read_word(bits: List[int], offset: int) -> Optional[int]:
@@ -93,15 +94,20 @@ def _xor(words: List[int]) -> int:
 
 
 def _decode_data_byte(bits: List[int], offset: int) -> Optional[int]:
-    """Decode a single data byte from clock+data MFM bits."""
+    """Decode one Amiga odd/even byte from eight raw MFM bits."""
 
-    if offset + 16 > len(bits):
+    if offset + 8 > len(bits):
         return None
-    data_bits = bits[offset + 1 : offset + 16 : 2]  # drop clock bits
-    val = 0
+    data_bits = bits[offset + 1 : offset + 8 : 2]
+    nibble = 0
     for b in data_bits:
-        val = (val << 1) | b
-    return val
+        nibble = (nibble << 1) | b
+    return (
+        ((nibble & 0x8) << 3)
+        | ((nibble & 0x4) << 2)
+        | ((nibble & 0x2) << 1)
+        | (nibble & 0x1)
+    )
 
 
 def _decode_odd_even(odd: List[int], even: List[int]) -> bytes:
@@ -148,15 +154,13 @@ def reconstruct_amiga_track(bitstream: Bitstream, cylinder: int = 0, head: int =
             pos = sync_pos + 1
             continue
 
-        odd = encoded_bytes[:DECODED_SECTOR_BYTES]
-        even = encoded_bytes[DECODED_SECTOR_BYTES:]
-        decoded = _decode_odd_even(odd, even)
-
-        header = decoded[0:4]
-        label = decoded[4:20]
-        hchk = int.from_bytes(decoded[20:24], "big")
-        dchk = int.from_bytes(decoded[24:28], "big")
-        data_bytes = decoded[28 : 28 + 512]
+        # AmigaDOS odd/even-encodes each field independently rather than
+        # splitting the complete sector into two global halves.
+        header = _decode_odd_even(encoded_bytes[0:4], encoded_bytes[4:8])
+        label = _decode_odd_even(encoded_bytes[8:24], encoded_bytes[24:40])
+        hchk = int.from_bytes(_decode_odd_even(encoded_bytes[40:44], encoded_bytes[44:48]), "big")
+        dchk = int.from_bytes(_decode_odd_even(encoded_bytes[48:52], encoded_bytes[52:56]), "big")
+        data_bytes = _decode_odd_even(encoded_bytes[56:568], encoded_bytes[568:1080])
 
         format_byte, track_byte, sector_id, togo = header
         header_ok = format_byte == 0xFF

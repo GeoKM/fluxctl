@@ -18,7 +18,7 @@ def test_1541_routes_are_limited_to_semantic_targets() -> None:
 
     plans = {plan.target: plan for plan in available_conversion_plans(context)}
 
-    assert set(plans) == {"raw", "imd", "d64", "g64"}
+    assert set(plans) == {"raw", "imd", "d64", "g64", "scp"}
     assert plans["d64"].classification == LOGICALLY_EQUIVALENT
     assert plans["d64"].allowed
     assert not plan_conversion(context, "adf").allowed
@@ -77,3 +77,22 @@ def test_apple_sector_order_targets_require_apple_layout() -> None:
 
     assert not plan_conversion(context, "po").allowed
     assert not plan_conversion(context, "do").allowed
+
+
+def test_scp_route_is_logical_synthesis_and_rejects_specialised_formats() -> None:
+    standard = ConversionContext(
+        source_kind="img",
+        layout_id="ibm_mfm_720k",
+        encoding="mfm",
+    )
+    special = ConversionContext(
+        source_kind="img",
+        layout_id="ibm_xdf_dshd_1890k",
+        encoding="mfm",
+    )
+
+    plan = plan_conversion(standard, "scp")
+    assert plan.allowed
+    assert plan.classification == LOGICALLY_EQUIVALENT
+    assert plan.warnings
+    assert not plan_conversion(special, "scp").allowed
