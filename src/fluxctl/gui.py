@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .application.compare_operations import compare_images
+from .application.batch_operations import batch_convert, batch_probe, batch_qc
 from .application.conversion_operations import convert_image, roundtrip_image
 from .application.conversion_planner import ConversionContext, available_conversion_plans, plan_conversion
 from .application.diagnostic_operations import summarize_image
@@ -50,6 +51,7 @@ from .application.report_operations import (
     export_qc_json,
     sector_diagnostic_for_image,
 )
+from .application.workspace_operations import load_workspace, save_workspace
 from .application.recovery_operations import recover_image
 from .gui_pages import AdvancedPageController, FilesPageController, HexPageController, JobsPageController, MainPageController
 from .gui_jobs import Job
@@ -76,9 +78,11 @@ try:  # pragma: no cover - exercised only when GUI dependencies are installed.
         QLineEdit,
         QInputDialog,
         QMainWindow,
+        QMenu,
         QMessageBox,
         QPushButton,
         QProgressBar,
+        QScrollArea,
         QSpinBox,
         QStackedWidget,
         QTableWidget,
@@ -126,6 +130,7 @@ class FluxctlStudio(QMainWindow):
         self._job_timer.setInterval(250)
         self._job_timer.timeout.connect(self._update_job_elapsed)
         self.current_path: Optional[Path] = None
+        self.recent_images: list[Path] = []
         self.current_summary = None
         self.file_browser_path = "/"
         self.advanced_file_browser_path = "/"
@@ -154,9 +159,23 @@ class FluxctlStudio(QMainWindow):
     def _build_ui(self) -> None:
         open_action = QAction("Open", self)
         open_action.triggered.connect(self.open_image)
+        self.recent_menu = QMenu("Recent Images", self)
+        self.recent_menu.aboutToShow.connect(self._refresh_recent_menu)
+        recent_action = QAction("Recent Images", self)
+        recent_action.setMenu(self.recent_menu)
+        workspace_open_action = QAction("Open Workspace...", self)
+        workspace_open_action.triggered.connect(self.open_workspace_dialog)
+        workspace_save_action = QAction("Save Workspace...", self)
+        workspace_save_action.triggered.connect(self.save_workspace_dialog)
+        batch_action = QAction("Batch...", self)
+        batch_action.triggered.connect(self.batch_dialog)
         self.toolbar = QToolBar("Main")
         self.toolbar.setObjectName("mainToolbar")
         self.toolbar.addAction(open_action)
+        self.toolbar.addAction(recent_action)
+        self.toolbar.addAction(workspace_open_action)
+        self.toolbar.addAction(workspace_save_action)
+        self.toolbar.addAction(batch_action)
         self.addToolBar(self.toolbar)
 
         root = QWidget()
@@ -263,8 +282,30 @@ class FluxctlStudio(QMainWindow):
 
         root_layout.addWidget(self.activity_label)
         root_layout.addWidget(self.main_tabs, 1)
-        self.setCentralWidget(root)
+        scroll_area = QScrollArea()
+        scroll_area.setObjectName("studioScrollArea")
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setWidget(root)
+        self.setCentralWidget(scroll_area)
+        self.setAcceptDrops(True)
+        self._set_accessible_control_names()
         self._switch_mode(self.mode.currentIndex())
+
+    def _set_accessible_control_names(self) -> None:
+        """Give controls stable spoken names even when their visual label is abbreviated."""
+
+        for button in self.findChildren(QPushButton):
+            label = button.text().replace("...", "").strip()
+            if label:
+                button.setAccessibleName(label)
+        for combo in self.findChildren(QComboBox):
+            if not combo.accessibleName():
+                combo.setAccessibleName(combo.currentText() or "Selection")
+        for field in self.findChildren(QLineEdit):
+            if not field.accessibleName():
+                field.setAccessibleName(field.objectName() or "Text input")
 
     def _build_hardware_section(self) -> QWidget:
         section = QFrame()
@@ -725,6 +766,10 @@ class FluxctlStudio(QMainWindow):
         self._restore_combo(self.dump_mode_combo, "dump_mode", 0)
         self._restore_combo(self.greaseweazle_drive_combo, "greaseweazle/drive", 0)
         self._restore_combo(self.greaseweazle_format_combo, "greaseweazle/format", 0)
+        recent = self.settings.value("recent/images", []) or []
+        if isinstance(recent, str):
+            recent = [recent]
+        self.recent_images = [Path(value) for value in recent if str(value)]
         self.greaseweazle_tracks_input.setText(str(self.settings.value("greaseweazle/tracks", "")))
         self.greaseweazle_revs_input.setText(str(self.settings.value("greaseweazle/revs", "")))
         self.file_browser_path = str(self.settings.value("files/directory", "/")) or "/"
@@ -759,6 +804,7 @@ class FluxctlStudio(QMainWindow):
         self.settings.setValue("greaseweazle/revs", self.greaseweazle_revs_input.text())
         self.settings.setValue("files/directory", self.file_browser_path)
         self.settings.setValue("advanced/directory", self.advanced_file_browser_path)
+        self.settings.setValue("recent/images", [str(path) for path in self.recent_images])
         self.settings.sync()
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
@@ -802,11 +848,159 @@ class FluxctlStudio(QMainWindow):
             "Disk images (*.scp *.woz *.po *.do *.nib *.img *.imd *.dsk *.dmk *.d64 *.d71 *.d81 *.adf);;All files (*)",
         )
         if filename:
-            self.current_path = Path(filename)
-            self.file_label.setText(str(self.current_path))
-            self._clear_image_results()
-            self._show_main_tab()
-            self.run_probe()
+            self.open_image_path(Path(filename))
+
+    def open_image_path(self, path: Path) -> None:
+        """Open an image from a dialog, recent menu, drop, or generated output."""
+
+        path = path.expanduser().resolve()
+        if not path.is_file():
+            self._warn(f"Image file not found: {path}")
+            return
+        self.current_path = path
+        self.recent_images = [path] + [item for item in self.recent_images if item != path]
+        self.recent_images = self.recent_images[:12]
+        self.file_label.setText(str(path))
+        self._clear_image_results()
+        self._show_main_tab()
+        self._update_hardware_controls()
+        self.run_probe()
+
+    def _refresh_recent_menu(self) -> None:
+        self.recent_menu.clear()
+        existing = [path for path in self.recent_images if path.is_file()]
+        self.recent_images = existing
+        if not existing:
+            empty = self.recent_menu.addAction("No recent images")
+            empty.setEnabled(False)
+            return
+        for path in existing:
+            action = self.recent_menu.addAction(str(path))
+            action.triggered.connect(lambda _checked=False, image=path: self.open_image_path(image))
+        self.recent_menu.addSeparator()
+        clear = self.recent_menu.addAction("Clear Recent Images")
+        clear.triggered.connect(self._clear_recent_images)
+
+    def _clear_recent_images(self) -> None:
+        self.recent_images.clear()
+        self._refresh_recent_menu()
+
+    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
+        if event.mimeData().hasUrls() and any(url.isLocalFile() for url in event.mimeData().urls()):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        paths = [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.isLocalFile()]
+        if paths:
+            self.open_image_path(paths[0])
+            event.acceptProposedAction()
+
+    def _workspace_state(self) -> dict[str, object]:
+        return {
+            "schema": "fluxctl-studio-workspace-v1",
+            "image": str(self.current_path) if self.current_path else "",
+            "recent_images": [str(path) for path in self.recent_images],
+            "mode": self.mode.currentData() or self.mode.currentText(),
+            "map_view": self.map_view.currentData() or self.map_view.currentText(),
+            "layout": self.layout_combo.currentData() or self.layout_combo.currentText(),
+            "encoding": self.encoding_combo.currentData() or self.encoding_combo.currentText(),
+            "file_directory": self.file_browser_path,
+            "advanced_directory": self.advanced_file_browser_path,
+            "log": self.log.toPlainText(),
+        }
+
+    def save_workspace_dialog(self) -> None:
+        default = self.current_path.with_suffix(".fluxctl-workspace.json") if self.current_path else Path.home() / "fluxctl-workspace.json"
+        filename, _ = QFileDialog.getSaveFileName(self, "Save Fluxctl Studio workspace", str(default), "Workspace (*.json)")
+        if not filename:
+            return
+        try:
+            save_workspace(Path(filename), self._workspace_state())
+            self.activity_label.setText(f"Saved workspace: {filename}")
+        except Exception as exc:
+            self._warn(f"Could not save workspace: {exc}")
+
+    def open_workspace_dialog(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(self, "Open Fluxctl Studio workspace", "", "Workspace (*.json)")
+        if filename:
+            self.open_workspace(Path(filename))
+
+    def open_workspace(self, path: Path) -> None:
+        try:
+            state = load_workspace(path)
+        except Exception as exc:
+            self._warn(f"Could not open workspace: {exc}")
+            return
+        self.recent_images = [Path(value) for value in state.get("recent_images", []) if str(value)]
+        if "mode" in state:
+            index = self.mode.findData(state["mode"])
+            if index < 0:
+                index = self.mode.findText(str(state["mode"]))
+            if index >= 0:
+                self.mode.setCurrentIndex(index)
+        for combo, key in ((self.map_view, "map_view"), (self.layout_combo, "layout"), (self.encoding_combo, "encoding")):
+            if key in state:
+                index = combo.findData(state[key])
+                if index < 0:
+                    index = combo.findText(str(state[key]))
+                if index >= 0:
+                    combo.setCurrentIndex(index)
+        self.file_browser_path = str(state.get("file_directory", "/")) or "/"
+        self.advanced_file_browser_path = str(state.get("advanced_directory", "/")) or "/"
+        self._set_file_browser_path(self.file_browser_path)
+        self.log.setPlainText(str(state.get("log", "")))
+        image = str(state.get("image", ""))
+        if image:
+            self.open_image_path(Path(image))
+        else:
+            self.activity_label.setText(f"Loaded workspace: {path}")
+
+    def _reopen_generated_image(self, path: Path) -> None:
+        if path.is_file():
+            self.open_image_path(path)
+
+    def batch_dialog(self) -> None:
+        filenames, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select images for batch operation",
+            "",
+            "Disk images (*.scp *.woz *.po *.do *.nib *.img *.imd *.dsk *.dmk *.d64 *.d71 *.d81 *.adf);;All files (*)",
+        )
+        if not filenames:
+            return
+        operation_name, ok = QInputDialog.getItem(
+            self,
+            "Batch operation",
+            f"Choose an operation for {len(filenames)} image(s):",
+            ["Probe", "QC", "Convert"],
+            0,
+            False,
+        )
+        if not ok:
+            return
+        paths = [Path(filename) for filename in filenames]
+        if operation_name == "Convert":
+            exporter, ok = QInputDialog.getItem(self, "Batch conversion target", "Convert each image to:", ["raw", "imd", "adf", "d64", "d71", "d81", "g64"], 0, False)
+            if not ok:
+                return
+            fn = lambda operation: batch_convert(paths, exporter, operation)
+        elif operation_name == "QC":
+            fn = lambda operation: batch_qc(paths, operation)
+        else:
+            fn = lambda operation: batch_probe(paths, operation)
+        self._run_job(
+            f"batch {operation_name.lower()} ({len(paths)} images)",
+            fn,
+            self._show_batch_result,
+            accepts_context=True,
+        )
+
+    def _show_batch_result(self, results: object) -> None:
+        text = json.dumps(results, indent=2)
+        self.advanced_detail_stack.setCurrentWidget(self.advanced_output)
+        self.advanced_output.setPlainText(text)
+        self._show_advanced_tab()
+        self._append_log(f"Batch operation complete:\n{text}")
 
     def _selected_blank_preset(self):
         preset_id = str(self.blank_image_combo.currentData() or "")
@@ -1844,6 +2038,7 @@ class FluxctlStudio(QMainWindow):
         self._append_log(
             f"Replaced {result.file_path} with {result.bytes:,} bytes in new {result.filesystem} image copy: {result.path}"
         )
+        self._reopen_generated_image(Path(result.path))
 
     def delete_selected_entry_with_copy(self) -> None:
         if not self._require_image():
@@ -2023,6 +2218,7 @@ class FluxctlStudio(QMainWindow):
         self._append_log(
             f"{result.operation} wrote {result.entries} entries, {result.bytes:,} bytes to new {result.filesystem} image copy: {result.path}"
         )
+        self._reopen_generated_image(Path(result.path))
 
     def view_sector_hex(self) -> None:
         if not self._require_image():
@@ -2493,6 +2689,7 @@ class FluxctlStudio(QMainWindow):
                 self._append_log("Warning: this conversion route is lossy but useful")
             else:
                 self._append_log("Warning: conversion may be lossy due to missing or low-confidence sectors")
+        self._reopen_generated_image(Path(result.output_path))
 
     def _choose_convert_exporter(self, default_exporter: str, kind: str, layout_id: str, encoding: str) -> str:
         choices = self._exporter_choices_for_image(kind, layout_id, encoding)
@@ -2614,6 +2811,7 @@ class FluxctlStudio(QMainWindow):
         self.advanced_output.setPlainText(json.dumps(report, indent=2))
         self._show_advanced_tab()
         self.log.append(f"Recovery complete:\n{json.dumps(report, indent=2)}")
+        self._reopen_generated_image(Path(result.output_path))
 
     def _show_roundtrip_result(self, result: object) -> None:
         state = "MATCH" if result.roundtrip_match else "DIFFER"
@@ -2758,6 +2956,28 @@ class FluxctlStudio(QMainWindow):
         self._advanced_hex_dump = None
         self._update_advanced_hex_edit_actions()
         self.log.append(f"Comparison {state}:\n{text}")
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Image comparison: {state}")
+        dialog.resize(1000, 620)
+        dialog_layout = QVBoxLayout(dialog)
+        heading = QLabel(f"{result.path_a.name}  vs  {result.path_b.name}   [{state}]")
+        dialog_layout.addWidget(heading)
+        panes = QHBoxLayout()
+        for key in ("meta_a", "meta_b"):
+            pane = QTextEdit()
+            pane.setReadOnly(True)
+            pane.setPlainText(json.dumps(result.report.get(key, {}), indent=2))
+            panes.addWidget(pane)
+        dialog_layout.addLayout(panes)
+        dialog_layout.addWidget(QLabel(
+            f"SHA-256 A: {result.report.get('sha256_a', '')}\n"
+            f"SHA-256 B: {result.report.get('sha256_b', '')}\n"
+            f"First differing byte: {result.report.get('first_diff_offset')}"
+        ))
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(dialog.accept)
+        dialog_layout.addWidget(buttons)
+        dialog.exec()
 
     def open_provenance(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(self, "Open provenance", "", "Provenance (*.json);;All files (*)")
