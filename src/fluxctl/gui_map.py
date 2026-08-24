@@ -5,7 +5,7 @@ import math
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QBrush
 from PySide6.QtWidgets import QToolTip, QWidget
 
 from .reports.map import DiskMap
@@ -14,14 +14,24 @@ class DiskMapWidget(QWidget):
     sectorClicked = Signal(int, int, int)
     sectorDiagnosticRequested = Signal(int, int, int)
     STATE_COLORS = {
-        "good": QColor("#35d07f"),
-        "weak": QColor("#f2c94c"),
-        "bad": QColor("#e05a47"),
+        "good": QColor("#0072b2"),
+        "weak": QColor("#e69f00"),
+        "bad": QColor("#d55e00"),
         "unused": QColor("#4f5b6f"),
-        "bam_file": QColor("#35d07f"),
-        "bam_system": QColor("#4aa3ff"),
-        "bam_used": QColor("#f2c94c"),
+        "bam_file": QColor("#009e73"),
+        "bam_system": QColor("#56b4e9"),
+        "bam_used": QColor("#e69f00"),
         "bam_free": QColor("#4f5b6f"),
+    }
+    STATE_BRUSH_STYLES = {
+        "good": Qt.SolidPattern,
+        "weak": Qt.BDiagPattern,
+        "bad": Qt.Dense4Pattern,
+        "unused": Qt.Dense6Pattern,
+        "bam_file": Qt.SolidPattern,
+        "bam_system": Qt.FDiagPattern,
+        "bam_used": Qt.BDiagPattern,
+        "bam_free": Qt.Dense6Pattern,
     }
     HIGHLIGHT_COLOR = QColor("#ff8a3d")
     LEGEND_LABELS = {
@@ -34,12 +44,26 @@ class DiskMapWidget(QWidget):
         "bam_used": "Allocated",
         "bam_free": "Free",
     }
+    STATE_GLYPHS = {
+        "good": "G",
+        "weak": "W",
+        "bad": "X",
+        "unused": ".",
+        "bam_file": "F",
+        "bam_system": "S",
+        "bam_used": "U",
+        "bam_free": ".",
+    }
 
     def __init__(self) -> None:
         super().__init__()
         self.disk_map = None
         self._head_layouts: list[dict[str, object]] = []
+        self._focused_sector: Optional[tuple[int, int]] = None
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAccessibleName("Disk map")
+        self.setAccessibleDescription("Interactive disk map. Use arrow keys to select a sector, Enter to view HEX, and D for preservation diagnostics.")
         self.setMinimumHeight(520)
 
     def set_disk_map(self, disk_map) -> None:
@@ -151,8 +175,8 @@ class DiskMapWidget(QWidget):
                     break
                 sector_count = max(len(sectors), 1)
                 for sector_idx, state in enumerate(sectors):
-                    painter.setBrush(colors.get(state, QColor("#6b7280")))
-                    pen = QPen(self.HIGHLIGHT_COLOR, 3.0) if self._sector_is_highlighted(_row_index, sector_idx) else QPen(QColor("#101823"), 1.35)
+                    painter.setBrush(QBrush(colors.get(state, QColor("#6b7280")), self.STATE_BRUSH_STYLES.get(state, Qt.SolidPattern)))
+                    pen = QPen(self.HIGHLIGHT_COLOR, 3.0) if self._sector_is_highlighted(_row_index, sector_idx) or self._sector_is_focused(_row_index, sector_idx) else QPen(QColor("#101823"), 1.35)
                     painter.setPen(pen)
                     start = int((90 - (360 * sector_idx / sector_count)) * 16)
                     span = int(-(360 / sector_count) * 16)
@@ -224,8 +248,8 @@ class DiskMapWidget(QWidget):
                 )
                 for sector_index, state in enumerate(sectors):
                     x = left + row_label_width + sector_index * cell
-                    painter.setBrush(self.STATE_COLORS.get(state, QColor("#6b7280")))
-                    pen = QPen(self.HIGHLIGHT_COLOR, 2.2) if self._sector_is_highlighted(row_index, sector_index) else QPen(QColor("#111b28"), 1.25)
+                    painter.setBrush(QBrush(self.STATE_COLORS.get(state, QColor("#6b7280")), self.STATE_BRUSH_STYLES.get(state, Qt.SolidPattern)))
+                    pen = QPen(self.HIGHLIGHT_COLOR, 2.2) if self._sector_is_highlighted(row_index, sector_index) or self._sector_is_focused(row_index, sector_index) else QPen(QColor("#111b28"), 1.25)
                     painter.setPen(pen)
                     painter.drawRect(int(x), int(y), max(int(cell - 1), 1), max(int(cell - 1), 1))
 
@@ -280,6 +304,60 @@ class DiskMapWidget(QWidget):
         track, head = track_ids[row_index]
         return (track, head, details[sector_index].sector_id) in self.disk_map.highlighted_sectors
 
+    def _sector_is_focused(self, row_index: int, sector_index: int) -> bool:
+        return self._focused_sector == (row_index, sector_index)
+
+    def _focused_address(self) -> Optional[tuple[int, int, int]]:
+        if self._focused_sector is None:
+            return None
+        return self.sector_address_for_indices(*self._focused_sector)
+
+    def sector_address_for_indices(self, row_index: int, sector_index: int) -> Optional[tuple[int, int, int]]:
+        if not self.disk_map:
+            return None
+        track_ids = self.disk_map.track_ids or [(idx, 0) for idx, _ in enumerate(self.disk_map.tracks)]
+        if row_index < 0 or row_index >= len(track_ids) or not self.disk_map.sector_details or row_index >= len(self.disk_map.sector_details):
+            return None
+        details = self.disk_map.sector_details[row_index]
+        if sector_index < 0 or sector_index >= len(details):
+            return None
+        detail = details[sector_index]
+        if detail.state.startswith("bam_") or not detail.has_data:
+            return None
+        track, head = track_ids[row_index]
+        return track, head, detail.sector_id
+
+    def _move_focus(self, row_delta: int, sector_delta: int) -> None:
+        if not self.disk_map or not self.disk_map.tracks:
+            return
+        row, sector = self._focused_sector or (0, 0)
+        row = max(0, min(len(self.disk_map.tracks) - 1, row + row_delta))
+        sectors = self.disk_map.tracks[row]
+        if not sectors:
+            return
+        sector = max(0, min(len(sectors) - 1, sector + sector_delta))
+        self._focused_sector = (row, sector)
+        self.update()
+
+    def keyPressEvent(self, event) -> None:  # pragma: no cover - GUI interaction.
+        if event.key() == Qt.Key_Left:
+            self._move_focus(0, -1)
+        elif event.key() == Qt.Key_Right:
+            self._move_focus(0, 1)
+        elif event.key() == Qt.Key_Up:
+            self._move_focus(-1, 0)
+        elif event.key() == Qt.Key_Down:
+            self._move_focus(1, 0)
+        elif event.key() in {Qt.Key_Return, Qt.Key_Enter, Qt.Key_D}:
+            address = self._focused_address()
+            if address is not None:
+                if event.key() == Qt.Key_D:
+                    self.sectorDiagnosticRequested.emit(*address)
+                else:
+                    self.sectorClicked.emit(*address)
+        else:
+            super().keyPressEvent(event)
+
     def _draw_legend(self, painter: QPainter, width: int, height: int) -> None:  # pragma: no cover - visual rendering.
         painter.setFont(QFont("Arial", 11))
         painter.setPen(QPen(QColor("#dce7f7"), 1))
@@ -291,9 +369,11 @@ class DiskMapWidget(QWidget):
                 painter.setPen(QPen(self.HIGHLIGHT_COLOR, 2.2))
                 painter.drawRoundedRect(x, y + 4, 14, 14, 3, 3)
             else:
-                painter.setBrush(self.STATE_COLORS[state])
-                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(self.STATE_COLORS[state], self.STATE_BRUSH_STYLES.get(state, Qt.SolidPattern)))
+                painter.setPen(QPen(QColor("#dce7f7"), 1))
                 painter.drawRoundedRect(x, y + 4, 14, 14, 3, 3)
+                painter.setFont(QFont("Arial", 8, QFont.Bold))
+                painter.drawText(x, y + 4, 14, 14, Qt.AlignCenter, self.STATE_GLYPHS.get(state, "?"))
             painter.setPen(QPen(QColor("#dce7f7"), 1))
             painter.drawText(x + 20, y, max(width - x - 20, 1), 24, Qt.AlignLeft | Qt.AlignVCenter, label)
             x += 138 if state == "selected_file" else (116 if state != "unused" else 150)
