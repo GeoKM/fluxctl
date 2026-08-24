@@ -120,3 +120,60 @@ def test_cbm_dos_accepts_empty_directory():
     fs = CBMDOS()
     assert fs.probe(image) is True
     assert fs.list_directory("/") == []
+
+
+def test_cbm_dos_reads_rel_files_through_side_sector_index():
+    layout = _make_layout()
+    bam = bytearray(256)
+    bam[0] = 18
+    bam[1] = 1
+    bam[0xA2:0xA4] = b"2A"
+
+    directory = bytearray(256)
+    directory[0] = 0
+    directory[1] = 0
+    entry = bytearray(32)
+    entry[0] = 0x84
+    entry[1:3] = bytes((1, 0))
+    entry[3:6] = b"REL"
+    entry[19:21] = bytes((2, 0))
+    entry[21] = 5
+    entry[28:30] = (1).to_bytes(2, "little")
+    directory[2:34] = entry
+
+    side = bytearray(256)
+    side[2] = 0
+    side[3] = 5
+    side[16:18] = bytes((1, 0))
+
+    data = bytearray(256)
+    data[0:2] = b"\x00\x05"
+    data[2:7] = b"HELLO"
+
+    def track(track_number: int, sectors: list[tuple[int, bytes]]) -> TrackSectors:
+        return TrackSectors(
+            track=track_number,
+            head=0,
+            sectors=[
+                Sector(cylinder=track_number, head=0, sector_id=sector_id, size_code=1,
+                       data=payload, crc_ok=True, confidence=1.0)
+                for sector_id, payload in sectors
+            ],
+        )
+
+    image = TrackSectorImage(
+        [
+            track(17, [(0, bytes(bam)), (1, bytes(directory))]),
+            track(1, [(0, bytes(side))]),
+            track(0, [(0, bytes(data))]),
+        ],
+        bytes_per_sector=256,
+    )
+    image.layout = layout
+
+    fs = CBMDOS()
+    assert fs.probe(image) is True
+    extracted = fs.extract_file("REL")
+    assert len(extracted) == 254
+    assert extracted.startswith(b"HELLO")
+    assert fs.file_sector_addresses("REL") == {(0, 0, 0), (1, 0, 0)}

@@ -47,3 +47,12 @@ or a recoverable VTOC. The next useful evidence would be a known-good writable
 OIS system disk, a Wang utility dump of its VTOC map, or a matching disk image
 with the system's module directory intact.
 
+## Current inspector
+
+Fluxctl now includes a conservative `wang_vtoc` inspector for development and
+forensics. It checks the documented 2 KiB VTOC window (blocks 4 through 7) for
+the four control-block identifiers `FDAV`, `FDX1`, `FDX2`, and `FDR1`, and
+reports their block and byte offsets when present. It does not claim a
+mountable filesystem, expose files, or colour allocation overlays. The latter
+remain disabled until FDX/FDR pointer fields and the extent encoding have been
+verified against a known-good labelled system volume.

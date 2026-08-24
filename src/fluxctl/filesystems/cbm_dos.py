@@ -32,6 +32,9 @@ class DirectoryRecord:
     start_sector: int
     file_type: int
     blocks: int
+    side_sector_track: int = 0
+    side_sector_sector: int = 0
+    record_length: int = 0
 
     @property
     def is_dir(self) -> bool:
@@ -125,6 +128,9 @@ class CBMDOS(Filesystem):
                         start_sector=start_sector,
                         file_type=file_type,
                         blocks=blocks,
+                        side_sector_track=entry[19],
+                        side_sector_sector=entry[20],
+                        record_length=entry[21],
                     )
                 )
 
@@ -352,6 +358,9 @@ class CBMDOS(Filesystem):
                             start_sector=start_sector,
                             file_type=entry[0],
                             blocks=int.from_bytes(entry[28:30], "little"),
+                            side_sector_track=entry[19],
+                            side_sector_sector=entry[20],
+                            record_length=entry[21],
                         ),
                     )
             track = data[0]
@@ -365,7 +374,7 @@ class CBMDOS(Filesystem):
         for record in self.directory:
             if record.blocks:
                 try:
-                    size = len(self._read_chain(record.start_track, record.start_sector))
+                    size = len(self._read_record_payload(record))
                 except FilesystemError:
                     size = record.blocks * (SECTOR_SIZE - 2)
             else:
@@ -383,16 +392,69 @@ class CBMDOS(Filesystem):
 
     def extract_file(self, path: str) -> bytes:
         record = self._record_for_file(path)
-        return self._read_chain(record.start_track, record.start_sector)
+        return self._read_record_payload(record)
 
     def file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
         """Return physical ``(track, head, sector_id)`` addresses occupied by a file."""
 
         record = self._record_for_file(path)
         addresses: set[tuple[int, int, int]] = set()
+        if record.file_type & 0x07 == CBM_FILE_TYPE_CODES["REL"]:
+            for track, sector in self._rel_side_sector_blocks(record):
+                addresses.add(self._logical_to_physical(track, sector))
+            for track, sector in self._rel_data_blocks(record):
+                addresses.add(self._logical_to_physical(track, sector))
+            return addresses
         for track, sector, _data in self._iter_chain_blocks(record.start_track, record.start_sector):
             addresses.add(self._logical_to_physical(track, sector))
         return addresses
+
+    def _read_record_payload(self, record: DirectoryRecord) -> bytes:
+        """Read normal files and resolve REL data through side sectors."""
+
+        if record.file_type & 0x07 != CBM_FILE_TYPE_CODES["REL"]:
+            return self._read_chain(record.start_track, record.start_sector)
+        if not record.side_sector_track:
+            raise FilesystemError("CBM DOS REL file has no side-sector pointer")
+        if not 1 <= record.record_length <= 254:
+            raise FilesystemError("CBM DOS REL file has an invalid record length")
+        payload = bytearray()
+        for track, sector in self._rel_data_blocks(record):
+            payload.extend(self._read_ts(track, sector)[2:])
+        return bytes(payload[: record.blocks * (SECTOR_SIZE - 2)])
+
+    def _rel_side_sector_blocks(self, record: DirectoryRecord) -> list[tuple[int, int]]:
+        blocks: list[tuple[int, int]] = []
+        track, sector = record.side_sector_track, record.side_sector_sector
+        seen: set[tuple[int, int]] = set()
+        while track and (track, sector) not in seen:
+            seen.add((track, sector))
+            data = self._read_ts(track, sector)
+            if len(data) != SECTOR_SIZE or data[2] > 5 or data[3] != record.record_length:
+                raise FilesystemError("CBM DOS REL side-sector header is invalid")
+            blocks.append((track, sector))
+            track, sector = data[0], data[1]
+        if track or sector:
+            raise FilesystemError("CBM DOS REL side-sector chain is invalid")
+        return blocks
+
+    def _rel_data_blocks(self, record: DirectoryRecord) -> list[tuple[int, int]]:
+        data_blocks: list[tuple[int, int]] = []
+        for side_track, side_sector in self._rel_side_sector_blocks(record):
+            side = self._read_ts(side_track, side_sector)
+            for offset in range(16, SECTOR_SIZE - 1, 2):
+                track, sector = side[offset], side[offset + 1]
+                if not track:
+                    continue
+                data_blocks.extend(
+                    (item_track, item_sector)
+                    for item_track, item_sector, _data in self._iter_chain_blocks(track, sector)
+                )
+                if len(data_blocks) >= record.blocks:
+                    return data_blocks[: record.blocks]
+        if len(data_blocks) < record.blocks:
+            raise FilesystemError("CBM DOS REL side-sector index does not cover the file")
+        return data_blocks[: record.blocks]
 
     def logical_file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
         """Return CBM logical ``(track, head, sector)`` addresses occupied by a file."""
