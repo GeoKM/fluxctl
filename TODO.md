@@ -2,34 +2,27 @@
 
 ## Conversion Fidelity
 
-- Add an SCP exporter so sector images can be written back into synthetic flux
-  containers. This should support round-trip validation such as
+- Add a native SCP exporter to the normal conversion pipeline. Fluxctl already
+  provides Greaseweazle-backed `synthesize-scp` output and verified hardware
+  read-back, but sector images cannot yet use `convert --to scp` or the normal
+  exporter path. The native exporter should support round-trip validation such as
   `fluxctl roundtrip disk.adf --to scp --back-to adf` and
   `fluxctl roundtrip disk.img --layout ibm_mfm_720k --to scp --back-to raw`,
   plus Commodore 1581 validation such as
   `fluxctl roundtrip disk.d81 --to scp --back-to raw`.
   The success criterion is decoded sector equality, not byte-identical flux
   timing compared with an original hardware capture.
-- Extend copy-only manipulation beyond flat image containers. Define safe
-  write-back/export paths for `.d64`, `.d71`, `.d81`, `.adf`, `.imd`, and
-  decoded `.scp` workflows, including clear GUI gating when a filesystem is
-  writable but the current image container cannot preserve or rewrite the
-  required sector format safely.
+- Complete the remaining copy-only manipulation paths for `.imd` and decoded
+  `.scp` workflows, including clear GUI gating when a filesystem is writable
+  but the current image container cannot preserve or rewrite the required
+  sector format safely. Container-specific writes already exist for the
+  supported `.d64`, `.d71`, `.d81`, and same-size `.adf` operations.
 - Add logical IBM XDF unpacking/export/filesystem support. Fluxctl now
   recognises the physical XDF track layout used by OS/2 media, including the
   mixed 512/1024/2048/8192-byte data-track sectors. A follow-up should unpack
   those physical sectors into the logical 23x512-sector view expected by OS/2
   tooling, then enable FAT-style filesystem listing/export if the logical image
   contains a compatible filesystem.
-
-## Hardware Workflows
-
-- Couple Fluxctl Studio to Greaseweazle for real-drive workflows. Add guided
-  GUI actions for reading physical floppy disks into flux/images and writing
-  supported images back to real disks, with drive selection, media type/layout
-  confirmation, index/side handling, write-protect detection, pre-write
-  warnings, post-read/post-write verification, and clear logs of the exact
-  Greaseweazle commands and captured artifacts.
 
 ## Filesystem Modelling
 
@@ -87,9 +80,6 @@
   strings. See `docs/wang_ois_system_disk_research.md`.
 - Extend copy-only file and directory manipulation beyond the currently enabled
   writers:
-  - CBM DOS 1541/1571 `.d64/.d71`: add directory-safe replace/delete/import
-    behavior where the format supports it; classic CBM DOS has no
-    subdirectories, so do not expose directory creation/import there.
   - CBM DOS 1581 `.d81`: continue expanding delete, replace, directory import,
     and directory creation beyond the currently supported root-oriented paths.
   - Amiga OFS/FFS `.adf`: add file/directory writers only after bitmap
