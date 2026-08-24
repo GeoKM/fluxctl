@@ -140,6 +140,27 @@ def test_disk_map_widget_exposes_colour_legend_items() -> None:
     assert widget.legend_items()[-1] == ("selected_file", "Selected file")
 
 
+def test_disk_map_widget_keyboard_focus_emits_sector_selection() -> None:
+    app = _app()
+    disk_map = DiskMap(
+        tracks=[["good", "weak"]],
+        total_tracks=1,
+        max_sectors_per_track=2,
+        track_ids=[(7, 1)],
+        sector_details=[[
+            SectorMapEntry(12, "good", 256, True, 1.0),
+            SectorMapEntry(13, "weak", 256, True, 0.5),
+        ]],
+    )
+    widget = DiskMapWidget()
+    widget.set_disk_map(disk_map)
+    selected: list[tuple[int, int, int]] = []
+    widget.sectorClicked.connect(lambda track, head, sector: selected.append((track, head, sector)))
+    widget.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Right, Qt.NoModifier))
+    widget.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Return, Qt.NoModifier))
+    assert selected == [(7, 1, 13)]
+
+
 def test_studio_defaults_scp_conversion_to_layout_appropriate_exporter() -> None:
     window = FluxctlStudio()
 
