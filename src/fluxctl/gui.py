@@ -779,8 +779,8 @@ class FluxctlStudio(QMainWindow):
     def cancel_current_job(self) -> None:
         self.job_controller.cancel_current()
 
-    def _run_job(self, label: str, fn: Callable[[], object], done: Callable[[object], None]) -> None:
-        self.job_controller.run(label, fn, done)
+    def _run_job(self, label: str, fn: Callable[[], object], done: Callable[[object], None], *, accepts_context: bool = False) -> None:
+        self.job_controller.run(label, fn, done, accepts_context=accepts_context)
 
     def _show_job_progress(self, job: Job, value: int) -> None:
         self.job_controller.show_progress(job, value)
@@ -1513,7 +1513,7 @@ class FluxctlStudio(QMainWindow):
         assert self.current_path is not None
         layout = self._selected_layout() or None
         encoding = self._selected_encoding()
-        self._run_job("qc", lambda operation: build_qc_for_image(self.current_path, layout, encoding, operation), self._show_qc)
+        self._run_job("qc", lambda operation: build_qc_for_image(self.current_path, layout, encoding, operation), self._show_qc, accepts_context=True)
 
     def _show_qc(self, report: object) -> None:
         self.summary_labels["status"].setText(report.status)
@@ -1540,6 +1540,7 @@ class FluxctlStudio(QMainWindow):
             "map",
             lambda operation: build_disk_map_for_image(self.current_path, layout, encoding, map_view, operation),
             self._show_map,
+            accepts_context=True,
         )
 
     def _show_map(self, disk_map: object) -> None:
@@ -2598,6 +2599,7 @@ class FluxctlStudio(QMainWindow):
                 operation=operation,
             ),
             self._show_recovery_result,
+            accepts_context=True,
         )
 
     def _show_recovery_result(self, result: object) -> None:
