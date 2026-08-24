@@ -268,7 +268,10 @@ class CPMFilesystem(Filesystem):
                 data = self._read_image_logical_sector(image, logical_sector, params)
             except Exception:
                 return records
-            sector_start = self._physical_lba_for_logical_sector(logical_sector, params) * params.sector_size
+            if getattr(getattr(image, "layout", None), "layout_id", "") == "tandy_mfm_cpmplus_156k":
+                sector_start = self._tandy_cpmplus_byte_offset(logical_sector, params)
+            else:
+                sector_start = self._physical_lba_for_logical_sector(logical_sector, params) * params.sector_size
             for entry_offset in range(0, len(data), 32):
                 entry = data[entry_offset : entry_offset + 32]
                 record = self._record_from_entry(entry)
@@ -573,6 +576,12 @@ class CPMFilesystem(Filesystem):
         if params.sector_size != getattr(image, "bytes_per_sector", params.sector_size):
             raise FilesystemError("CP/M disk parameter block does not match image sector size")
         layout_id = getattr(getattr(image, "layout", None), "layout_id", "")
+        if layout_id == "tandy_mfm_cpmplus_156k" and hasattr(image, "data"):
+            offset = self._tandy_cpmplus_byte_offset(sector_index, params)
+            data = image.data[offset : offset + params.sector_size]
+            if len(data) != params.sector_size:
+                raise FilesystemError("Tandy CP/M Plus sector exceeds image size")
+            return data
         if layout_id == "tandy_mfm_cpmplus_156k" and hasattr(image, "_sector_lookup"):
             track, sector = self._tandy_cpmplus_chs_for_logical_sector(sector_index, params)
             sector_base = int(getattr(getattr(image, "layout", None), "id_rules", {}).get("sector_number_base", 1))
@@ -626,7 +635,11 @@ class CPMFilesystem(Filesystem):
             raise FilesystemError("CP/M sector write size mismatch")
         layout_id = getattr(getattr(self._image, "layout", None), "layout_id", "") if self._image is not None else ""
         if layout_id == "tandy_mfm_cpmplus_156k":
-            raise FilesystemError("Tandy CP/M Plus mixed-sector images are read-only")
+            offset = self._tandy_cpmplus_byte_offset(sector_index, params)
+            if offset + params.sector_size > len(image):
+                raise FilesystemError("Tandy CP/M Plus sector exceeds image size")
+            image[offset : offset + params.sector_size] = data
+            return
         physical_lba = self._physical_lba_for_logical_sector(sector_index, params)
         offset = physical_lba * params.sector_size
         image[offset : offset + params.sector_size] = data
@@ -644,7 +657,27 @@ class CPMFilesystem(Filesystem):
             )
 
     def _directory_offset(self, params: CPMDiskParameters) -> int:
+        if getattr(getattr(self._image, "layout", None), "layout_id", "") == "tandy_mfm_cpmplus_156k":
+            return params.first_directory_sector * 256
         return params.first_directory_sector * params.sector_size
+
+    def _tandy_cpmplus_byte_offset(self, sector_index: int, params: CPMDiskParameters) -> int:
+        """Map a logical CP/M Plus sector into a mixed raw .img byte offset."""
+
+        if sector_index < 0:
+            raise FilesystemError("Negative Tandy CP/M Plus logical sector")
+        if sector_index < params.first_directory_sector:
+            return sector_index * 256
+        data_sector = sector_index - params.first_directory_sector
+        track = data_sector // params.sectors_per_track
+        physical_sector = data_sector % params.sectors_per_track
+        if track >= 39:
+            raise FilesystemError("Tandy CP/M Plus logical sector is outside the image")
+        try:
+            skewed_sector = params.skew[physical_sector]
+        except IndexError as exc:
+            raise FilesystemError("Tandy CP/M Plus skew table is invalid") from exc
+        return 18 * 256 + (track * params.sectors_per_track + skewed_sector) * params.sector_size
 
     def _free_directory_slots(self, image_bytes: bytes, params: CPMDiskParameters) -> list[int]:
         directory_offset = self._directory_offset(params)
@@ -676,7 +709,10 @@ class CPMFilesystem(Filesystem):
         if any(record.name.upper() == display_name for record in self._records):
             raise FilesystemError(f"File already exists: {display_name}")
 
-        total_data_sectors = (len(image_bytes) // params.sector_size) - params.first_directory_sector
+        if getattr(getattr(self._image, "layout", None), "layout_id", "") == "tandy_mfm_cpmplus_156k":
+            total_data_sectors = 39 * params.sectors_per_track
+        else:
+            total_data_sectors = (len(image_bytes) // params.sector_size) - params.first_directory_sector
         total_blocks = total_data_sectors // params.sectors_per_block
         needed_blocks = max(1, (len(data) + params.block_size - 1) // params.block_size)
         used = self._used_allocation_blocks(params)

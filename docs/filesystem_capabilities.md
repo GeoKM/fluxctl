@@ -20,11 +20,11 @@ registry table use the same declarations.
 | --- | --- | --- | --- | --- | --- | --- |
 | FAT12 | Yes | Yes | Yes | Yes | Yes for flat `.img` | Uses 8.3 ASCII names for import/create. Delete supports files and empty directories. Replacement/import/write actions currently require flat `.img` containers. |
 | CBM DOS 1541/1571 | Yes | Yes | Yes | Root only | Root file import, replace, and scratch/delete for `.d64`/`.d71` | Directory import and directory creation are pending. Import infers `.PRG`, `.SEQ`, and `.USR`; unknown suffixes default to PRG. REL import is pending because side-sector allocation is required. |
-| CBM DOS 1581 | Yes | Yes | Yes | Yes | Root-file replace/delete; file import, directory import, and directory creation for `.d81` | Real 1581 BAM allocation exists for file and directory writes. Replace/delete are still root-file-only; REL side-sector mutation is not implemented. |
-| Amiga OFS/FFS | Yes | Yes | Yes | Yes | No | Reader supports file/directory export. `.adf` mutation is pending because allocation bitmap, block checksums, file headers, and directory hash chains must be updated correctly. |
+| CBM DOS 1581 | Yes | Yes | Yes | Yes | Nested file replace/delete; file import, directory import, and directory creation for `.d81` | Real 1581 BAM allocation exists for file and directory writes. Non-empty directory deletion and REL side-sector mutation are not implemented. |
+| Amiga OFS/FFS | Yes | Yes | Yes | Yes | Same-size file replacement for `.adf` | Allocation-changing writes, directory mutation, and bitmap updates remain pending; OFS data checksums are updated for same-size replacement. |
 | Apple ProDOS | Yes | Yes | Yes | Yes | No | Read-only 140K Apple II support across WOZ, NIB, PO, DO, flat IMG, and decoded SCP. Seedling, sapling, tree, and data-fork extraction are supported. |
 | Apple DOS 3.3 | Yes | Yes | Yes | Root only | No | Reads the 16-sector VTOC/catalog and T/S lists. Extracted size is sector-granular because DOS 3.3 catalog entries do not store an exact byte EOF. |
-| CP/M variants | Yes | Yes | Yes for modelled DPBs and Commodore GCR translations | Root only | Root file import and delete for modelled flat `.img` | Modelled formats include CP/M 26-sector 256K FM, Osborne 1, Kaypro II, Tandy Model 4 CP/M 2.2/Plus, C64 CP/M 2.2 GCR, and C128 CP/M 3 GCR. Commodore GCR and mixed-sector CP/M Plus media are read-only. |
+| CP/M variants | Yes | Yes | Yes for modelled DPBs and Commodore GCR translations | Root only | Root file import and delete for modelled flat `.img` | Modelled formats include CP/M 26-sector 256K FM, Osborne 1, Kaypro II, Tandy Model 4 CP/M 2.2/Plus, C64 CP/M 2.2 GCR, and C128 CP/M 3 GCR. Mixed-sector CP/M Plus `.img` import/delete now use the real track-0 prefix and skew. |
 | DisplayWriter | Yes | Label directory only | No | No | No | The reader lists IBM standard-label `HDR1` records from track 0. Actual DisplayWriter document extraction is not implemented. |
 | RT-11 | Yes | Yes | Yes | Root only | No | Read-only RAD50 directory and extent reader. Directory entries are flat; filesystem mutation is not implemented. |
 | RT-11 Interchange (RX01/IBM 3740) | Yes | Active `HDR1` dataset labels | Yes for nonempty labels | No | No | Exports fixed-length EBCDIC record streams from the `HDR1` start through its first-unused address. Labelled-empty datasets expose a separately named raw residual extent and JSON manifest for forensic recovery. |
@@ -131,9 +131,12 @@ Currently enabled copy-only mutation:
 - FAT12 flat `.img`: replace, delete, import file, import directory, create
   directory.
 - CP/M modelled flat `.img`: root file import and delete.
+- Tandy Model 4 CP/M Plus mixed-sector `.img`: root file import and delete
+  using the 18x256-byte track-0 prefix and subsequent 8x512-byte tracks.
 - CBM DOS `.d64`/`.d71`: root-level file import, replace, and scratch/delete.
 - CBM DOS 1581 `.d81`: file import, directory import, directory creation,
-  root-level replace, and root-level scratch/delete.
+  nested file replace/delete, and empty-directory scratch/delete.
+- Amiga OFS/FFS `.adf`: same-size file replacement in a new copy.
 
 Studio can also create new blank formatted images for FAT12 `.img`, CBM DOS
 `.d64`, CBM DOS `.d71`, CBM DOS 1581 `.d81`, minimal AmigaDOS OFS `.adf`,
@@ -143,8 +146,8 @@ CP/M 2.2 media.
 Currently disabled mutation:
 
 - CBM DOS directory import and directory creation.
-- CBM DOS 1581 nested replace/delete.
-- Amiga OFS/FFS `.adf` writes.
+- CBM DOS 1581 deletion of non-empty directories and REL side-sector mutation.
+- Amiga OFS/FFS allocation-changing writes, directory mutation, and bitmap updates.
 - CP/M replace, directory import, and directory creation.
 - DisplayWriter writes.
 - RT-11 writes.

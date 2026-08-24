@@ -136,6 +136,28 @@ def test_amiga_ofs_file_follows_data_chain_and_excludes_block_headers_from_conte
     assert fs.file_sector_addresses("OFS") == {(40, 0, 1), (40, 0, 2)}
 
 
+def test_amiga_ffs_same_size_replacement_preserves_chain_and_checksums():
+    image = _build_ffs_extension_chain_adf()
+    fs = AmigaOFS()
+    assert fs.probe(image)
+
+    patched = fs.replace_file(image.data, "CHAINED!", b"C" * 1024)
+    reread = AmigaOFS()
+    assert reread.probe(RawSectorImage(patched))
+    assert reread.extract_file("CHAINED!") == b"C" * 1024
+
+
+def test_amiga_ofs_same_size_replacement_updates_data_checksum():
+    image = _build_ofs_chain_adf()
+    fs = AmigaOFS()
+    assert fs.probe(image)
+
+    patched = fs.replace_file(image.data, "OFS", b"Y" * 488)
+    reread = AmigaOFS()
+    assert reread.probe(RawSectorImage(patched))
+    assert reread.extract_file("OFS") == b"Y" * 488
+
+
 def test_amiga_kickstart_probe_exposes_virtual_rom_file():
     payload = b"KICK" + b"\x00" * 508 + b"ROMDATA".ljust(512, b"\x00")
     image = RawSectorImage(payload)

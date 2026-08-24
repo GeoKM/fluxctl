@@ -235,14 +235,13 @@ class CBMDOS1581(Filesystem):
                 return record
         raise FilesystemError(f"File not found: {path}")
 
-    def _root_directory_slot_for_path(self, path: str) -> _DirectorySlot1581:
+    def _directory_slot_for_path(self, path: str) -> _DirectorySlot1581:
         parts = [part for part in path.strip("/").split("/") if part]
         if not parts:
             raise FilesystemError("Path must reference a file")
-        if len(parts) > 1:
-            raise FilesystemError("1581 mutation currently supports root directory entries only")
-        target = parts[0].lower()
-        track, sector = DIRECTORY_TRACK, DIRECTORY_START_SECTOR
+        target = parts[-1].lower()
+        parent = "/" + "/".join(parts[:-1]) if len(parts) > 1 else "/"
+        track, sector = self._directory_start_for_path(parent)
         seen: set[tuple[int, int]] = set()
         while track != 0 and (track, sector) not in seen:
             seen.add((track, sector))
@@ -388,9 +387,9 @@ class CBMDOS1581(Filesystem):
         return bytes(patched)
 
     def replace_file(self, image_bytes: bytes, path: str, replacement: bytes) -> bytes:
-        """Return a copy with one root-level 1581 file's contents replaced."""
+        """Return a copy with one 1581 file's contents replaced."""
 
-        slot = self._root_directory_slot_for_path(path)
+        slot = self._directory_slot_for_path(path)
         if slot.record.is_dir:
             raise FilesystemError("1581 replace currently supports files only")
         if slot.record.file_type & 0x07 == CBM_FILE_TYPE_CODES["REL"]:
@@ -424,11 +423,12 @@ class CBMDOS1581(Filesystem):
         return bytes(patched)
 
     def delete_entry(self, image_bytes: bytes, path: str) -> bytes:
-        """Return a copy with one root-level 1581 file scratched."""
+        """Return a copy with one 1581 file or empty directory scratched."""
 
-        slot = self._root_directory_slot_for_path(path)
+        slot = self._directory_slot_for_path(path)
         if slot.record.is_dir:
-            raise FilesystemError("1581 directory delete is not implemented yet")
+            if self._records_for_path(path):
+                raise FilesystemError("1581 directory must be empty before it can be deleted")
         if slot.record.file_type & 0x07 == CBM_FILE_TYPE_CODES["REL"]:
             raise FilesystemError("CBM DOS 1581 REL mutation is not implemented; side-sector allocation is required")
         patched = bytearray(image_bytes)

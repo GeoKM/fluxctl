@@ -100,6 +100,32 @@ def detect_filesystem(image) -> FilesystemDetection:
             evidence=[f"layout={layout_id}", "no_supported_wang_ois_filesystem_probe"],
         )
 
+    if layout_id == "ibm_xdf_1890k":
+        xdf = registry.filesystem.get("ibm_xdf_fat12")
+        if xdf and xdf.entry.probe(image):
+            return FilesystemDetection(
+                primary="ibm_xdf_fat12",
+                confidence=0.99,
+                evidence=[
+                    f"layout={layout_id}",
+                    "xdf_logical_fat12_boot_sector=1",
+                    "xdf_first_fat_usable=1",
+                ],
+                regions=[
+                    FilesystemRegion(
+                        "disk",
+                        "ibm_xdf_fat12",
+                        ["IBM XDF mixed-sector tracks mapped to 512-byte logical FAT12 sectors"],
+                    )
+                ],
+                plugin=xdf.entry,
+            )
+        return FilesystemDetection(
+            primary=None,
+            confidence=0.0,
+            evidence=[f"layout={layout_id}", "no_supported_xdf_fat12_probe"],
+        )
+
     if layout_id in {"ibm_displaywriter_mfm_985k", "luxor_mfm_1000_program_994k"}:
         displaywriter = registry.filesystem.get("displaywriter")
         if displaywriter and displaywriter.entry.probe(image):

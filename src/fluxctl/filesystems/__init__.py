@@ -151,6 +151,7 @@ def load_builtin_filesystems() -> List[PluginInfo]:
     from .prodos import ProDOSFilesystem
     from .apple_dos import AppleDOS33Filesystem
     from .wang_ois import WangOISFilesystem
+    from .xdf import XDF12
 
     registry.register_filesystem(
         "fat12",
@@ -159,6 +160,15 @@ def load_builtin_filesystems() -> List[PluginInfo]:
             version="0.1",
             entry=FAT12(),
             description="MS-DOS FAT12 filesystem",
+        ),
+    )
+    registry.register_filesystem(
+        "ibm_xdf_fat12",
+        PluginInfo(
+            name="IBM XDF FAT12 Filesystem",
+            version="0.1",
+            entry=XDF12(),
+            description="Read-only logical FAT12 access for IBM XDF media",
         ),
     )
     registry.register_filesystem(

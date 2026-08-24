@@ -48,6 +48,11 @@ _CAPABILITIES: tuple[FilesystemCapability, ...] = (
         "Write operations create a new flat .img copy and use 8.3 ASCII names.",
     ),
     FilesystemCapability(
+        "ibm_xdf_fat12", "IBM XDF FAT12", ("scp", "img"), True, True, True, False,
+        frozenset(), "physical mixed-sector overlay", False, (),
+        "Read-only logical FAT12 unpacking; the second FAT and unavailable logical sectors are not physically present.",
+    ),
+    FilesystemCapability(
         "cpm", "CP/M variants", ("img",), True, True, True, False,
         frozenset({"delete_entry", "import_file"}), "allocation-block overlay", False, ("raw", "imd"),
         "Mutation is limited to modelled flat .img DPBs; replace and directory operations are not implemented.",
@@ -78,8 +83,8 @@ _CAPABILITIES: tuple[FilesystemCapability, ...] = (
     ),
     FilesystemCapability(
         "amiga_ffs", "Amiga OFS/FFS", ("adf",), True, True, True, True,
-        frozenset(), "filesystem logical map", False, ("adf", "raw"),
-        "ADF mutation is pending allocation bitmap, checksums, file headers, and directory hash-chain updates.",
+        frozenset({"replace_file"}), "filesystem logical map", False, ("adf", "raw"),
+        "Same-size file replacement is supported in a new .adf copy; allocation-changing writes, directory mutation, and bitmap updates remain pending.",
     ),
     FilesystemCapability(
         "prodos", "Apple ProDOS", ("woz", "po", "do", "nib", "img", "scp"), True, True, True, True,
