@@ -1,0 +1,30 @@
+{
+  "schema": "fluxctl.fixture-expectation/v1",
+  "verified_by": "tests/test_apple2.py and independent sector geometry",
+  "geometry": {
+    "layout": "apple2_gcr_nofs_140_140k",
+    "encoding": "apple2_gcr",
+    "tracks": 35,
+    "heads": 1,
+    "sectors_per_track": 16,
+    "sector_size": 256,
+    "sector_total": 560
+  },
+  "filesystem": "prodos",
+  "qc": {
+    "good_min": 560,
+    "weak_max": 0,
+    "missing_max": 0,
+    "bad_max": 0
+  },
+  "directory_entries": [
+    {"name": "EXERCISE.INTERP", "size": 4096},
+    {"name": "PRO.KERNEL", "size": 14336},
+    {"name": "S1", "size": 0}
+  ],
+  "selected_file_hashes": {
+    "EXERCISE.INTERP": "29280c7e730d82258045187cefea8e003b81c7d5df5a8a0f3c9f60b110c57872",
+    "PRO.KERNEL": "95f5d9d587cd4eddc8e4697f519c33414fa2e7bf47698457449257fe058304f1"
+  },
+  "supported_conversions": ["po", "do"]
+}

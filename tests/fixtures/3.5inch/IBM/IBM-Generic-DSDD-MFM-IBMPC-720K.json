@@ -1,0 +1,33 @@
+{
+  "schema": "fluxctl.fixture-expectation/v1",
+  "verified_by": "tests/test_fat12_filesystem.py and independent sector geometry",
+  "geometry": {
+    "layout": "ibm_mfm_720k",
+    "encoding": "mfm",
+    "tracks": 80,
+    "heads": 2,
+    "sectors_per_track": 9,
+    "sector_size": 512,
+    "sector_total": 1440
+  },
+  "filesystem": "fat12",
+  "qc": {
+    "good_min": 1440,
+    "weak_max": 0,
+    "missing_max": 0,
+    "bad_max": 0
+  },
+  "directory_entries": [
+    "IO.SYS", "MSDOS.SYS", "COMMAND.COM", "4201.CPI", "4208.CPI", "5202.CPI",
+    "ANSI.SYS", "AUTOEXEC.BAT", "CONFIG.SYS", "COUNTRY.SYS", "DISKCOPY.COM",
+    "DISPLAY.SYS", "DRIVER.SYS", "EGA.CPI", "FASTOPEN.EXE", "FDISK.EXE",
+    "FORMAT.COM", "GRAFTABL.COM", "GRAPHICS.COM", "GRAPHICS.PRO", "HIMEM.SYS",
+    "KEYB.COM", "KEYBOARD.SYS", "LCD.CPI", "NLSFUNC.EXE", "PRINT.COM", "PRINTER.SYS",
+    "RAMDRIVE.SYS", "REPLACE.EXE", "SELECT.DAT", "SELECT.EXE", "SELECT.HLP",
+    "SELECT.PRT", "SHARE.EXE", "SMARTDRV.SYS", "SYS.COM", "XMA2EMS.SYS"
+  ],
+  "selected_file_hashes": {
+    "AUTOEXEC.BAT": "efb958105dec6ddc04703e7b2f32f8381ad0cfa656a35c675ab9ffdff87199b3"
+  },
+  "supported_conversions": ["raw", "imd"]
+}
