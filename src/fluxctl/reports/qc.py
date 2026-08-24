@@ -234,6 +234,7 @@ def build_qc_report(
     decoder: Decoder,
     layout: LayoutDescriptor | None = None,
     track_step: int = 1,
+    operation=None,
 ) -> DiskQCReport:
     """Analyse an image and build a QC report.
 
@@ -249,7 +250,10 @@ def build_qc_report(
     # sector IDs. Unknown geometry must not be inferred from the source name.
     expected_hint = 0
     encoding = layout.encoding if layout else getattr(decoder, "encoding", None)
-    for track_flux in image.tracks:
+    track_total = len(image.tracks)
+    for track_index, track_flux in enumerate(image.tracks, start=1):
+        if operation is not None:
+            operation.checkpoint("track", track_index, track_total)
         logical_track = track_flux.track // max(track_step, 1)
         if layout and (logical_track >= layout.tracks or track_flux.side >= layout.sides):
             continue
@@ -263,10 +267,14 @@ def build_qc_report(
                     reconstruct_amiga_with_pll,
                 )
 
+                if operation is not None:
+                    operation.checkpoint("candidate decoder", track_index, track_total)
                 candidate = reconstruct_amiga_greaseweazle(
                     track_flux.revolutions, track_flux.track, track_flux.side, timebase_ns=image.timebase_ns
                 )
                 if candidate is None:
+                    if operation is not None:
+                        operation.checkpoint("candidate decoder fallback", track_index, track_total)
                     candidate = reconstruct_amiga_with_pll(
                         track_flux.revolutions, track_flux.track, track_flux.side, timebase_ns=image.timebase_ns
                     )
@@ -282,6 +290,7 @@ def build_qc_report(
                     else expected_hint or None,
                     encoding=encoding,
                     timebase_ns=image.timebase_ns,
+                    operation=operation,
                 )
             expected, missing = _resolve_expected_and_missing(
                 track_sectors,
@@ -297,6 +306,8 @@ def build_qc_report(
             no_data = summary["no_data"]
             confidence = summary["confidence"]
         except Exception:
+            if operation is not None:
+                operation.checkpoint("cancelled")
             expected = layout.expected_sectors_for_track(logical_track, track_flux.side) if layout else expected_hint
             good = 0
             weak = 0

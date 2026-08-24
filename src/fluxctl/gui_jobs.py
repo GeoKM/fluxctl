@@ -1,6 +1,7 @@
 """Qt job primitives used by Fluxctl Studio."""
 from __future__ import annotations
 
+import inspect
 import threading
 from typing import Callable
 
@@ -12,6 +13,7 @@ class JobSignals(QObject):
     failed = Signal(str)
     cancelled = Signal()
     progress = Signal(int)
+    progress_event = Signal(str, int, int)
 
 
 class Job(QRunnable):
@@ -42,7 +44,13 @@ class Job(QRunnable):
     def run(self) -> None:
         try:
             self.signals.progress.emit(0)
-            result = self.fn()
+            from .application.progress import OperationContext
+
+            context = OperationContext(
+                self.cancel_event,
+                lambda stage, current, total: self.signals.progress_event.emit(stage, current, total),
+            )
+            result = self.fn(context) if inspect.signature(self.fn).parameters else self.fn()
             if self.cancelled_requested:
                 self._emit_cancelled()
                 return

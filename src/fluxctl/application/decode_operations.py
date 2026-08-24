@@ -42,14 +42,17 @@ def _best_gcr(bitstreams: list[Bitstream], track: int, head: int) -> Optional[Tr
     return best
 
 
-def decode_tracks(path: Path, layout_id: Optional[str], *, encoding: Optional[str] = None, capture_nibbles: bool = False):
+def decode_tracks(path: Path, layout_id: Optional[str], *, encoding: Optional[str] = None, capture_nibbles: bool = False, operation=None):
     scp = parse_scp(path)
     layout = ensure_layout_loaded(layout_id) if layout_id else None
     selected = layout.encoding if layout else (encoding or "mfm")
     decoder = decoder_for(selected)
     tracks: list[TrackSectors] = []
     nibbles: list[TrackNibbles] = []
-    for raw in scp.tracks:
+    track_total = len(scp.tracks)
+    for track_index, raw in enumerate(scp.tracks, start=1):
+        if operation is not None:
+            operation.checkpoint("track", track_index, track_total)
         if layout and (raw.track >= layout.tracks or raw.side >= layout.sides):
             continue
         revolutions = [rev for rev in raw.revolutions if getattr(rev, "interval_ns", None)]
@@ -63,15 +66,20 @@ def decode_tracks(path: Path, layout_id: Optional[str], *, encoding: Optional[st
                 expected = layout.sectors_per_track
         if selected == "gcr" and hasattr(decoder, "set_track"):
             decoder.set_track(raw.track)
+        if operation is not None:
+            operation.checkpoint("candidate decoder", 1, len(revolutions))
         primary = None if selected == "dec_rx02" else decoder.decode_revolution(revolutions[0])
         tracks.append(build_track_sectors_from_revolutions(
             revolutions, decoder, cylinder=raw.track, head=raw.side,
             expected_sectors=expected, encoding=selected,
             timebase_ns=scp.timebase_ns if selected == "gcr" else None,
+            operation=operation,
         ))
         if capture_nibbles and selected == "gcr":
             streams = [primary]
-            for rev in revolutions[1:]:
+            for revolution_index, rev in enumerate(revolutions[1:], start=2):
+                if operation is not None:
+                    operation.checkpoint("candidate decoder", revolution_index, len(revolutions))
                 decoder.set_track(raw.track)
                 streams.append(decoder.decode_revolution(rev))
             candidate = _best_gcr(streams, raw.track, raw.side)

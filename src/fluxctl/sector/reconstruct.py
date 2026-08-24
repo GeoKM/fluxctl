@@ -554,6 +554,7 @@ def build_track_sectors_from_revolutions(
     expected_sectors: Optional[int] = None,
     encoding: Optional[str] = None,
     timebase_ns: Optional[float] = None,
+    operation=None,
 ) -> TrackSectors:
     """Decode all usable revolutions and merge the best sector candidates."""
 
@@ -586,10 +587,15 @@ def build_track_sectors_from_revolutions(
             expected_sectors=expected_sectors or 16,
         )
 
-    for rev in revolutions:
+    total_revolutions = len(revolutions)
+    for revolution_index, rev in enumerate(revolutions, start=1):
+        if operation is not None:
+            operation.checkpoint("revolution", revolution_index, total_revolutions)
         if not getattr(rev, "interval_ns", None):
             continue
         try:
+            if operation is not None:
+                operation.checkpoint("candidate decoder", revolution_index, total_revolutions)
             if effective_encoding == "gcr" and hasattr(decoder, "set_track"):
                 decoder.set_track(cylinder)
             bitstream = decoder.decode_revolution(rev)
@@ -619,6 +625,8 @@ def build_track_sectors_from_revolutions(
                     expected_sectors=expected_sectors,
                 )
             tracks.append(track)
+            if operation is not None:
+                operation.checkpoint("candidate reconstruction", revolution_index, total_revolutions)
             if expected_sectors is not None:
                 merged = merge_track_sectors(
                     tracks,

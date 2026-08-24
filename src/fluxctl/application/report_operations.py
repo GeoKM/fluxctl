@@ -23,31 +23,32 @@ from ..reports.map import (
     render_svg,
 )
 from ..reports.qc import build_qc_report, build_qc_report_from_tracks, write_qc_report_json
+from ..reports.preservation import build_flat_sector_diagnostic, build_sector_diagnostic
 from ..scp import parse_scp
 from .image_operations import get_decoder, prepare_image, prefix_track_count_for_size
 
 
-def build_qc_for_image(path: Path, layout_id: Optional[str], encoding: str):
+def build_qc_for_image(path: Path, layout_id: Optional[str], encoding: str, operation=None):
     load_builtin_decoders()
     load_builtin_layouts()
     if path.suffix.lower() == ".scp":
         image = parse_scp(path)
         layout = ensure_layout_loaded(layout_id) if layout_id else None
         selected_encoding = layout.encoding if layout else encoding
-        return build_qc_report(image, get_decoder(selected_encoding), layout=layout)
-    image_obj = prepare_image(path, layout_id, encoding)
+        return build_qc_report(image, get_decoder(selected_encoding), layout=layout, operation=operation)
+    image_obj = prepare_image(path, layout_id, encoding, operation=operation)
     if not isinstance(image_obj, TrackSectorImage):
         raise ValueError("Image could not be reconstructed into sector tracks")
     layout = ensure_layout_loaded(layout_id) if layout_id else None
     return build_qc_report_from_tracks(image_obj.tracks, layout=layout, track_step=1)
 
 
-def build_disk_map_for_image(path: Path, layout_id: Optional[str], encoding: str, map_view: str):
+def build_disk_map_for_image(path: Path, layout_id: Optional[str], encoding: str, map_view: str, operation=None):
     load_builtin_decoders()
     load_builtin_layouts()
     load_builtin_filesystems()
     if map_view == "bam":
-        image_obj = prepare_image(path, layout_id, encoding)
+        image_obj = prepare_image(path, layout_id, encoding, operation=operation)
         layout = ensure_layout_loaded(layout_id) if layout_id else None
         max_tracks = (
             prefix_track_count_for_size(layout, path.stat().st_size)
@@ -73,7 +74,7 @@ def build_disk_map_for_image(path: Path, layout_id: Optional[str], encoding: str
                     selected_encoding = encoding_candidate.encoding
                     layout_candidate = detect_layout(image, selected_encoding)
                     layout = layout_candidate.layout if layout_candidate else None
-        disk_map = build_disk_map(image, get_decoder(selected_encoding), layout=layout)
+        disk_map = build_disk_map(image, get_decoder(selected_encoding), layout=layout, operation=operation)
         if map_view == "logical" and layout and layout.layout_id == "commodore_gcr_1541_170k":
             try:
                 image_obj = prepare_image(path, layout.layout_id, layout.encoding)
@@ -93,7 +94,7 @@ def build_disk_map_for_image(path: Path, layout_id: Optional[str], encoding: str
         if candidates:
             selected_layout = candidates[0].layout_id
             selected_encoding = candidates[0].encoding or encoding
-    image_obj = prepare_image(path, selected_layout, selected_encoding)
+    image_obj = prepare_image(path, selected_layout, selected_encoding, operation=operation)
     if not isinstance(image_obj, TrackSectorImage):
         raise ValueError("Image could not be reconstructed into sector tracks")
     disk_map = build_disk_map_from_tracksectors(image_obj.tracks)
@@ -106,6 +107,45 @@ def build_disk_map_for_image(path: Path, layout_id: Optional[str], encoding: str
         except Exception:
             pass
     return disk_map
+
+
+def sector_diagnostic_for_image(
+    path: Path,
+    layout_id: Optional[str],
+    encoding: str,
+    track: int,
+    head: int,
+    sector_id: int,
+):
+    """Return preservation diagnostics for one physical sector."""
+
+    load_builtin_decoders()
+    load_builtin_layouts()
+    layout = ensure_layout_loaded(layout_id) if layout_id else None
+    if path.suffix.lower() == ".scp":
+        image = parse_scp(path)
+        selected_encoding = layout.encoding if layout else encoding
+        return build_sector_diagnostic(
+            image,
+            get_decoder(selected_encoding),
+            layout,
+            track,
+            head,
+            sector_id,
+        )
+    selected_layout = layout_id
+    selected_encoding = encoding
+    if selected_layout is None:
+        from .image_operations import probe_flat_image
+
+        candidates = probe_flat_image(path)
+        if candidates:
+            selected_layout = candidates[0].layout_id
+            selected_encoding = candidates[0].encoding or encoding
+    image_obj = prepare_image(path, selected_layout, selected_encoding)
+    if not isinstance(image_obj, TrackSectorImage):
+        raise ValueError("Image could not be reconstructed into sector tracks")
+    return build_flat_sector_diagnostic(image_obj.tracks, track, head, sector_id)
 
 
 def export_qc_json(

@@ -57,6 +57,11 @@ class StudioJobController:
         window.job_cancel_button.setEnabled(True)
         window._job_timer.start()
         job.signals.progress.connect(lambda value, current_job=job: self.show_progress(current_job, value))
+        job.signals.progress_event.connect(
+            lambda stage, current, total, current_job=job: self.show_progress_event(
+                current_job, label, stage, current, total
+            )
+        )
         job.signals.finished.connect(
             lambda result, current_job=job: self.finish(current_job, generation, label, result, done)
         )
@@ -70,6 +75,18 @@ class StudioJobController:
             return
         window.job_progress.setRange(0, 100)
         window.job_progress.setValue(value)
+
+    def show_progress_event(self, job: Job, label: str, stage: str, current: int, total: int) -> None:
+        window = self.window
+        if job is not window.current_job:
+            return
+        if total > 0:
+            window.job_progress.setRange(0, 100)
+            window.job_progress.setValue(min(100, max(0, int(current * 100 / total))))
+            detail = f"{current}/{total}"
+        else:
+            detail = str(current)
+        window.activity_label.setText(f"Running {label}: {stage} {detail}")
 
     def finish(self, job: Job, generation: int, label: str, result: object, done: Callable[[object], None]) -> None:
         window = self.window
