@@ -40,14 +40,14 @@ class StudioJobController:
         window.job_status_label.setText("Cancellation requested")
         window._append_log("Cancellation requested for the active job.")
 
-    def run(self, label: str, fn: Callable[[], object], done: Callable[[object], None]) -> None:
+    def run(self, label: str, fn: Callable[[], object], done: Callable[[object], None], *, accepts_context: bool = False) -> None:
         window = self.window
         window._job_generation += 1
         generation = window._job_generation
         window.summary_labels["status"].setText("running")
         window.activity_label.setText(f"Running {label}...")
         window._append_log(f"$ {label}")
-        job = Job(fn)
+        job = Job(fn, accepts_context=accepts_context)
         window.active_jobs.add(job)
         window.current_job = job
         window._job_started_at = time.monotonic()
