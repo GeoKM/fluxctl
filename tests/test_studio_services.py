@@ -654,6 +654,59 @@ def test_studio_1581_image_creates_directory_and_imports_file_into_it(tmp_path) 
     assert (Path(extracted.path) / "NOTE").read_bytes() == host_file.read_bytes()
 
 
+def test_studio_1581_nested_file_replace_and_delete(tmp_path) -> None:
+    output = tmp_path / "blank.d81"
+    directory_path = tmp_path / "with-dir.d81"
+    imported_path = tmp_path / "with-dir-file.d81"
+    replaced_path = tmp_path / "nested-replaced.d81"
+    deleted_path = tmp_path / "nested-deleted.d81"
+    directory_deleted_path = tmp_path / "directory-deleted.d81"
+    host_file = tmp_path / "NOTE.PRG"
+    host_file.write_bytes(b"original nested contents")
+    services.create_blank_image("cbm_dos_1581_d81", output)
+    services.create_directory_with_copy(
+        output, "commodore_mfm_1581_800k", "mfm", "/", "TOOLS", directory_path
+    )
+    services.import_file_with_copy(
+        directory_path, "commodore_mfm_1581_800k", "mfm", "/TOOLS", host_file, imported_path
+    )
+
+    replacement = tmp_path / "replacement.bin"
+    replacement.write_bytes(b"updated nested contents")
+    services.replace_file_with_copy(
+        imported_path,
+        "commodore_mfm_1581_800k",
+        "mfm",
+        "/TOOLS/NOTE",
+        replacement,
+        replaced_path,
+    )
+    assert services.file_hex_dump(
+        replaced_path, "commodore_mfm_1581_800k", "mfm", "/TOOLS/NOTE"
+    ).data == replacement.read_bytes()
+
+    services.delete_filesystem_entry_with_copy(
+        replaced_path,
+        "commodore_mfm_1581_800k",
+        "mfm",
+        "/TOOLS/NOTE",
+        deleted_path,
+    )
+    assert services.list_files(
+        deleted_path, "commodore_mfm_1581_800k", "mfm", "/TOOLS"
+    ) == []
+    services.delete_filesystem_entry_with_copy(
+        deleted_path,
+        "commodore_mfm_1581_800k",
+        "mfm",
+        "/TOOLS",
+        directory_deleted_path,
+    )
+    assert services.list_files(
+        directory_deleted_path, "commodore_mfm_1581_800k", "mfm", "/"
+    ) == []
+
+
 def test_studio_1581_image_imports_directory_tree(tmp_path) -> None:
     output = tmp_path / "blank.d81"
     imported_path = tmp_path / "imported-tree.d81"

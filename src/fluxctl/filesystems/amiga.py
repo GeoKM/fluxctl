@@ -216,6 +216,54 @@ class AmigaOFS(Filesystem):
             return bytes(payload[: target.length])
         return b"".join(self.image.read_sector(block) for block in data_blocks)[: target.length]
 
+    def replace_file(self, image_bytes: bytes, path: str, replacement: bytes) -> bytes:
+        """Replace a file without changing its allocation chain."""
+
+        if self.filesystem not in {"amiga_ofs", "amiga_ffs"}:
+            raise FilesystemError("Kickstart-only Amiga disks are not mutable")
+        if self.image is None:
+            raise FilesystemError("Filesystem not probed")
+        target = self._entry_for_file(path)
+        if len(replacement) != target.length:
+            raise FilesystemError(
+                f"Amiga replacement must be exactly {target.length:,} bytes; allocation-changing writes are not implemented"
+            )
+        blocks = self._real_file_blocks(target)
+        if blocks is None:
+            start = target.start_sector * self.image.bytes_per_sector
+            end = start + len(replacement)
+            if end > len(image_bytes):
+                raise FilesystemError("Amiga file allocation exceeds image size")
+            patched = bytearray(image_bytes)
+            patched[start:end] = replacement
+            return bytes(patched)
+
+        data_blocks, _metadata_blocks, is_ofs = blocks
+        patched = bytearray(image_bytes)
+        cursor = 0
+        for block_number in data_blocks:
+            offset = block_number * 512
+            block = bytearray(patched[offset : offset + 512])
+            if is_ofs:
+                payload_size = self._long(block, 3)
+                if not 0 <= payload_size <= 488:
+                    raise FilesystemError(f"Invalid Amiga OFS data size at block {block_number}")
+                block[24 : 24 + payload_size] = replacement[cursor : cursor + payload_size]
+                block[20:24] = b"\x00" * 4
+                checksum = sum(
+                    int.from_bytes(block[index : index + 4], "big")
+                    for index in range(0, 512, 4)
+                )
+                block[20:24] = (-checksum & 0xFFFFFFFF).to_bytes(4, "big")
+                cursor += payload_size
+            else:
+                block[:] = replacement[cursor : cursor + 512]
+                cursor += 512
+            patched[offset : offset + 512] = block
+        if cursor != len(replacement):
+            raise FilesystemError("Amiga file chain does not cover the complete replacement")
+        return bytes(patched)
+
     def file_sector_addresses(self, path: str) -> set[tuple[int, int, int]]:
         """Return physical ``(track, head, sector_id)`` addresses for a file."""
 

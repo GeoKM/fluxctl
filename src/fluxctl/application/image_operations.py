@@ -40,6 +40,11 @@ def prepare_image(path: Path, layout_id: Optional[str], encoding: str):
         _apply_layout_geometry(image, layout_desc)
         return image
 
+    if layout_desc and ext == ".img" and layout_desc.layout_id == "ibm_xdf_1890k":
+        image = RawSectorImage(path.read_bytes(), bytes_per_sector=512)
+        image.layout = layout_desc
+        return image
+
     if layout_desc and ext not in {".scp", ".imd", ".dsk", ".dmk"}:
         track_data = sectors_from_blob(
             layout_desc,
@@ -104,6 +109,12 @@ def prepare_image(path: Path, layout_id: Optional[str], encoding: str):
         if layout_desc:
             image.layout = layout_desc
             _apply_layout_geometry(image, layout_desc)
+            if layout_desc.layout_id == "ibm_xdf_1890k":
+                from ..filesystems.xdf import XDFImage
+
+                xdf_image = XDFImage.from_track_image(image)
+                xdf_image.layout = layout_desc
+                return xdf_image
         return image
     if ext == ".imd":
         tracks, geom, _meta = load_imd_image(path)

@@ -79,10 +79,10 @@ Use these as the baseline known fixtures.
 | Commodore 1571 CBM DOS | `Commodore-1571-DSDD-GCR-C128-341K.d71`, `.scp` | Two heads, side 0/side 1 physical map, BAM for both sides, root file import on `.d71`. |
 | Commodore 1571 CP/M | `Commodore-1571-DSDD-MFM-C128CPM-340K.d71`, related `.scp`; `Commodore-1571-SSDD-MFM-C128CPM-170K.d64`, related `.scp` | CP/M detection, GCR/MFM expectations, root listing, export disabled, selected-file overlay limitations. |
 | Commodore 1581 CBM DOS | `Commodore-1581-DSDD-MFM-C64-800K.d81`, `.img`, `.scp` | 80-track MFM geometry, directory drill-down, 1581 BAM map, root-file import on `.d81`, copy-only gating on `.scp/.img` where applicable. |
-| Amiga OFS/FFS | `Commodore-1010-DSDD-MFM-Amiga-880K.adf`, `.img`, `.scp` | Amiga filesystem detection, directory drill-down, file/directory export, approximate selected-file overlay, mutation disabled. |
+| Amiga OFS/FFS | `Commodore-1010-DSDD-MFM-Amiga-880K.adf`, `.img`, `.scp` | Amiga filesystem detection, directory drill-down, file/directory export, approximate selected-file overlay, and same-size `.adf` file replacement; allocation-changing and directory mutation remain disabled. |
 | Apple II ProDOS 140K | `Apple-AppleII-SSDD-Apple6A2-ProDOSvb1a-140K.woz`, `.po`, `.scp` | All three identify 35 populated tracks, 16x256-byte sectors, ProDOS volume `/PRODOS`, the same three root entries, exact file extraction, and matching selected-file overlays. WOZ and SCP conversion to PO must be byte-identical. |
 | IBM DOS FAT12 | 180K, 360K, 720K, 1.2M, 1.44M `.img`, `.imd`, `.scp` fixtures | FAT12 detection, directory support where available, file export, flat `.img` mutation actions, decoded container write gating. |
-| IBM XDF OS/2 | `IBM-XDF-DSHD-MFM-OS2-1890K.scp` | 80-track DSHD MFM physical XDF layout; track 0 has 19x512 sectors, tracks 1-79 use 512/1024/2048/8192-byte sectors. Probe/QC should identify `ibm_xdf_1890k`; filesystem listing remains unsupported until logical XDF unpacking is implemented. |
+| IBM XDF OS/2 | `IBM-XDF-DSHD-MFM-OS2-1890K.scp` | 80-track DSHD MFM physical XDF layout; track 0 has 19x512 sectors, tracks 1-79 use 512/1024/2048/8192-byte sectors. Probe/QC should identify `ibm_xdf_1890k`; logical FAT12 listing, extraction, HEX viewing, and physical map addresses are supported read-only. |
 | IBM 8-inch FAT12 | `IBM-Generic-DSDD-MFM-IBMPC-1200K-B.scp`, `IBM-Generic-DSDD-MFM-IBMPC-1200K-C.scp`, known-bad 1.2M variants | Geometry mismatch tolerance, empty disk behavior, bad/unknown filesystem handling, need for known-good 1.15 MB fixtures. |
 | IBM DisplayWriter | `IBM-6580-SSDD-FM-DisplayWriter-284K.scp`, `.imd`, `.img` | Mixed FM geometry, standard-label entries, document extraction disabled with a clear message. |
 | DEC RT-11 RX02 | `DEC-RX02-DSDD-MFM-RT11-500K.scp`, `.imd`, `.img` | Probe metadata, list the flat RAD50 directory, view HEX, and export readable files. Mutation and directory traversal remain unsupported. |
@@ -186,7 +186,7 @@ Create one image for each preset, then immediately open it in Studio.
 | CBM DOS 1541 `.d64` | Probes as CBM DOS, BAM and directory blocks allocated, root import enabled. |
 | CBM DOS 1571 `.d71` | Probes as CBM DOS 1571, both BAM sides plausible, root import enabled. |
 | CBM DOS 1581 `.d81` | Probes as CBM DOS 1581, 80-track BAM map plausible, root import enabled. |
-| AmigaDOS OFS `.adf` | Probes as Amiga OFS, empty root, mutation disabled. |
+| AmigaDOS OFS `.adf` | Probes as Amiga OFS, empty root; same-size file replacement is enabled, allocation-changing and directory mutation remain disabled. |
 
 After creating each blank image, try opening it in an external emulator/tool when
 possible and note any validation or free-space disagreement.

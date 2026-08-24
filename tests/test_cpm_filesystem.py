@@ -6,8 +6,10 @@ from fluxctl import cli
 from fluxctl import studio_services as services
 from fluxctl.cli import _prepare_image
 from fluxctl.filesystem_detection import detect_filesystem
-from fluxctl.filesystems.cpm import CPMDirectoryRecord
-from fluxctl.layouts.loader import load_builtin_layouts
+from fluxctl.filesystems import RawSectorImage
+from fluxctl.filesystems.cpm import CPMDirectoryRecord, CPMFilesystem
+from fluxctl.layouts.loader import ensure_layout_loaded, load_builtin_layouts
+from fluxctl.trs80 import load_trs80_image
 
 
 FIXTURE_CPM_SRC1 = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC1-256K.img")
@@ -73,6 +75,25 @@ def _mount_tandy_fixture(path: Path, layout_id: str):
     assert detection.primary == "cpm"
     assert detection.plugin is not None
     return detection.plugin
+
+
+def _flatten_tandy_cpmplus_fixture() -> RawSectorImage:
+    tracks, _geometry, _metadata = load_trs80_image(FIXTURE_TANDY_CPMPLUS_DSK)
+    by_track = {track.track: track for track in tracks}
+    payload = bytearray()
+    payload.extend(
+        b"".join(sector.data for sector in sorted(by_track[0].sectors, key=lambda item: item.sector_id))
+    )
+    for track_number in range(1, 40):
+        payload.extend(
+            b"".join(
+                sector.data
+                for sector in sorted(by_track[track_number].sectors, key=lambda item: item.sector_id)
+            )
+        )
+    image = RawSectorImage(bytes(payload), bytes_per_sector=512)
+    image.layout = ensure_layout_loaded("tandy_mfm_cpmplus_156k")
+    return image
 
 
 def _mount_c128_gcr_fixture(path: Path):
@@ -302,6 +323,26 @@ def test_tandy_cpm_plus_file_allocation_overlay_uses_mixed_track_geometry() -> N
     assert (19, 0, 3) in addresses
     assert (19, 0, 8) in addresses
     assert (20, 0, 1) in addresses
+
+
+def test_tandy_cpm_plus_flat_image_writer_uses_mixed_sector_offsets() -> None:
+    image = _flatten_tandy_cpmplus_fixture()
+    filesystem = CPMFilesystem()
+    assert filesystem.probe(image)
+
+    patched = filesystem.import_file(image.data, "/", "NEW.COM", b"mixed writer")
+    reread = RawSectorImage(patched, bytes_per_sector=512)
+    reread.layout = image.layout
+    mounted = CPMFilesystem()
+    assert mounted.probe(reread)
+    assert mounted.extract_file("/NEW.COM").startswith(b"mixed writer")
+
+    deleted = mounted.delete_entry(patched, "/NEW.COM")
+    final = RawSectorImage(deleted, bytes_per_sector=512)
+    final.layout = image.layout
+    check = CPMFilesystem()
+    assert check.probe(final)
+    assert all(entry.name != "NEW.COM" for entry in check.list_directory())
 
 
 def test_c128_cpm_gcr_single_sided_extracts_files_and_maps_skewed_sectors() -> None:

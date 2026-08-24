@@ -16,6 +16,7 @@ from ..filesystems.cbm_dos import CBMDOS
 from ..filesystems.cbm_dos_1581 import CBMDOS1581
 from ..filesystems.cpm import CPMFilesystem, cpm_disk_parameters_for_layout
 from ..filesystems.fat12 import FAT12
+from ..filesystems.amiga import AmigaOFS
 from ..layouts.loader import ensure_layout_loaded
 from ..filesystems.cbm_dos import cbm_file_type_label
 from ..output import atomic_write_bytes
@@ -351,6 +352,11 @@ def _read_mutation_source(path: Path, output: Path) -> bytes:
 
 
 def _probe_mutation_filesystem(data: bytes, suffix: str, layout_id: Optional[str]):
+    if suffix == ".adf":
+        fs = AmigaOFS()
+        if not fs.probe(RawSectorImage(data, bytes_per_sector=512)):
+            raise ValueError("Amiga mutation is currently supported only for valid OFS/FFS .adf images")
+        return fs, "amiga_ffs" if fs.filesystem == "amiga_ffs" else "amiga_ofs"
     if suffix == ".img" and layout_id and cpm_disk_parameters_for_layout(layout_id):
         params = cpm_disk_parameters_for_layout(layout_id)
         image = RawSectorImage(data, bytes_per_sector=params.sector_size)
