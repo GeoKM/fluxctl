@@ -12,6 +12,7 @@ from math import cos, pi, sin
 from typing import List, Tuple
 
 from ..decoding import Decoder
+from ..cbm_dos_errors import cbm_dos_error_for_sector, is_cbm_dos_layout
 from ..exceptions import FluxDecodeError
 from ..models import LayoutDescriptor, SCPImage
 from ..sector.models import TrackSectors
@@ -54,6 +55,8 @@ class SectorMapEntry:
     confidence: float
     deleted: bool = False
     has_data: bool = True
+    cbm_dos_error_code: int | None = None
+    cbm_dos_error: str = ""
 
 
 @dataclass
@@ -97,8 +100,9 @@ class DiskMap:
     highlighted_sectors: set[Tuple[int, int, int]] = field(default_factory=set)
 
 
-def _sector_entry(sector: Sector) -> SectorMapEntry:
+def _sector_entry(sector: Sector, *, cbm_dos: bool = False) -> SectorMapEntry:
     state = _classify_sector(sector)
+    error = cbm_dos_error_for_sector(sector) if cbm_dos else None
     return SectorMapEntry(
         sector_id=sector.sector_id,
         state=state,
@@ -107,10 +111,18 @@ def _sector_entry(sector: Sector) -> SectorMapEntry:
         confidence=sector.confidence,
         deleted=sector.deleted,
         has_data=bool(sector.data),
+        cbm_dos_error_code=error.code if error else None,
+        cbm_dos_error=error.message if error else "",
     )
 
 
-def _missing_sector_entry(sector_id: int, sector_size: int) -> SectorMapEntry:
+def _missing_sector_entry(
+    sector_id: int,
+    sector_size: int,
+    *,
+    cbm_dos: bool = False,
+) -> SectorMapEntry:
+    error = cbm_dos_error_for_sector(None, data_block_missing=True) if cbm_dos else None
     return SectorMapEntry(
         sector_id=sector_id,
         state="bad",
@@ -118,6 +130,8 @@ def _missing_sector_entry(sector_id: int, sector_size: int) -> SectorMapEntry:
         crc_ok=False,
         confidence=0.0,
         has_data=False,
+        cbm_dos_error_code=error.code if error else None,
+        cbm_dos_error=error.message if error else "",
     )
 
 
@@ -164,6 +178,7 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
     track_confidence: List[float] = []
     sector_details: List[List[SectorMapEntry]] = []
     max_sectors = 0
+    cbm_dos = is_cbm_dos_layout(getattr(layout, "layout_id", None))
 
     ordered_tracks = sorted(image.tracks, key=lambda t: (t.track, t.side))
     track_total = len(ordered_tracks)
@@ -184,7 +199,11 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
         if not track_flux.revolutions:
             sector_base = _sector_id_base(layout, [])
             details = [
-                _missing_sector_entry(sector_id, layout.sector_size if layout else 0)
+                _missing_sector_entry(
+                    sector_id,
+                    layout.sector_size if layout else 0,
+                    cbm_dos=cbm_dos,
+                )
                 for sector_id in range(sector_base, sector_base + expected_this)
             ]
             sectors = [entry.state for entry in details]
@@ -236,14 +255,20 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
                     else 0.0
                 )
                 decoded = sorted(track_data.sectors, key=lambda s: s.sector_id)
-                details = [_sector_entry(sec) for sec in decoded]
+                details = [_sector_entry(sec, cbm_dos=cbm_dos) for sec in decoded]
                 if expected_this and len(details) < expected_this:
                     present_ids = {entry.sector_id for entry in details}
                     sector_size = layout.sector_size if layout else (decoded[0].size if decoded else 0)
                     sector_base = _sector_id_base(layout, decoded)
                     for sector_id in range(sector_base, sector_base + expected_this):
                         if sector_id not in present_ids:
-                            details.append(_missing_sector_entry(sector_id, sector_size))
+                            details.append(
+                                _missing_sector_entry(
+                                    sector_id,
+                                    sector_size,
+                                    cbm_dos=cbm_dos,
+                                )
+                            )
                     details.sort(key=lambda entry: entry.sector_id)
                 sectors = [entry.state for entry in details]
             except (FluxDecodeError, Exception):
@@ -254,7 +279,11 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
                 # recovery.
                 sector_base = _sector_id_base(layout, [])
                 details = [
-                    _missing_sector_entry(sector_id, layout.sector_size if layout else 0)
+                    _missing_sector_entry(
+                        sector_id,
+                        layout.sector_size if layout else 0,
+                        cbm_dos=cbm_dos,
+                    )
                     for sector_id in range(sector_base, sector_base + expected_this)
                 ]
                 sectors = [entry.state for entry in details]
@@ -275,7 +304,10 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
     )
 
 
-def build_disk_map_from_tracksectors(tracks: list[TrackSectors]) -> DiskMap:
+def build_disk_map_from_tracksectors(
+    tracks: list[TrackSectors],
+    layout: LayoutDescriptor | None = None,
+) -> DiskMap:
     """Build a DiskMap from already reconstructed TrackSectors (flat images)."""
 
     if not tracks:
@@ -287,8 +319,12 @@ def build_disk_map_from_tracksectors(tracks: list[TrackSectors]) -> DiskMap:
     track_confidence: list[float] = []
     sector_details: list[list[SectorMapEntry]] = []
 
+    cbm_dos = is_cbm_dos_layout(getattr(layout, "layout_id", None))
     for ts in sorted(tracks, key=lambda t: (t.track, t.head)):
-        details = [_sector_entry(sec) for sec in sorted(ts.sectors, key=lambda s: s.sector_id)]
+        details = [
+            _sector_entry(sec, cbm_dos=cbm_dos)
+            for sec in sorted(ts.sectors, key=lambda s: s.sector_id)
+        ]
         sectors = [entry.state for entry in details]
         track_states.append(sectors)
         track_ids.append((ts.track, ts.head))

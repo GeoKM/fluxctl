@@ -181,6 +181,16 @@ fluxctl extract disk.img --path FILE.TXT --out output.bin
 fluxctl extract disk.scp --layout ibm_mfm_720k --path README.TXT --out readme.bin
 ```
 
+For Commodore layouts, QC JSON/text reports and Studio map details also include
+conservative CBM DOS command-channel codes inferred from decoded sectors. An
+unrecovered expected sector is reported as `22 READ ERROR (data block not
+present)`, and recovered data with a failed checksum is reported as `23 READ
+ERROR (checksum error in data block)`. These codes describe the closest CBM
+DOS read diagnosis; the original drive may have reported `20`/`21`/`24`/`27`
+depending on whether the failure occurred in the header, sync, or byte
+decoder. Write-protect, write-verify, long-block, and disk-ID errors cannot be
+proven from a read-only image and are never guessed.
+
 ### Sector inspection and patching
 
 ```bash
