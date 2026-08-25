@@ -739,7 +739,7 @@ def _legacy_build_disk_map_for_image(
     image_obj = _prepare_image_for_studio(path, layout_id, encoding)
     if not isinstance(image_obj, TrackSectorImage):
         raise ValueError("Image could not be reconstructed into sector tracks")
-    disk_map = build_disk_map_from_tracksectors(image_obj.tracks)
+    disk_map = build_disk_map_from_tracksectors(image_obj.tracks, layout=layout)
     if map_view == "logical" and layout_id == "commodore_gcr_1541_170k":
         try:
             detection = detect_filesystem(image_obj)

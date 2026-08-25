@@ -112,12 +112,13 @@ class DiskMapWidget(QWidget):
         state_label = self.LEGEND_LABELS.get(detail.state, detail.state)
         data = "yes" if detail.has_data else "no"
         deleted = "yes" if detail.deleted else "no"
+        cbm_error = f"\nCBM DOS: {detail.cbm_dos_error}" if detail.cbm_dos_error else ""
         return (
             f"Track {track}  Head {head}\n"
             f"Sector ID {detail.sector_id}  Position {sector_index + 1}\n"
             f"State: {state_label}  CRC: {crc}\n"
             f"Confidence: {detail.confidence:.2f}\n"
-            f"Size: {detail.size} bytes  Data: {data}  Deleted: {deleted}\n"
+            f"Size: {detail.size} bytes  Data: {data}  Deleted: {deleted}{cbm_error}\n"
             "Double-click for preservation diagnostics"
         )
 

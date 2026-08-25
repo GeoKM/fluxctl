@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import List
 
 from ..decoding import Decoder
+from ..cbm_dos_errors import cbm_dos_error_for_sector, is_cbm_dos_layout
 from ..exceptions import FluxDecodeError
 from ..models import LayoutDescriptor, SCPImage, TrackFlux
 from ..output import atomic_write_text
@@ -43,6 +44,7 @@ class TrackQC:
     bad_sectors: int
     crc_errors: int
     confidence: float
+    cbm_dos_errors: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         """Return a dictionary representation suitable for JSON serialisation."""
@@ -65,6 +67,7 @@ class DiskQCReport:
     total_bad_sectors: int = 0
     total_weak_sectors: int = 0
     total_missing_sectors: int = 0
+    cbm_dos_errors: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         """Return the QC report as a JSON-friendly dictionary."""
@@ -81,6 +84,7 @@ class DiskQCReport:
             "total_bad_sectors": self.total_bad_sectors,
             "total_weak_sectors": self.total_weak_sectors,
             "total_missing_sectors": self.total_missing_sectors,
+            "cbm_dos_errors": self.cbm_dos_errors,
         }
 
     def to_json(self) -> str:
@@ -106,6 +110,7 @@ class DiskQCReport:
             total_bad_sectors=data.get("total_bad_sectors", 0),
             total_weak_sectors=data.get("total_weak_sectors", 0),
             total_missing_sectors=data.get("total_missing_sectors", 0),
+            cbm_dos_errors=data.get("cbm_dos_errors", {}),
         )
 
 
@@ -182,7 +187,12 @@ def _compute_missing_tracks(image: SCPImage, layout: LayoutDescriptor | None, tr
     return max(missing, 0)
 
 
-def _summarize_track_sectors(track_sectors: TrackSectors, missing: int) -> dict:
+def _summarize_track_sectors(
+    track_sectors: TrackSectors,
+    missing: int,
+    *,
+    cbm_dos: bool = False,
+) -> dict:
     """Compute per-track QC counts from reconstructed sectors."""
 
     sectors = track_sectors.sectors
@@ -195,6 +205,14 @@ def _summarize_track_sectors(track_sectors: TrackSectors, missing: int) -> dict:
     )
     bad = no_data + crc_errors
     confidence = sum(sector.confidence for sector in data_sectors) / len(data_sectors) if data_sectors else 0.0
+    cbm_errors: dict[str, int] = {}
+    if cbm_dos:
+        for sector in sectors:
+            error = cbm_dos_error_for_sector(sector)
+            if error:
+                cbm_errors[str(error.code)] = cbm_errors.get(str(error.code), 0) + 1
+        if missing:
+            cbm_errors["22"] = cbm_errors.get("22", 0) + missing
 
     return {
         "good": good,
@@ -204,6 +222,7 @@ def _summarize_track_sectors(track_sectors: TrackSectors, missing: int) -> dict:
         "bad": bad,
         "confidence": confidence,
         "missing": missing,
+        "cbm_dos_errors": cbm_errors,
     }
 
 
@@ -250,6 +269,7 @@ def build_qc_report(
     # sector IDs. Unknown geometry must not be inferred from the source name.
     expected_hint = 0
     encoding = layout.encoding if layout else getattr(decoder, "encoding", None)
+    cbm_dos = is_cbm_dos_layout(getattr(layout, "layout_id", None))
     track_total = len(image.tracks)
     for track_index, track_flux in enumerate(image.tracks, start=1):
         if operation is not None:
@@ -298,13 +318,14 @@ def build_qc_report(
                 logical_track,
                 expected_hint,
             )
-            summary = _summarize_track_sectors(track_sectors, missing)
+            summary = _summarize_track_sectors(track_sectors, missing, cbm_dos=cbm_dos)
             good = summary["good"]
             weak = summary["weak"]
             bad = summary["bad"]
             crc_errors = summary["crc_errors"]
             no_data = summary["no_data"]
             confidence = summary["confidence"]
+            cbm_errors = summary["cbm_dos_errors"]
         except Exception:
             if operation is not None:
                 operation.checkpoint("cancelled")
@@ -316,6 +337,7 @@ def build_qc_report(
             missing = 0
             no_data = 0
             confidence = 0.0
+            cbm_errors = {"22": expected or 1} if cbm_dos else {}
 
         track_reports.append(
             TrackQC(
@@ -329,6 +351,7 @@ def build_qc_report(
                 bad_sectors=bad,
                 crc_errors=crc_errors,
                 confidence=confidence,
+                cbm_dos_errors=cbm_errors,
             )
         )
 
@@ -337,6 +360,12 @@ def build_qc_report(
     )
     missing_tracks = _compute_missing_tracks(image, layout, track_step)
     notes = ["bad_sectors includes no_data + crc_errors"]
+    cbm_errors: dict[str, int] = {}
+    for track in track_reports:
+        for code, count in track.cbm_dos_errors.items():
+            cbm_errors[code] = cbm_errors.get(code, 0) + count
+    if cbm_errors:
+        notes.append("CBM DOS errors are inferred from decoded sector evidence; controller-only errors are not guessed")
 
     disk_summary = _summarize_disk(track_reports, missing_tracks, trim_trailing_empty=layout is None)
     return DiskQCReport(
@@ -351,6 +380,7 @@ def build_qc_report(
         total_bad_sectors=disk_summary["total_bad"],
         total_weak_sectors=disk_summary["total_weak"],
         total_missing_sectors=disk_summary["total_missing"],
+        cbm_dos_errors=cbm_errors,
     )
 
 
@@ -372,7 +402,8 @@ def build_qc_report_from_tracks(
     for ts in tracks:
         logical_track = ts.track // max(track_step, 1)
         expected, missing = _resolve_expected_and_missing(ts, layout, logical_track, expected_hint)
-        summary = _summarize_track_sectors(ts, missing)
+        cbm_dos = is_cbm_dos_layout(getattr(layout, "layout_id", None))
+        summary = _summarize_track_sectors(ts, missing, cbm_dos=cbm_dos)
         track_reports.append(
             TrackQC(
                 track=ts.track,
@@ -385,6 +416,7 @@ def build_qc_report_from_tracks(
                 bad_sectors=summary["bad"],
                 crc_errors=summary["crc_errors"],
                 confidence=summary["confidence"],
+                cbm_dos_errors=summary["cbm_dos_errors"],
             )
         )
 
@@ -397,6 +429,10 @@ def build_qc_report_from_tracks(
     # not make an otherwise clean image suspect.
     missing_tracks = _compute_missing_tracks(image, None, track_step)
     disk_summary = _summarize_disk(track_reports, missing_tracks, trim_trailing_empty=layout is None)
+    cbm_errors: dict[str, int] = {}
+    for track in track_reports:
+        for code, count in track.cbm_dos_errors.items():
+            cbm_errors[code] = cbm_errors.get(code, 0) + count
     return DiskQCReport(
         tracks=track_reports,
         overall_confidence=overall_confidence,
@@ -409,6 +445,7 @@ def build_qc_report_from_tracks(
         total_bad_sectors=disk_summary["total_bad"],
         total_weak_sectors=disk_summary["total_weak"],
         total_missing_sectors=disk_summary["total_missing"],
+        cbm_dos_errors=cbm_errors,
     )
 
 
@@ -434,6 +471,12 @@ def write_qc_report_text(
     if report.notes:
         lines.append("Notes:")
         lines.extend([f"- {note}" for note in report.notes])
+    if report.cbm_dos_errors:
+        lines.append("CBM DOS error codes (inferred):")
+        for code, count in sorted(report.cbm_dos_errors.items(), key=lambda item: int(item[0])):
+            from ..cbm_dos_errors import CBM_DOS_ERROR_MESSAGES
+
+            lines.append(f"- {code}: {CBM_DOS_ERROR_MESSAGES.get(int(code), 'Unknown')} ({count})")
     if layout:
         lines.append(f"Layout: {layout.layout_id}")
         lines.append(f"Cylinders: {layout.tracks}")
@@ -449,6 +492,8 @@ def write_qc_report_text(
             f"missing={track.missing_sectors} no_data={track.no_data_sectors} "
             f"bad={track.bad_sectors} crc_errors={track.crc_errors} conf={track.confidence:.2f}"
         )
+        if track.cbm_dos_errors:
+            lines.append(f"  CBM DOS errors: {track.cbm_dos_errors}")
     atomic_write_text(path, "\n".join(lines), overwrite=overwrite)
 
 
