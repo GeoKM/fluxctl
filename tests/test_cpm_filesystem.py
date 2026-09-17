@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -5,6 +6,7 @@ from typer.testing import CliRunner
 from fluxctl import cli
 from fluxctl import studio_services as services
 from fluxctl.cli import _prepare_image
+from fluxctl.application.decode_operations import decode_tracks
 from fluxctl.filesystem_detection import detect_filesystem
 from fluxctl.filesystems import RawSectorImage
 from fluxctl.filesystems.cpm import CPMDirectoryRecord, CPMFilesystem
@@ -14,6 +16,7 @@ from fluxctl.trs80 import load_trs80_image
 
 FIXTURE_CPM_SRC1 = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC1-256K.img")
 FIXTURE_CPM_SRC2 = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC2-256K.img")
+FIXTURE_CPM86_BASE = Path("tests/fixtures/8inch/CPM/CPM86-Generic-SSSD-FM-CPM86-256K")
 FIXTURE_OSBORNE_CPM22 = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-CPM22-200K.imd")
 FIXTURE_OSBORNE_WSTR = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-WSTR-200K.imd")
 FIXTURE_OSBORNE_CPM22_IMG = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-CPM22-200K.img")
@@ -40,6 +43,73 @@ FIXTURE_C64_CPM_GCR_SCP = Path(
 FIXTURE_C64_CPM_D64 = Path(
     "tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64CPM-170K.d64"
 )
+
+
+def test_trs80_model2_cpm_uses_mixed_physical_sector_mapper() -> None:
+    layout = ensure_layout_loaded("tandy_trs80_model2_cpm_625k")
+    image_bytes = bytearray(b"\xE5" * 625_920)
+    directory_offset = 11_520
+    entry = bytearray(32)
+    entry[1:9] = b"SAMPLE  "
+    entry[9:12] = b"TXT"
+    entry[15] = 16  # 16 CP/M 128-byte records = one 2 KiB allocation block.
+    entry[16] = 2
+    image_bytes[directory_offset : directory_offset + 32] = entry
+    payload = bytes((index % 251 for index in range(2048)))
+    payload_offset = 11_520 + 2 * 2_048
+    image_bytes[payload_offset : payload_offset + len(payload)] = payload
+
+    image = RawSectorImage(bytes(image_bytes), bytes_per_sector=1024)
+    image.layout = layout
+    filesystem = CPMFilesystem()
+
+    assert filesystem.probe(image)
+    assert [entry.name for entry in filesystem.list_directory()] == ["SAMPLE.TXT"]
+    assert filesystem.extract_file("/SAMPLE.TXT") == payload
+
+
+def test_trs80_model2_16x512_cpm_uses_mixed_physical_sector_mapper() -> None:
+    layout = ensure_layout_loaded("tandy_trs80_model2_cpm_16x512_625k")
+    image_bytes = bytearray(b"\xE5" * 625_920)
+    entry = bytearray(32)
+    entry[1:9] = b"SAMPLE  "
+    entry[9:12] = b"TXT"
+    entry[15] = 16
+    entry[16] = 2
+    image_bytes[11_520 : 11_520 + 32] = entry
+    payload = bytes((index % 251 for index in range(2048)))
+    image_bytes[11_520 + 2 * 2_048 : 11_520 + 4 * 2_048] = payload
+
+    image = RawSectorImage(bytes(image_bytes), bytes_per_sector=512)
+    image.layout = layout
+    filesystem = CPMFilesystem()
+    assert filesystem.probe(image)
+    assert [entry.name for entry in filesystem.list_directory()] == ["SAMPLE.TXT"]
+    assert filesystem.extract_file("/SAMPLE.TXT") == payload
+
+
+def test_cpm86_fixture_decodes_all_sectors_and_preserves_deleted_marks() -> None:
+    tracks = decode_tracks(FIXTURE_CPM86_BASE.with_suffix(".scp"), "generic_fm_8inch_cpm_256k")
+    assert len(tracks) == 77
+    assert sum(1 for track in tracks for sector in track.sectors if sector.data and sector.crc_ok) == 2_002
+    assert sum(1 for track in tracks for sector in track.sectors if sector.deleted) == 18
+
+
+def test_cpm86_fixture_mounts_from_img_and_imd() -> None:
+    load_builtin_layouts()
+    expected_hashes = {
+        "ASM86.CMD": "81d433825956d150b6a6bca1b3e2284dde5f81f66c78ad57c942a8920473541c",
+        "CPM.SYS": "0324c4f383c9026435acf11167804f5c48606b8198c960c56659c70f94090723",
+        "SID86.CMD": "7d07bceef761214742d3371be3f90bdfedd5b11c42cd1858cc5e1e823e82bb4a",
+    }
+    for extension in (".img", ".imd"):
+        image = _prepare_image(FIXTURE_CPM86_BASE.with_suffix(extension), "generic_fm_8inch_cpm_256k", "fm")
+        detection = detect_filesystem(image)
+        assert detection.primary == "cpm"
+        assert detection.plugin is not None
+        assert len(detection.plugin.list_directory("/")) == 23
+        for name, expected_hash in expected_hashes.items():
+            assert hashlib.sha256(detection.plugin.extract_file(f"/{name}")).hexdigest() == expected_hash
 
 
 def _mount_cpm_fixture(path: Path):

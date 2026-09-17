@@ -16,6 +16,7 @@ from ..decoding import Decoder
 from ..cbm_dos_errors import cbm_dos_error_for_sector, is_cbm_dos_layout
 from ..exceptions import FluxDecodeError
 from ..models import LayoutDescriptor, SCPImage, TrackFlux
+from ..plugins import registry
 from ..output import atomic_write_text
 from ..sector.models import Sector, TrackSectors
 from ..sector.reconstruct import build_track_sectors_from_revolutions
@@ -277,6 +278,12 @@ def build_qc_report(
         logical_track = track_flux.track // max(track_step, 1)
         if layout and (logical_track >= layout.tracks or track_flux.side >= layout.sides):
             continue
+        track_encoding = layout.encoding_for_track(logical_track, track_flux.side) if layout else encoding
+        track_decoder = decoder
+        if track_encoding != encoding:
+            plugin = registry.encoding.get(track_encoding)
+            if plugin is not None:
+                track_decoder = plugin.entry
         try:
             if not track_flux.revolutions:
                 raise FluxDecodeError("No revolutions present for track")
@@ -302,13 +309,13 @@ def build_qc_report(
             else:
                 track_sectors = build_track_sectors_from_revolutions(
                     track_flux.revolutions,
-                    decoder,
+                    track_decoder,
                     cylinder=track_flux.track,
                     head=track_flux.side,
                     expected_sectors=layout.expected_sectors_for_track(logical_track, track_flux.side)
                     if layout
                     else expected_hint or None,
-                    encoding=encoding,
+                    encoding=track_encoding,
                     timebase_ns=image.timebase_ns,
                     operation=operation,
                 )

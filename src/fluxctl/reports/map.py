@@ -15,6 +15,7 @@ from ..decoding import Decoder
 from ..cbm_dos_errors import cbm_dos_error_for_sector, is_cbm_dos_layout
 from ..exceptions import FluxDecodeError
 from ..models import LayoutDescriptor, SCPImage
+from ..plugins import registry
 from ..sector.models import TrackSectors
 from ..sector.models import Sector
 from ..sector.reconstruct import build_track_sectors_from_revolutions
@@ -187,6 +188,12 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
             operation.checkpoint("track", track_index, track_total)
         if layout and (track_flux.track >= layout.tracks or track_flux.side >= layout.sides):
             continue
+        track_encoding = layout.encoding_for_track(track_flux.track, track_flux.side) if layout else getattr(decoder, "encoding", None)
+        track_decoder = decoder
+        if track_encoding != getattr(decoder, "encoding", None):
+            plugin = registry.encoding.get(track_encoding)
+            if plugin is not None:
+                track_decoder = plugin.entry
         expected_this = expected_sectors
         if layout and hasattr(layout, "expected_sectors_for_track"):
             try:
@@ -241,11 +248,11 @@ def build_disk_map(image: SCPImage, decoder: Decoder, layout: LayoutDescriptor |
                 else:
                     track_data = build_track_sectors_from_revolutions(
                         track_flux.revolutions,
-                        decoder,
+                        track_decoder,
                         cylinder=track_flux.track,
                         head=track_flux.side,
                         expected_sectors=expected_this or None,
-                        encoding=layout.encoding if layout else getattr(decoder, "encoding", None),
+                        encoding=track_encoding,
                         timebase_ns=image.timebase_ns,
                         operation=operation,
                     )

@@ -165,6 +165,15 @@ class LayoutDescriptor:
             return list(self.sector_sizes)
         return None
 
+    def encoding_for_track(self, track_index: int, head_index: Optional[int] = None) -> str:
+        """Return the encoding used by a logical track."""
+
+        if self.track_overrides:
+            override = self._match_override(track_index, head_index)
+            if override and override.get("encoding"):
+                return str(override["encoding"])
+        return self.encoding
+
     def _match_override(
         self, track_index: int, head_index: Optional[int]
     ) -> Optional[Dict[str, object]]:

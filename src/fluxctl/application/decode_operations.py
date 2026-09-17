@@ -46,7 +46,7 @@ def decode_tracks(path: Path, layout_id: Optional[str], *, encoding: Optional[st
     scp = parse_scp(path)
     layout = ensure_layout_loaded(layout_id) if layout_id else None
     selected = layout.encoding if layout else (encoding or "mfm")
-    decoder = decoder_for(selected)
+    decoders = {selected: decoder_for(selected)}
     tracks: list[TrackSectors] = []
     nibbles: list[TrackNibbles] = []
     track_total = len(scp.tracks)
@@ -55,6 +55,8 @@ def decode_tracks(path: Path, layout_id: Optional[str], *, encoding: Optional[st
             operation.checkpoint("track", track_index, track_total)
         if layout and (raw.track >= layout.tracks or raw.side >= layout.sides):
             continue
+        track_encoding = layout.encoding_for_track(raw.track, raw.side) if layout else selected
+        decoder = decoders.setdefault(track_encoding, decoder_for(track_encoding))
         revolutions = [rev for rev in raw.revolutions if getattr(rev, "interval_ns", None)]
         if not revolutions:
             continue
@@ -64,18 +66,18 @@ def decode_tracks(path: Path, layout_id: Optional[str], *, encoding: Optional[st
                 expected = layout.expected_sectors_for_track(raw.track, raw.side)
             except Exception:
                 expected = layout.sectors_per_track
-        if selected == "gcr" and hasattr(decoder, "set_track"):
+        if track_encoding == "gcr" and hasattr(decoder, "set_track"):
             decoder.set_track(raw.track)
         if operation is not None:
             operation.checkpoint("candidate decoder", 1, len(revolutions))
-        primary = None if selected == "dec_rx02" else decoder.decode_revolution(revolutions[0])
+        primary = None if track_encoding == "dec_rx02" else decoder.decode_revolution(revolutions[0])
         tracks.append(build_track_sectors_from_revolutions(
             revolutions, decoder, cylinder=raw.track, head=raw.side,
-            expected_sectors=expected, encoding=selected,
-            timebase_ns=scp.timebase_ns if selected == "gcr" else None,
+            expected_sectors=expected, encoding=track_encoding,
+            timebase_ns=scp.timebase_ns if track_encoding == "gcr" else None,
             operation=operation,
         ))
-        if capture_nibbles and selected == "gcr":
+        if capture_nibbles and track_encoding == "gcr":
             streams = [primary]
             for revolution_index, rev in enumerate(revolutions[1:], start=2):
                 if operation is not None:

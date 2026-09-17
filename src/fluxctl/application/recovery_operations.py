@@ -64,7 +64,7 @@ def _recover_tracks(
     layout = ensure_layout_loaded(layout_id)
     image = parse_scp(path)
     from .image_operations import get_decoder
-    decoder = get_decoder(encoding or layout.encoding)
+    decoders: dict[str, Any] = {}
     recovered: list[TrackSectors] = []
     track_reports: list[dict[str, Any]] = []
     selected_count = 0
@@ -78,6 +78,8 @@ def _recover_tracks(
         if track_flux.track >= layout.tracks or track_flux.side >= layout.sides:
             continue
         expected = layout.expected_sectors_for_track(track_flux.track, track_flux.side)
+        track_encoding = layout.encoding_for_track(track_flux.track, track_flux.side)
+        decoder = decoders.setdefault(track_encoding, get_decoder(track_encoding))
         candidates: list[tuple[int, TrackSectors]] = []
         revolution_total = len(track_flux.revolutions)
         for revolution_index, revolution in enumerate(track_flux.revolutions, start=1):
@@ -94,7 +96,7 @@ def _recover_tracks(
                     cylinder=track_flux.track,
                     head=track_flux.side,
                     expected_sectors=expected,
-                    encoding=layout.encoding,
+                    encoding=track_encoding,
                 )
             except Exception:
                 if operation is not None:

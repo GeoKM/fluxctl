@@ -118,6 +118,19 @@ def cpm_disk_parameters_for_layout(layout_id: str) -> CPMDiskParameters | None:
             skew=(0, 1, 2, 3, 4, 5, 6, 7),
             reserved_sectors=18,
         )
+    if layout_id in {
+        "tandy_trs80_model2_cpm_625k",
+        "tandy_trs80_model2_cpm_16x512_625k",
+    }:
+        return CPMDiskParameters(
+            reserved_tracks=2,
+            sectors_per_track=64,
+            sector_size=128,
+            block_size=2048,
+            skew=tuple(range(64)),
+            directory_blocks=2,
+            reserved_sectors=90,
+        )
     return None
 
 
@@ -268,7 +281,10 @@ class CPMFilesystem(Filesystem):
                 data = self._read_image_logical_sector(image, logical_sector, params)
             except Exception:
                 return records
-            if getattr(getattr(image, "layout", None), "layout_id", "") == "tandy_mfm_cpmplus_156k":
+            layout_id = getattr(getattr(image, "layout", None), "layout_id", "")
+            if layout_id in {"tandy_trs80_model2_cpm_625k", "tandy_trs80_model2_cpm_16x512_625k"}:
+                sector_start = self._trs80_model2_byte_offset(logical_sector, layout_id)
+            elif layout_id == "tandy_mfm_cpmplus_156k":
                 sector_start = self._tandy_cpmplus_byte_offset(logical_sector, params)
             else:
                 sector_start = self._physical_lba_for_logical_sector(logical_sector, params) * params.sector_size
@@ -501,6 +517,10 @@ class CPMFilesystem(Filesystem):
                     track, sector = self._tandy_cpmplus_chs_for_logical_sector(logical_sector, params)
                     addresses.add((track, 0, sector_base + sector))
                     continue
+                if getattr(layout, "layout_id", "") in {"tandy_trs80_model2_cpm_625k", "tandy_trs80_model2_cpm_16x512_625k"}:
+                    track, sector_id, _subrecord = self._trs80_model2_chs_for_logical_sector(logical_sector, layout.layout_id)
+                    addresses.add((track, 0, sector_id))
+                    continue
                 physical_lba = self._physical_lba_for_logical_sector(logical_sector, params)
                 track = physical_lba // params.sectors_per_track
                 sector_id = (physical_lba % params.sectors_per_track) + sector_base
@@ -573,9 +593,22 @@ class CPMFilesystem(Filesystem):
         return self._read_image_logical_sector(self._image, sector_index, params)
 
     def _read_image_logical_sector(self, image: SectorImage, sector_index: int, params: CPMDiskParameters) -> bytes:
-        if params.sector_size != getattr(image, "bytes_per_sector", params.sector_size):
-            raise FilesystemError("CP/M disk parameter block does not match image sector size")
         layout_id = getattr(getattr(image, "layout", None), "layout_id", "")
+        if layout_id not in {"tandy_trs80_model2_cpm_625k", "tandy_trs80_model2_cpm_16x512_625k"} and params.sector_size != getattr(image, "bytes_per_sector", params.sector_size):
+            raise FilesystemError("CP/M disk parameter block does not match image sector size")
+        if layout_id in {"tandy_trs80_model2_cpm_625k", "tandy_trs80_model2_cpm_16x512_625k"}:
+            offset = self._trs80_model2_byte_offset(sector_index, layout_id)
+            if hasattr(image, "data"):
+                data = image.data[offset : offset + params.sector_size]
+            else:
+                track, sector_id, subrecord = self._trs80_model2_chs_for_logical_sector(sector_index, layout_id)
+                try:
+                    data = image._sector_lookup[(track, 0, sector_id)][subrecord * 128 : (subrecord + 1) * 128]
+                except KeyError as exc:
+                    raise FilesystemError(f"TRS-80 Model II sector {(track, 0, sector_id)} not available") from exc
+            if len(data) != params.sector_size:
+                raise FilesystemError("TRS-80 Model II logical sector exceeds image size")
+            return data
         if layout_id == "tandy_mfm_cpmplus_156k" and hasattr(image, "data"):
             offset = self._tandy_cpmplus_byte_offset(sector_index, params)
             data = image.data[offset : offset + params.sector_size]
@@ -596,6 +629,10 @@ class CPMFilesystem(Filesystem):
         if layout_id == "tandy_mfm_cpmplus_156k":
             track, sector = self._tandy_cpmplus_chs_for_logical_sector(sector_index, params)
             return track * 18 + sector
+        if layout_id in {"tandy_trs80_model2_cpm_625k", "tandy_trs80_model2_cpm_16x512_625k"}:
+            track, sector_id, _subrecord = self._trs80_model2_chs_for_logical_sector(sector_index, layout_id)
+            sectors_per_track = 16 if layout_id == "tandy_trs80_model2_cpm_16x512_625k" else 8
+            return track * sectors_per_track + (sector_id - 1)
         track = sector_index // params.sectors_per_track
         logical_sector = sector_index % params.sectors_per_track
         try:
@@ -603,6 +640,37 @@ class CPMFilesystem(Filesystem):
         except IndexError as exc:
             raise FilesystemError("CP/M sector skew table does not match sectors per track") from exc
         return track * params.sectors_per_track + physical_sector
+
+    @staticmethod
+    def _trs80_model2_chs_for_logical_sector(sector_index: int, layout_id: str) -> tuple[int, int, int]:
+        """Map a 128-byte CP/M record to a Model II physical sector."""
+
+        if sector_index < 0:
+            raise FilesystemError("Negative TRS-80 Model II logical sector")
+        records_per_physical_sector = 4 if layout_id == "tandy_trs80_model2_cpm_16x512_625k" else 8
+        if sector_index < 26:
+            return 0, sector_index + 1, 0
+        if sector_index < 90:
+            data_sector = sector_index - 26
+            return 1, (data_sector // records_per_physical_sector) + 1, data_sector % records_per_physical_sector
+        data_sector = sector_index - 90
+        return 2 + data_sector // 64, (data_sector % 64) // records_per_physical_sector + 1, data_sector % records_per_physical_sector
+
+    @staticmethod
+    def _trs80_model2_byte_offset(sector_index: int, layout_id: str) -> int:
+        """Return the byte offset of a 128-byte record in the mixed image."""
+
+        if sector_index < 0:
+            raise FilesystemError("Negative TRS-80 Model II logical sector")
+        if sector_index < 26:
+            return sector_index * 128
+        records_per_physical_sector = 4 if layout_id == "tandy_trs80_model2_cpm_16x512_625k" else 8
+        physical_size = 512 if layout_id == "tandy_trs80_model2_cpm_16x512_625k" else 1024
+        if sector_index < 90:
+            data_sector = sector_index - 26
+            return 26 * 128 + (data_sector // records_per_physical_sector) * physical_size + (data_sector % records_per_physical_sector) * 128
+        data_sector = sector_index - 90
+        return 90 * 128 + (data_sector // records_per_physical_sector) * physical_size + (data_sector % records_per_physical_sector) * 128
 
     def _tandy_cpmplus_chs_for_logical_sector(
         self, sector_index: int, params: CPMDiskParameters
@@ -634,6 +702,12 @@ class CPMFilesystem(Filesystem):
         if len(data) != params.sector_size:
             raise FilesystemError("CP/M sector write size mismatch")
         layout_id = getattr(getattr(self._image, "layout", None), "layout_id", "") if self._image is not None else ""
+        if layout_id in {"tandy_trs80_model2_cpm_625k", "tandy_trs80_model2_cpm_16x512_625k"}:
+            offset = self._trs80_model2_byte_offset(sector_index, layout_id)
+            if offset + params.sector_size > len(image):
+                raise FilesystemError("TRS-80 Model II logical sector exceeds image size")
+            image[offset : offset + params.sector_size] = data
+            return
         if layout_id == "tandy_mfm_cpmplus_156k":
             offset = self._tandy_cpmplus_byte_offset(sector_index, params)
             if offset + params.sector_size > len(image):
@@ -657,6 +731,8 @@ class CPMFilesystem(Filesystem):
             )
 
     def _directory_offset(self, params: CPMDiskParameters) -> int:
+        if getattr(getattr(self._image, "layout", None), "layout_id", "") in {"tandy_trs80_model2_cpm_625k", "tandy_trs80_model2_cpm_16x512_625k"}:
+            return params.first_directory_sector * params.sector_size
         if getattr(getattr(self._image, "layout", None), "layout_id", "") == "tandy_mfm_cpmplus_156k":
             return params.first_directory_sector * 256
         return params.first_directory_sector * params.sector_size

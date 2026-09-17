@@ -151,53 +151,61 @@ def _decode_ibm_greaseweazle_flux(
     expected_sectors: Optional[int],
     source_revolutions: list[int],
 ) -> Optional[TrackSectors]:
-    config = scan_def_cls("ibm.scan")
-    config.rate = rate
-    config.rpm = rpm
-    codec = config.mk_track(track, head)
+    pll_candidates = [None]
     try:
-        # IBMTrack_Scan caches the previous timing/mode guess globally. That is
-        # useful while reading a real disk sequentially, but here we evaluate
-        # several independent candidate rate/RPM combinations for one track.
-        # A partial first candidate can otherwise short-circuit a later, better
-        # candidate as "complete" in Greaseweazle's own terms.
-        if hasattr(codec.__class__, "BEST_GUESS"):
-            codec.__class__.BEST_GUESS = None
-        with contextlib.redirect_stdout(io.StringIO()):
-            codec.decode_flux(flux)
+        from greaseweazle.track import plls
+
+        if len(plls) > 1:
+            pll_candidates.append(plls[1])
     except Exception:
-        return None
+        pass
 
-    merged: dict[int, Sector] = {}
-    for area in getattr(codec.track, "sectors", []):
-        idam = area.idam
-        dam = area.dam
-        data = bytes(dam.data or b"")
-        if not data:
+    candidates: list[TrackSectors] = []
+    for pll in pll_candidates:
+        config = scan_def_cls("ibm.scan")
+        config.rate = rate
+        config.rpm = rpm
+        codec = config.mk_track(track, head)
+        try:
+            # IBMTrack_Scan caches the previous timing/mode guess globally. That
+            # is useful while reading sequentially, but each PLL candidate here
+            # must be evaluated independently.
+            if hasattr(codec.__class__, "BEST_GUESS"):
+                codec.__class__.BEST_GUESS = None
+            with contextlib.redirect_stdout(io.StringIO()):
+                codec.decode_flux(flux, pll=pll)
+        except Exception:
             continue
-        size_code = int(idam.n)
-        candidate = Sector(
-            cylinder=int(idam.c),
-            head=int(idam.h),
-            sector_id=int(idam.r),
-            size_code=size_code,
-            data=data,
-            crc_ok=area.crc == 0,
-            confidence=1.0,
-            deleted=getattr(dam, "mark", 0xFB) == 0xF8,
-            source_revolutions=source_revolutions,
-        )
-        existing = merged.get(candidate.sector_id)
-        if existing is None or _sector_quality_key(candidate) > _sector_quality_key(existing):
-            merged[candidate.sector_id] = candidate
 
-    if not merged:
-        return None
+        merged: dict[int, Sector] = {}
+        for area in getattr(codec.track, "sectors", []):
+            idam = area.idam
+            dam = area.dam
+            data = bytes(dam.data or b"")
+            if not data:
+                continue
+            candidate = Sector(
+                cylinder=int(idam.c),
+                head=int(idam.h),
+                sector_id=int(idam.r),
+                size_code=int(idam.n),
+                data=data,
+                crc_ok=area.crc == 0,
+                confidence=1.0,
+                deleted=getattr(dam, "mark", 0xFB) == 0xF8,
+                source_revolutions=source_revolutions,
+            )
+            existing = merged.get(candidate.sector_id)
+            if existing is None or _sector_quality_key(candidate) > _sector_quality_key(existing):
+                merged[candidate.sector_id] = candidate
 
-    sectors = sorted(merged.values(), key=lambda s: s.sector_id)
-    weak = sum(1 for sector in sectors if sector.data and not sector.crc_ok)
-    missing = max((expected_sectors or len(sectors)) - len({s.sector_id for s in sectors if s.data}), 0)
-    return TrackSectors(track=track, head=head, sectors=sectors, weak=weak, missing=missing)
+        if merged:
+            sectors = sorted(merged.values(), key=lambda s: s.sector_id)
+            weak = sum(1 for sector in sectors if sector.data and not sector.crc_ok)
+            missing = max((expected_sectors or len(sectors)) - len({s.sector_id for s in sectors if s.data}), 0)
+            candidates.append(TrackSectors(track=track, head=head, sectors=sectors, weak=weak, missing=missing))
+
+    return max(candidates, key=_track_quality_key) if candidates else None
 
 
 def _greaseweazle_flux_from_revolutions(
