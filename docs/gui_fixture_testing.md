@@ -27,6 +27,11 @@ shape later implementation work.
   The Files panel lists IBM standard-label `HDR1` entries such as `WPE`.
   Document extraction is not implemented yet because only the label directory
   is decoded.
+- ACMS Tandy Model II CP/M 625K captures probe by their physical mixed-density
+  geometry. ACMS80248 uses `tandy_trs80_model2_cpm_16x512_625k`; ACMS80249 uses
+  `tandy_trs80_model2_cpm_625k` (8x1024 data sectors). Their IMD, SCP, and
+  filesystem maps should preserve those distinctions. A 625,920-byte IMG alone
+  cannot prove which physical sectorization produced it.
 
 ## Deferred Work
 

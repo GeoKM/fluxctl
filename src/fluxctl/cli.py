@@ -27,7 +27,14 @@ from .apple2 import (
 )
 from .decoding import load_builtin_decoders
 from .decoding.mfm import mfm_decoder
-from .detection import detect_encoding, detect_layout, detect_layout_any, infer_track_step, logical_track_count
+from .detection import (
+    LayoutCandidate,
+    detect_encoding,
+    detect_layout,
+    detect_layout_any,
+    infer_track_step,
+    logical_track_count,
+)
 from .exceptions import ExportError, FluxDecodeError, FluxctlError
 from .filesystem_detection import FilesystemDetection, detect_filesystem
 from .exporters import load_builtin_exporters
@@ -648,6 +655,27 @@ def probe(
         except Exception:
             filesystem = None
             filesystem_evidence = ["filesystem_probe_failed=1"]
+        # DEC RX01 and generic 8-inch FM CP/M use the same physical
+        # 77x1x26x128 geometry.  Once the filesystem is positively identified
+        # as CP/M, expose the neutral CP/M layout so SCP and flat containers
+        # do not disagree merely because the flux detector encountered the
+        # DEC-named geometry first.
+        if filesystem == "cpm" and layout_candidate.layout.layout_id == "dec_fm_rx01_250k":
+            generic_layout = registry.layout.get("generic_fm_8inch_cpm_256k")
+            if generic_layout is not None:
+                filesystem_evidence = [
+                    *filesystem_evidence,
+                    "layout_normalized_from=dec_fm_rx01_250k",
+                    "layout_normalization_reason=shared_8inch_fm_cpm_geometry",
+                ]
+                layout_candidate = LayoutCandidate(
+                    layout=generic_layout,
+                    score=layout_candidate.score,
+                    evidence=[
+                        *layout_candidate.evidence,
+                        "layout_normalized_to=generic_fm_8inch_cpm_256k",
+                    ],
+                )
         candidates.append(
             CandidateFormat(
                 candidate_id=layout_candidate.layout.layout_id,
@@ -1362,10 +1390,19 @@ def _tandy_candidate_for_tracks(
     evidence: list[str],
 ) -> Optional[CandidateFormat]:
     counts, sizes, min_sector_id = _track_sector_profile(tracks)
-    if geom.tracks != 40 or geom.heads != 1:
+    if geom.heads != 1:
         return None
 
     layout_id: Optional[str] = None
+    if geom.tracks == 77 and counts.get(0) == 26 and sizes.get(0) == 128:
+        data_track_counts = {counts.get(track) for track in range(1, 77) if track in counts}
+        data_track_sizes = {sizes.get(track) for track in range(1, 77) if track in sizes}
+        if data_track_counts == {8} and data_track_sizes == {1024}:
+            layout_id = "tandy_trs80_model2_cpm_625k"
+        elif data_track_counts == {16} and data_track_sizes == {512}:
+            layout_id = "tandy_trs80_model2_cpm_16x512_625k"
+    if geom.tracks != 40 and layout_id is None:
+        return None
     if counts.get(0) == 18 and sizes.get(0) == 256:
         data_track_counts = {counts.get(track) for track in range(1, 40) if track in counts}
         data_track_sizes = {sizes.get(track) for track in range(1, 40) if track in sizes}
@@ -1520,6 +1557,34 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
                         )
                     ]
 
+    # Tandy Model II Pickles & Trout CP/M uses a mixed-density flat image:
+    # track 0 is 26x128 FM and tracks 1-76 are 16x512 MFM.  Its total size is
+    # otherwise easy to mistake for a one-sided Commodore CP/M image.
+    if ext == ".img" and len(data_bytes) == 625920:
+        layout = registry.layout.get("tandy_trs80_model2_cpm_16x512_625k")
+        if layout is not None:
+            track_data = _sectors_from_blob(layout, data_bytes)
+            if track_data is not None:
+                image_obj = TrackSectorImage(track_data, bytes_per_sector=layout.sector_size)
+                image_obj.layout = layout
+                _apply_layout_geometry(image_obj, layout)
+                fs_name, fs_evidence = _filesystem_evidence_for_image(image_obj)
+                return [
+                    CandidateFormat(
+                        candidate_id=layout.layout_id,
+                        encoding=layout.encoding,
+                        layout_id=layout.layout_id,
+                        filesystem=fs_name,
+                        score=1.0,
+                        evidence=evidence
+                        + [
+                            "tandy_model2_mixed_geometry=1",
+                            f"layout={layout.layout_id}",
+                        ]
+                        + fs_evidence,
+                    )
+                ]
+
     # RX02 media may be a complete 77-track single-sided image (512512 bytes)
     # or a truncated/placeholder capture produced by tools that omit empty
     # sectors.  Only the complete physical geometry is unambiguous here.
@@ -1672,6 +1737,39 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
         tandy_candidate = _tandy_candidate_for_tracks(imd_tracks or [], imd_geom, evidence)
         if tandy_candidate:
             return [tandy_candidate]
+        # IMD preserves IBM 3740 interchange labels, which can make a CP/M
+        # disk look like RT-11 before its directory is examined.  For the
+        # uniform 8-inch FM CP/M geometry, give the CP/M probe precedence;
+        # genuine RT-11 interchange media will fail this directory probe and
+        # continue to the existing RT-11 path below.
+        if (
+            imd_geom.tracks >= 77
+            and imd_geom.heads == 1
+            and imd_geom.spt == 26
+            and imd_geom.sector_size == 128
+        ):
+            generic_layout = registry.layout.get("generic_fm_8inch_cpm_256k")
+            if generic_layout is not None and imd_image is not None:
+                imd_image.layout = generic_layout
+                _apply_layout_geometry(imd_image, generic_layout)
+                cpm_name, cpm_evidence = _filesystem_evidence_for_image(imd_image)
+                if cpm_name == "cpm":
+                    return [
+                        CandidateFormat(
+                            candidate_id=generic_layout.layout_id,
+                            encoding=generic_layout.encoding,
+                            layout_id=generic_layout.layout_id,
+                            filesystem="cpm",
+                            score=1.0,
+                            evidence=evidence
+                            + [
+                                f"layout={generic_layout.layout_id}",
+                                "filesystem=cpm",
+                                "imd_cpm_precedence=1",
+                            ]
+                            + cpm_evidence,
+                        )
+                    ]
         if imd_filesystem_name == "displaywriter":
             lid = "ibm_displaywriter_fm_284k"
             layout = registry.layout.get(lid)

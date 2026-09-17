@@ -24,7 +24,7 @@ registry table use the same declarations.
 | Amiga OFS/FFS | Yes | Yes | Yes | Yes | Same-size file replacement for `.adf` | Allocation-changing writes, directory mutation, and bitmap updates remain pending; OFS data checksums are updated for same-size replacement. |
 | Apple ProDOS | Yes | Yes | Yes | Yes | No | Read-only 140K Apple II support across WOZ, NIB, PO, DO, flat IMG, and decoded SCP. Seedling, sapling, tree, and data-fork extraction are supported. |
 | Apple DOS 3.3 | Yes | Yes | Yes | Root only | No | Reads the 16-sector VTOC/catalog and T/S lists. Extracted size is sector-granular because DOS 3.3 catalog entries do not store an exact byte EOF. |
-| CP/M variants | Yes | Yes | Yes for modelled DPBs and Commodore GCR translations | Root only | Root file import and delete for modelled flat `.img` | Modelled formats include CP/M 26-sector 256K FM, Osborne 1, Kaypro II, Tandy Model 4 CP/M 2.2/Plus, C64 CP/M 2.2 GCR, and C128 CP/M 3 GCR. Mixed-sector CP/M Plus `.img` import/delete now use the real track-0 prefix and skew. |
+| CP/M variants | Yes | Yes | Yes for modelled DPBs and Commodore GCR translations | Root only | Root file import and delete for modelled flat `.img` | Modelled formats include CP/M 26-sector 256K FM, Osborne 1, Kaypro II, Tandy Model 4 CP/M 2.2/Plus, Tandy Model II 625K mixed FM/MFM (track 0 26x128 plus 8x1024 or 16x512 data tracks), C64 CP/M 2.2 GCR, and C128 CP/M 3 GCR. Mixed-sector CP/M Plus `.img` import/delete now use the real track-0 prefix and skew. |
 | DisplayWriter | Yes | Label directory only | No | No | No | The reader lists IBM standard-label `HDR1` records from track 0. Actual DisplayWriter document extraction is not implemented. |
 | RT-11 | Yes | Yes | Yes | Root only | No | Read-only RAD50 directory and extent reader. Directory entries are flat; filesystem mutation is not implemented. |
 | RT-11 Interchange (RX01/IBM 3740) | Yes | Active `HDR1` dataset labels | Yes for nonempty labels | No | No | Exports fixed-length EBCDIC record streams from the `HDR1` start through its first-unused address. Labelled-empty datasets expose a separately named raw residual extent and JSON manifest for forensic recovery. |
@@ -50,7 +50,7 @@ opened and probed. Write/manipulation actions always create a new image copy.
 | Amiga decoded `.scp`/`.imd` | Yes | Yes when reconstruction is complete enough | Yes | Yes | Yes when file blocks decode | Files and directories when blocks decode | No | No | No | No | No | No | Current file block overlay is approximate | Filesystem logical map |
 | Apple II 140K `.woz`/`.po`/`.do`/`.nib`/`.dsk`/`.img`/`.scp` | Yes | ProDOS and DOS 3.3 | ProDOS directories; DOS 3.3 root only | Yes | Yes | Files and ProDOS directories | No | No | No | No | No | No | ProDOS block or DOS 3.3 T/S-list overlay | Physical/filesystem map |
 | CP/M variants | Yes | Yes | Root only | Yes | Yes for modelled CP/M DPBs and Commodore GCR translations | Files for modelled DPBs and Commodore GCR | No | Modelled flat `.img` only | Modelled flat `.img` only | No | No | Osborne 1, Kaypro II, and Tandy Model 4 CP/M 2.2 `.img` | Allocation-block overlay for modelled DPBs and Commodore GCR | Filesystem logical map |
-| Tandy/TRS-80 `.dsk`/`.dmk`/`.imd`/`.scp` | Yes | Model III TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and CP/M where probes pass | Root only | Yes | TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and modelled Tandy CP/M files | TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and modelled Tandy CP/M files | No | No | No | No | No | No | Allocation-block/extent overlay where supported | Physical map; filesystem logical map where supported |
+| Tandy/TRS-80 `.dsk`/`.dmk`/`.imd`/`.scp` | Yes | Model III TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and CP/M where probes pass | Root only | Yes | TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and modelled Tandy CP/M files | TRSDOS 1.3, NEWDOS/80, LDOS/TRSDOS 6, and modelled Tandy CP/M files | No | No | No | No | No | No | Allocation-block/extent overlay where supported | Physical map; filesystem logical map where supported. Model II CP/M 625K supports mixed FM/MFM geometry in SCP/IMD; flat IMG sectorization is ambiguous. |
 | DisplayWriter | Yes | Label entries only | No | Yes | No | No | No | No | No | No | No | No | No | Physical map only |
 | RT-11 normal volumes | Yes | Yes | Root only | Yes | Yes | Files | No | No | No | No | No | No | No | Physical map |
 | RT-11 Interchange RX01/IBM 3740 | Yes | Active labels and labelled-empty raw recovery extents | No | Yes | Yes | Nonempty datasets; raw residual extent where labelled empty | No | No | No | No | No | No | No | Physical map only |
@@ -79,10 +79,11 @@ Notes:
 - CP/M export is enabled only when Fluxctl has a modelled disk parameter block
   or a format-specific translation map.
   The CP/M 26-sector 256K FM, Osborne 1 SSDD 200K MFM, Kaypro II SSDD 200K MFM,
-  Tandy Model 4 CP/M 2.2 180K MFM, and Tandy Model 4 CP/M Plus mixed-sector DPBs
-  are supported. C64 CP/M 2.2 and C128 CP/M 3 GCR images use their documented
-  allocation translations. Other generic CP/M layouts, including foreign 1571
-  MFM media, still need their own allocation maps.
+  Tandy Model 4 CP/M 2.2 180K MFM, Tandy Model 4 CP/M Plus mixed-sector DPBs,
+  and both Tandy Model II CP/M 625K mixed-density DPBs are supported. C64 CP/M
+  2.2 and C128 CP/M 3 GCR images use their documented allocation translations.
+  Other generic CP/M layouts, including foreign 1571 MFM media, still need
+  their own allocation maps.
 
 ## Export Behavior
 

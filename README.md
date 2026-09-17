@@ -83,6 +83,12 @@ python3 scripts/install_fluxctl.py
   Commodore/Amiga formats, CP/M machine formats, Tandy TRS-80 formats, RT-11
   RX01/RX02 RT-11 media, IBM DisplayWriter mixed-sector media, and Apple II
   35-track 140K media in WOZ, NIB, PO, DO, DSK/IMG, or decoded SCP form.
+- Tandy TRS-80 Model II CP/M 625K media is supported in two mixed-density
+  variants: track 0 FM 26x128 with tracks 1-76 MFM 8x1024
+  (`tandy_trs80_model2_cpm_625k`) or MFM 16x512
+  (`tandy_trs80_model2_cpm_16x512_625k`). SCP and IMD retain this physical
+  distinction; a flat 625,920-byte IMG cannot distinguish the two layouts by
+  itself.
 - Filesystems detected: FAT12, CBM DOS, Apple ProDOS, Apple DOS 3.3, CP/M
   (C64 CP/M 2.2, C128 CP/M 3.0, Osborne/Kaypro/Tandy variants), TRSDOS 1.3,
   LDOS/TRSDOS 6, NEWDOS/80, Amiga OFS/FFS, RT-11 (normal RX02 volumes and
@@ -289,8 +295,10 @@ and D81 resolve their layouts automatically; ambiguous flat IMG files require
 round-trip testing, emulation, and supported hardware-writing workflows. It is
 not a preservation substitute for an original capture: analogue timing,
 write-splice placement, weak bits, and protection-specific patterns are not
-recreated. Specialised hard-sector, XDF, RX02, MMFM, and unsupported mixed-track
-formats are rejected instead of being encoded with an incorrect generic track.
+recreated. Specialised hard-sector, XDF, RX02, MMFM, and other unsupported
+mixed-track formats are rejected instead of being encoded with an incorrect
+generic track. The supported Tandy Model II mixed-density layouts are explicit
+exceptions and must be selected when converting a flat IMG.
 
 File replacement is intentionally conservative. Studio always writes a new
 image copy instead of modifying the original image. Current replacement support

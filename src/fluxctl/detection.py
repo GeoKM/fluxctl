@@ -279,22 +279,43 @@ def _augment_mfm_mixed_geometry(image: SCPImage, geometry: dict) -> dict:
     """Add an FM track-override sample to otherwise MFM geometry hints."""
 
     # A normal MFM disk can occasionally produce plausible FM sectors.  The
-    # Luxor program format is specifically 26 x 256-byte MFM data sectors with
-    # one 26 x 128-byte FM track, so only augment geometry for that signature.
-    if geometry.get("sectors_per_track") != 26 or geometry.get("sector_size") != 256:
+    # known mixed-density signatures are deliberately narrow: Luxor uses
+    # 26x256-byte MFM tracks with one 26x128-byte FM track, while the Tandy
+    # Model II CP/M format uses 16x512-byte MFM tracks with that same FM track.
+    mixed_mfm_signature = (
+        (geometry.get("sectors_per_track"), geometry.get("sector_size"))
+        in {(26, 256), (16, 512)}
+    )
+    if not mixed_mfm_signature:
         return geometry
     fm_plugin = registry.encoding.get("fm")
     if fm_plugin is None:
         return geometry
-    fm_geometry = _estimate_geometry(image, fm_plugin.entry, sample_tracks=2)
-    fm_profiles = fm_geometry.get("track_sector_sizes", {})
-    if "0.0" in fm_profiles and fm_profiles["0.0"] == [128]:
+    track_zero = next(
+        (track for track in image.tracks if track.track == 0 and track.side == 0 and track.revolutions),
+        None,
+    )
+    if track_zero is None:
+        return geometry
+    try:
+        decoded = build_track_sectors_from_revolutions(
+            track_zero.revolutions,
+            fm_plugin.entry,
+            cylinder=0,
+            head=0,
+            encoding="fm",
+            timebase_ns=image.timebase_ns,
+        )
+    except FluxDecodeError:
+        return geometry
+    if len(decoded.sectors) == 26 and {sector.size for sector in decoded.sectors if sector.data} == {128}:
         profiles = dict(geometry.get("track_sector_sizes", {}))
-        profiles.update({key: value for key, value in fm_profiles.items() if key == "0.0"})
+        profiles["0.0"] = [128]
         geometry["track_sector_sizes"] = profiles
         geometry["sector_size_set"] = sorted(
             set(geometry.get("sector_size_set", [])) | {128}
         )
+        geometry["mixed_fm_track0"] = True
     return geometry
 
 
@@ -367,7 +388,21 @@ def _apply_tandy_mfm_bonus(
 ) -> float:
     if not desc.layout_id.startswith("tandy_"):
         return 0.0
-    if logical_tracks != 40 or len(heads_present) != 1:
+    if len(heads_present) != 1:
+        return 0.0
+    if desc.layout_id in {
+        "tandy_trs80_model2_cpm_625k",
+        "tandy_trs80_model2_cpm_16x512_625k",
+    }:
+        if logical_tracks != 77 or geometry.get("mixed_fm_track0") is not True:
+            return 0.0
+        if geometry.get("sectors_per_track") != desc.sectors_per_track:
+            return 0.0
+        if geometry.get("sector_size") != desc.sector_size:
+            return 0.0
+        evidence.append("tandy_model2_mixed_density_bonus=1")
+        return 0.8
+    if logical_tracks != 40:
         return 0.0
     observed_sectors = geometry.get("sectors_per_track")
     observed_size = geometry.get("sector_size")

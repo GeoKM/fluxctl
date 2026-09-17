@@ -1,9 +1,11 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
 from fluxctl import cli, detection
+from fluxctl.application.decode_operations import sectors_from_blob
 from fluxctl.decoding import load_builtin_decoders
 from fluxctl.imd import load_imd_image
 from fluxctl.layouts.loader import load_builtin_layouts
@@ -42,6 +44,9 @@ FIXTURE_RX02_SSDD_SCP = Path("tests/fixtures/8inch/DEC/DEC-RX02-SSDD-Modified_MF
 FIXTURE_RX02_SSDD_IMG = Path("tests/fixtures/8inch/DEC/DEC-RX02-SSDD-Modified_MFM-RT11_FORTRAN-500K.img")
 FIXTURE_RX01_CPM_SCP = Path("tests/fixtures/8inch/CPM/CPM-RX01-SSSD-FM-STATPAK311-256K.scp")
 FIXTURE_RX01_CPM_IMG = Path("tests/fixtures/8inch/CPM/CPM-RX01-SSSD-FM-STATPAK311-256K.img")
+FIXTURE_CPM86_GENERIC_SCP = Path("tests/fixtures/8inch/CPM/CPM86-Generic-SSSD-FM-CPM86-256K.scp")
+FIXTURE_CPM86_GENERIC_IMG = Path("tests/fixtures/8inch/CPM/CPM86-Generic-SSSD-FM-CPM86-256K.img")
+FIXTURE_CPM86_GENERIC_IMD = Path("tests/fixtures/8inch/CPM/CPM86-Generic-SSSD-FM-CPM86-256K.imd")
 FIXTURE_DISPLAYWRITER_IMG = Path("tests/fixtures/8inch/IBM/IBM-6580-SSDD-FM-DisplayWriter-284K.img")
 FIXTURE_D64_CPM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1541-SSDD-GCR-C64CPM-170K.d64")
 FIXTURE_D71_CBM = Path("tests/fixtures/5.25inch/Commodore/Commodore-1571-DSDD-GCR-C128-341K.d71")
@@ -447,10 +452,10 @@ def test_probe_supports_rx02_ssdd_scp_and_img() -> None:
         assert payload[0]["filesystem"] == "rt11"
 
 
-def test_probe_keeps_rx01_cpm_scp_on_128_byte_fm_geometry() -> None:
+def test_probe_normalizes_128_byte_fm_cpm_geometry() -> None:
     runner = CliRunner()
     expected_layouts = {
-        FIXTURE_RX01_CPM_SCP: "dec_fm_rx01_250k",
+        FIXTURE_RX01_CPM_SCP: "generic_fm_8inch_cpm_256k",
         FIXTURE_RX01_CPM_IMG: "generic_fm_8inch_cpm_256k",
     }
     for fixture, expected_layout in expected_layouts.items():
@@ -458,6 +463,17 @@ def test_probe_keeps_rx01_cpm_scp_on_128_byte_fm_geometry() -> None:
         assert result.exit_code == 0
         payload = json.loads(result.stdout)
         assert payload[0]["layout_id"] == expected_layout
+        assert payload[0]["encoding"] == "fm"
+        assert payload[0]["filesystem"] == "cpm"
+
+
+def test_probe_normalizes_cpm86_across_scp_img_and_imd() -> None:
+    runner = CliRunner()
+    for fixture in (FIXTURE_CPM86_GENERIC_SCP, FIXTURE_CPM86_GENERIC_IMG, FIXTURE_CPM86_GENERIC_IMD):
+        result = runner.invoke(cli.app, ["probe", str(fixture)])
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload[0]["layout_id"] == "generic_fm_8inch_cpm_256k"
         assert payload[0]["encoding"] == "fm"
         assert payload[0]["filesystem"] == "cpm"
 
@@ -471,6 +487,32 @@ def test_probe_supports_8inch_cpm_source_images() -> None:
         assert payload[0]["layout_id"] == "generic_fm_8inch_cpm_256k"
         assert payload[0]["encoding"] == "fm"
         assert payload[0]["filesystem"] == "cpm"
+
+
+def test_probe_recognizes_trs80_model2_mixed_density_img(tmp_path: Path) -> None:
+    load_builtin_layouts()
+    cli.load_builtin_filesystems()
+    fixture = tmp_path / "trs80-model2.img"
+    fixture.write_bytes(bytes(625_920))
+    candidates = cli._probe_flat_image(fixture)
+    assert candidates
+    assert candidates[0].layout_id == "tandy_trs80_model2_cpm_16x512_625k"
+    assert candidates[0].encoding == "mfm"
+
+
+def test_probe_recognizes_trs80_model2_8x1024_imd_track_profile() -> None:
+    load_builtin_layouts()
+    layout = cli.registry.layout.get("tandy_trs80_model2_cpm_625k")
+    assert layout is not None
+    tracks = sectors_from_blob(layout, bytes(625_920))
+    assert tracks is not None
+    candidate = cli._tandy_candidate_for_tracks(
+        tracks,
+        SimpleNamespace(tracks=77, heads=1, spt=26, sector_size=128),
+        ["format=imd"],
+    )
+    assert candidate is not None
+    assert candidate.layout_id == "tandy_trs80_model2_cpm_625k"
 
 
 def test_probe_supports_osborne_5inch_cpm_images() -> None:
