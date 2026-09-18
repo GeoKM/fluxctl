@@ -541,6 +541,25 @@ def detect_layout(
     geometry = _estimate_geometry(image, plugin.entry)
     if encoding == "mfm":
         geometry = _augment_mfm_mixed_geometry(image, geometry)
+        xerox_layout = registry.layout.get("xerox_820ii_mfm_ssdd_500k")
+        if (
+            xerox_layout is not None
+            and logical_tracks == 77
+            and heads_present == {0}
+            and geometry.get("sectors_per_track") == 26
+            and geometry.get("sector_size") == 256
+            and geometry.get("mixed_fm_track0")
+            and _cpm_directory_score_for_layout(image, plugin.entry, xerox_layout) >= 2
+        ):
+            return LayoutCandidate(
+                layout=xerox_layout,
+                score=1.0,
+                evidence=[
+                    "xerox_820ii_mixed_density_geometry=1",
+                    "filesystem=cpm",
+                    "cpm_directory_probe=1",
+                ],
+            )
     bitstream_len = _estimate_bitstream_length(image, plugin.entry)
     flux_median = _estimate_flux_median(image)
     decoder_conf = _average_confidence(plugin.entry, image)
@@ -792,6 +811,29 @@ def detect_layout_any(image: SCPImage, hint: LayoutHint | None = None) -> Option
 
     if not registry.layout:
         return None
+
+    xerox_layout = registry.layout.get("xerox_820ii_mfm_ssdd_500k")
+    mfm_plugin = registry.encoding.get("mfm")
+    if xerox_layout is not None and mfm_plugin is not None:
+        xerox_tracks = _tracks_with_flux(image)
+        xerox_track_ids = [track.track for track in xerox_tracks]
+        xerox_heads = {track.side for track in xerox_tracks}
+        xerox_step = infer_track_step(xerox_track_ids)
+        xerox_cylinders = logical_track_count(xerox_track_ids, xerox_step)
+        xerox_geometry = _augment_mfm_mixed_geometry(image, _estimate_geometry(image, mfm_plugin.entry))
+        if (
+            xerox_cylinders == 77
+            and xerox_heads == {0}
+            and xerox_geometry.get("sectors_per_track") == 26
+            and xerox_geometry.get("sector_size") == 256
+            and xerox_geometry.get("mixed_fm_track0")
+            and _cpm_directory_score_for_layout(image, mfm_plugin.entry, xerox_layout) >= 2
+        ):
+            return LayoutCandidate(
+                layout=xerox_layout,
+                score=1.0,
+                evidence=["xerox_820ii_mixed_density_geometry=1", "filesystem=cpm", "cpm_directory_probe=1"],
+            )
 
     wang_layout = registry.layout.get("wang_ois_hs32_fm_315k")
     wang_128_layout = registry.layout.get("wang_ois_hs32_fm_315k_128")

@@ -70,6 +70,9 @@ STANDARD_26_SECTOR_SKEW = (
     21,
 )
 
+XEROX_820II_LAYOUT = "xerox_820ii_mfm_ssdd_500k"
+XEROX_820II_LOGICAL_SECTOR_SKEW = tuple(index // 2 for index in range(52))
+
 
 def cpm_disk_parameters_for_layout(layout_id: str) -> CPMDiskParameters | None:
     if layout_id in {
@@ -100,6 +103,15 @@ def cpm_disk_parameters_for_layout(layout_id: str) -> CPMDiskParameters | None:
             sector_size=1024,
             block_size=1024,
             skew=(0, 1, 2, 3, 4),
+        )
+    if layout_id == XEROX_820II_LAYOUT:
+        return CPMDiskParameters(
+            reserved_tracks=2,
+            sectors_per_track=52,
+            sector_size=128,
+            block_size=2048,
+            skew=XEROX_820II_LOGICAL_SECTOR_SKEW,
+            reserved_sectors=78,
         )
     if layout_id == "tandy_mfm_ssdd_180k":
         return CPMDiskParameters(
@@ -188,13 +200,19 @@ def cpm_directory_score_for_layout(image: SectorImage, layout_id: str) -> int:
     params = cpm_disk_parameters_for_layout(layout_id)
     if params is None:
         return 0
-    if params.sector_size != getattr(image, "bytes_per_sector", params.sector_size):
+    if layout_id != XEROX_820II_LAYOUT and params.sector_size != getattr(image, "bytes_per_sector", params.sector_size):
         return 0
     first_sector = params.first_directory_sector
     sectors_to_scan = max(1, min(8, params.directory_blocks * params.sectors_per_block))
     score = 0
     try:
-        data = b"".join(image.read_sector(first_sector + offset) for offset in range(sectors_to_scan))
+        if layout_id == XEROX_820II_LAYOUT:
+            data = b"".join(
+                _read_xerox_820ii_logical_sector(image, first_sector + offset)
+                for offset in range(sectors_to_scan)
+            )
+        else:
+            data = b"".join(image.read_sector(first_sector + offset) for offset in range(sectors_to_scan))
     except Exception:
         return 0
     for offset in range(0, len(data), 32):
@@ -204,6 +222,37 @@ def cpm_directory_score_for_layout(image: SectorImage, layout_id: str) -> int:
         if _looks_like_cpm_entry(entry):
             score += 1
     return score
+
+
+def _xerox_820ii_chs_for_logical_sector(sector_index: int) -> tuple[int, int, int]:
+    if sector_index < 0:
+        raise FilesystemError("Negative Xerox 820-II logical sector")
+    if sector_index < 26:
+        return 0, sector_index + 1, 0
+    data_sector = sector_index - 26
+    within_track = data_sector % 52
+    return 1 + data_sector // 52, (within_track // 2) + 1, within_track % 2
+
+
+def _xerox_820ii_byte_offset(sector_index: int) -> int:
+    track, sector_id, subrecord = _xerox_820ii_chs_for_logical_sector(sector_index)
+    if track == 0:
+        return (sector_id - 1) * 128
+    return 26 * 128 + (track - 1) * 26 * 256 + (sector_id - 1) * 256 + subrecord * 128
+
+
+def _read_xerox_820ii_logical_sector(image: SectorImage, sector_index: int) -> bytes:
+    track, sector_id, subrecord = _xerox_820ii_chs_for_logical_sector(sector_index)
+    try:
+        data = image._sector_lookup[(track, 0, sector_id)]  # type: ignore[attr-defined]
+        return data[subrecord * 128 : (subrecord + 1) * 128]
+    except (AttributeError, KeyError) as exc:
+        if hasattr(image, "data"):
+            offset = _xerox_820ii_byte_offset(sector_index)
+            data = image.data[offset : offset + 128]  # type: ignore[attr-defined]
+            if len(data) == 128:
+                return data
+        raise FilesystemError(f"Xerox 820-II sector {(track, 0, sector_id)} not available") from exc
 
 
 class CPMFilesystem(Filesystem):
@@ -284,6 +333,8 @@ class CPMFilesystem(Filesystem):
             layout_id = getattr(getattr(image, "layout", None), "layout_id", "")
             if layout_id in {"tandy_trs80_model2_cpm_625k", "tandy_trs80_model2_cpm_16x512_625k"}:
                 sector_start = self._trs80_model2_byte_offset(logical_sector, layout_id)
+            elif layout_id == XEROX_820II_LAYOUT:
+                sector_start = _xerox_820ii_byte_offset(logical_sector)
             elif layout_id == "tandy_mfm_cpmplus_156k":
                 sector_start = self._tandy_cpmplus_byte_offset(logical_sector, params)
             else:
@@ -517,6 +568,10 @@ class CPMFilesystem(Filesystem):
                     track, sector = self._tandy_cpmplus_chs_for_logical_sector(logical_sector, params)
                     addresses.add((track, 0, sector_base + sector))
                     continue
+                if getattr(layout, "layout_id", "") == XEROX_820II_LAYOUT:
+                    track, sector_id, _subrecord = _xerox_820ii_chs_for_logical_sector(logical_sector)
+                    addresses.add((track, 0, sector_id))
+                    continue
                 if getattr(layout, "layout_id", "") in {"tandy_trs80_model2_cpm_625k", "tandy_trs80_model2_cpm_16x512_625k"}:
                     track, sector_id, _subrecord = self._trs80_model2_chs_for_logical_sector(logical_sector, layout.layout_id)
                     addresses.add((track, 0, sector_id))
@@ -594,7 +649,7 @@ class CPMFilesystem(Filesystem):
 
     def _read_image_logical_sector(self, image: SectorImage, sector_index: int, params: CPMDiskParameters) -> bytes:
         layout_id = getattr(getattr(image, "layout", None), "layout_id", "")
-        if layout_id not in {"tandy_trs80_model2_cpm_625k", "tandy_trs80_model2_cpm_16x512_625k"} and params.sector_size != getattr(image, "bytes_per_sector", params.sector_size):
+        if layout_id not in {"tandy_trs80_model2_cpm_625k", "tandy_trs80_model2_cpm_16x512_625k", XEROX_820II_LAYOUT} and params.sector_size != getattr(image, "bytes_per_sector", params.sector_size):
             raise FilesystemError("CP/M disk parameter block does not match image sector size")
         if layout_id in {"tandy_trs80_model2_cpm_625k", "tandy_trs80_model2_cpm_16x512_625k"}:
             offset = self._trs80_model2_byte_offset(sector_index, layout_id)
@@ -609,6 +664,8 @@ class CPMFilesystem(Filesystem):
             if len(data) != params.sector_size:
                 raise FilesystemError("TRS-80 Model II logical sector exceeds image size")
             return data
+        if layout_id == XEROX_820II_LAYOUT:
+            return _read_xerox_820ii_logical_sector(image, sector_index)
         if layout_id == "tandy_mfm_cpmplus_156k" and hasattr(image, "data"):
             offset = self._tandy_cpmplus_byte_offset(sector_index, params)
             data = image.data[offset : offset + params.sector_size]
@@ -633,6 +690,9 @@ class CPMFilesystem(Filesystem):
             track, sector_id, _subrecord = self._trs80_model2_chs_for_logical_sector(sector_index, layout_id)
             sectors_per_track = 16 if layout_id == "tandy_trs80_model2_cpm_16x512_625k" else 8
             return track * sectors_per_track + (sector_id - 1)
+        if layout_id == XEROX_820II_LAYOUT:
+            track, sector_id, _subrecord = _xerox_820ii_chs_for_logical_sector(sector_index)
+            return track * 26 + (sector_id - 1)
         track = sector_index // params.sectors_per_track
         logical_sector = sector_index % params.sectors_per_track
         try:
@@ -714,6 +774,12 @@ class CPMFilesystem(Filesystem):
                 raise FilesystemError("Tandy CP/M Plus sector exceeds image size")
             image[offset : offset + params.sector_size] = data
             return
+        if layout_id == XEROX_820II_LAYOUT:
+            offset = _xerox_820ii_byte_offset(sector_index)
+            if offset + params.sector_size > len(image):
+                raise FilesystemError("Xerox 820-II logical sector exceeds image size")
+            image[offset : offset + params.sector_size] = data
+            return
         physical_lba = self._physical_lba_for_logical_sector(sector_index, params)
         offset = physical_lba * params.sector_size
         image[offset : offset + params.sector_size] = data
@@ -735,6 +801,8 @@ class CPMFilesystem(Filesystem):
             return params.first_directory_sector * params.sector_size
         if getattr(getattr(self._image, "layout", None), "layout_id", "") == "tandy_mfm_cpmplus_156k":
             return params.first_directory_sector * 256
+        if getattr(getattr(self._image, "layout", None), "layout_id", "") == XEROX_820II_LAYOUT:
+            return _xerox_820ii_byte_offset(params.first_directory_sector)
         return params.first_directory_sector * params.sector_size
 
     def _tandy_cpmplus_byte_offset(self, sector_index: int, params: CPMDiskParameters) -> int:

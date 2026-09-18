@@ -983,6 +983,7 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
         "kaypro_mfm_ssdd_40_200k",
         "osborne_mfm_ssdd_200k",
         "generic_mfm_8inch_500k",
+        "xerox_820ii_mfm_ssdd_500k",
         "ibm_displaywriter_fm_284k",
         "ibm_mfm_8inch_1200k",
         "ibm_fm_8inch_284k",
@@ -1011,6 +1012,7 @@ FLAT_LAYOUT_PREFERENCES: dict[str, tuple[str, ...]] = {
         "osborne_mfm_ssdd_200k",
         "generic_mfm_8inch_500k",
         "generic_fm_8inch_cpm_256k",
+        "xerox_820ii_mfm_ssdd_500k",
         "dec_dec_rx02_rx02_250k",
         "ibm_displaywriter_fm_284k",
         "ibm_mfm_8inch_1200k",
@@ -1201,6 +1203,7 @@ def _layout_data_distance(layout: LayoutDescriptor, data_len: int) -> int:
 def _flat_layout_filesystem_penalty(layout: LayoutDescriptor, filesystem_name: Optional[str]) -> int:
     modelled_cpm_layouts = {
         "generic_fm_8inch_cpm_256k",
+        "xerox_820ii_mfm_ssdd_500k",
         "kaypro_mfm_ssdd_40_200k",
         "osborne_mfm_ssdd_200k",
         "tandy_mfm_ssdd_180k",
@@ -1534,6 +1537,42 @@ def _probe_flat_image(path: Path) -> list[CandidateFormat]:
         data_bytes = path.read_bytes()
         size = len(data_bytes)
         evidence = [f"size={size}"]
+
+    xerox_layout = registry.layout.get("xerox_820ii_mfm_ssdd_500k")
+    if ext == ".img" and xerox_layout is not None and len(data_bytes) == 509_184:
+        track_data = _sectors_from_blob(xerox_layout, data_bytes)
+        if track_data is not None:
+            image_obj = TrackSectorImage(track_data, bytes_per_sector=xerox_layout.sector_size)
+            image_obj.layout = xerox_layout
+            _apply_layout_geometry(image_obj, xerox_layout)
+            filesystem_name, fs_evidence = _filesystem_evidence_for_image(image_obj)
+            if filesystem_name == "cpm":
+                return [CandidateFormat(
+                    candidate_id=xerox_layout.layout_id,
+                    encoding=xerox_layout.encoding,
+                    layout_id=xerox_layout.layout_id,
+                    filesystem=filesystem_name,
+                    score=1.0,
+                    evidence=evidence + [f"layout={xerox_layout.layout_id}", "xerox_820ii_mixed_density_geometry=1"] + fs_evidence,
+                )]
+    if ext == ".imd" and xerox_layout is not None and imd_geom:
+        track_zero_sizes = {len(sec.data) for ts in imd_tracks or [] if ts.track == 0 for sec in ts.sectors}
+        data_track_sizes = {len(sec.data) for ts in imd_tracks or [] if ts.track > 0 for sec in ts.sectors}
+        if (
+            imd_geom.tracks == 77 and imd_geom.heads == 1 and imd_geom.spt == 26
+            and track_zero_sizes == {128} and data_track_sizes == {256}
+        ):
+            image_obj = _image_from_tracks(imd_tracks or [], imd_geom, xerox_layout)
+            filesystem_name, fs_evidence = _filesystem_evidence_for_image(image_obj)
+            if filesystem_name == "cpm":
+                return [CandidateFormat(
+                    candidate_id=xerox_layout.layout_id,
+                    encoding=xerox_layout.encoding,
+                    layout_id=xerox_layout.layout_id,
+                    filesystem=filesystem_name,
+                    score=1.0,
+                    evidence=evidence + [f"layout={xerox_layout.layout_id}", "xerox_820ii_mixed_density_geometry=1"] + fs_evidence,
+                )]
 
     if ext == ".img" and len(data_bytes) == 143360:
         layout = registry.layout.get("apple2_gcr_nofs_140_140k")

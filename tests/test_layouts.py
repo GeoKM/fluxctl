@@ -19,6 +19,15 @@ def test_generic_cpm_8inch_fm_layout_loads():
     assert desc.sector_size == 128
 
 
+def test_xerox_820ii_cpm_layout_loads_mixed_density_geometry():
+    desc = ensure_layout_loaded("xerox_820ii_mfm_ssdd_500k")
+    assert desc.encoding_for_track(0, 0) == "fm"
+    assert desc.encoding_for_track(1, 0) == "mfm"
+    assert desc.expected_sectors_for_track(1, 0) == 26
+    assert desc.expected_sector_sizes_for_track(0, 0) is None
+    assert desc.track_overrides[0]["sector_size"] == 128
+
+
 def test_osborne_cpm_5inch_mfm_layout_loads():
     desc = ensure_layout_loaded("osborne_mfm_ssdd_200k")
     assert desc.encoding == "mfm"

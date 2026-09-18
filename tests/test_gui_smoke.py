@@ -8,7 +8,7 @@ pytest.importorskip("PySide6")
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEvent, QItemSelectionModel, QTimer, Qt
+from PySide6.QtCore import QEvent, QItemSelectionModel, QSettings, QTimer, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QAbstractItemView, QFileDialog, QInputDialog, QMessageBox
 
@@ -27,10 +27,18 @@ def _app() -> QApplication:
 
 
 @pytest.fixture(autouse=True)
-def _qt_app() -> QApplication:
+def _qt_app(tmp_path: Path) -> QApplication:
     """Ensure every GUI smoke test has a QApplication before constructing widgets."""
 
-    return _app()
+    QSettings.setDefaultFormat(QSettings.IniFormat)
+    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
+    settings = QSettings("GeoKM", "FluxctlStudio")
+    settings.clear()
+    settings.sync()
+    app = _app()
+    yield app
+    settings.clear()
+    settings.sync()
 
 
 def _wait_until(app: QApplication, predicate, timeout_ms: int = 5000) -> None:
@@ -231,6 +239,7 @@ def test_convert_dialog_can_choose_raw_for_amiga_scp(monkeypatch, tmp_path) -> N
     source = tmp_path / "amiga.scp"
     source.write_bytes(b"")
     captured: dict[str, object] = {}
+    warnings: list[str] = []
     window.current_path = source
     window.current_summary = services.ImageSummary(
         path=str(source),
@@ -244,6 +253,7 @@ def test_convert_dialog_can_choose_raw_for_amiga_scp(monkeypatch, tmp_path) -> N
     )
 
     monkeypatch.setattr(window, "_choose_convert_exporter", lambda *_args: "raw")
+    monkeypatch.setattr(window, "_warn", lambda message: warnings.append(message))
     monkeypatch.setattr(
         QFileDialog,
         "getSaveFileName",
@@ -260,6 +270,10 @@ def test_convert_dialog_can_choose_raw_for_amiga_scp(monkeypatch, tmp_path) -> N
 
     window.convert_dialog()
 
+    assert warnings == [
+        "Raw sector output is compatible with the resolved source geometry.\n\n"
+        "Physical track encoding, timing, and protection details are not preserved."
+    ]
     captured["operation"]()
     assert captured["args"] == (
         source,
@@ -338,7 +352,7 @@ def test_roundtrip_dialog_runs_application_operation_with_selected_options(monke
         confidence=1.0,
         evidence=[],
     )
-    monkeypatch.setattr(services, "list_files", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(gui, "list_files", lambda *_args, **_kwargs: [])
     window._update_advanced_context()
 
     monkeypatch.setattr(
@@ -475,7 +489,7 @@ def test_left_panel_confirms_blank_image_overwrite(monkeypatch, tmp_path) -> Non
 
 def test_left_panel_disables_greaseweazle_read_when_missing(monkeypatch) -> None:
     monkeypatch.setattr(
-        services,
+        gui,
         "greaseweazle_status",
         lambda: services.GreaseweazleStatus(False, "", "gw missing", "install greaseweazle"),
     )
@@ -834,7 +848,7 @@ def test_file_selection_highlights_file_allocation_on_map(monkeypatch) -> None:
         )
     )
     monkeypatch.setattr(
-        services,
+        gui,
         "file_allocation_for_image",
         lambda *_args: services.FileAllocationView("/AUTOEXEC.BAT", {(73, 1, 4), (73, 1, 5)}),
     )
@@ -881,7 +895,7 @@ def test_file_selection_uses_logical_allocation_on_cbm_bam_map(monkeypatch) -> N
         )
     )
     monkeypatch.setattr(
-        services,
+        gui,
         "file_allocation_for_image",
         lambda *_args: services.FileAllocationView(
             "/HELLO",
@@ -1090,7 +1104,7 @@ def test_advanced_hex_panel_is_editable_and_can_save_file_copy(monkeypatch, tmp_
         )
         return services.HexEditResult(str(out), fs_path, len(replacement), "file")
 
-    monkeypatch.setattr(services, "replace_file_bytes_with_copy", fake_replace)
+    monkeypatch.setattr(gui, "replace_file_bytes_with_copy", fake_replace)
 
     window.save_advanced_hex_edit()
 
@@ -1184,7 +1198,7 @@ def test_advanced_dump_file_mode_loads_file_hex(monkeypatch) -> None:
     window.file_path_input.setEditText("/AUTOEXEC.BAT")
 
     monkeypatch.setattr(
-        services,
+        gui,
         "file_hex_dump",
         lambda *_args, **_kwargs: services.HexDumpView("File /AUTOEXEC.BAT", 5, services.format_hex_dump(b"HELLO")),
     )
@@ -1219,7 +1233,7 @@ def test_advanced_dump_file_mode_rejects_selected_directory(monkeypatch) -> None
     window.file_path_input.setEditText("/TOOLS")
     monkeypatch.setattr(window, "_warn", lambda message: warnings.append(message))
     monkeypatch.setattr(
-        services,
+        gui,
         "file_hex_dump",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("file dump should not run")),
     )
@@ -1244,7 +1258,7 @@ def test_advanced_file_path_dropdown_lists_and_selects_files(monkeypatch) -> Non
         evidence=[],
     )
     monkeypatch.setattr(
-        services,
+        gui,
         "list_files",
         lambda *_args: [
             services.FileEntryView("TOOLS", "<DIR>", 0, "/TOOLS", True),
@@ -1281,7 +1295,7 @@ def test_advanced_file_path_dropdown_traverses_directories(monkeypatch) -> None:
             return [services.FileEntryView("TOOLS", "<DIR>", 0, "/TOOLS", True)]
         return [services.FileEntryView("README.TXT", "file", 5, "/TOOLS/README.TXT", False)]
 
-    monkeypatch.setattr(services, "list_files", fake_list_files)
+    monkeypatch.setattr(gui, "list_files", fake_list_files)
     window._load_advanced_file_path_options("/")
 
     directory_index = window.file_path_input.findText("TOOLS/")
@@ -1471,7 +1485,7 @@ def test_cbm_sector_hex_input_uses_logical_track_numbers(monkeypatch) -> None:
     def run_immediate(_label, fn, done):
         done(fn())
 
-    monkeypatch.setattr(services, "sector_hex_dump", fake_sector_hex)
+    monkeypatch.setattr(gui, "sector_hex_dump", fake_sector_hex)
     monkeypatch.setattr(window, "_run_job", run_immediate)
     window.hex_track_input.setValue(18)
     window.hex_head_input.setValue(0)

@@ -11,11 +11,14 @@ from fluxctl.filesystem_detection import detect_filesystem
 from fluxctl.filesystems import RawSectorImage
 from fluxctl.filesystems.cpm import CPMDirectoryRecord, CPMFilesystem
 from fluxctl.layouts.loader import ensure_layout_loaded, load_builtin_layouts
+from fluxctl.detection import detect_encoding, detect_layout_any
+from fluxctl.scp import parse_scp
 from fluxctl.trs80 import load_trs80_image
 
 
 FIXTURE_CPM_SRC1 = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC1-256K.img")
 FIXTURE_CPM_SRC2 = Path("tests/fixtures/8inch/CPM/CPM-Generic-SSSD-FM-CPM22SRC2-256K.img")
+FIXTURE_XEROX_820II = Path("tests/fixtures/8inch/CPM/Xerox820-II-SSDD-MFM-CPM22-500K")
 FIXTURE_CPM86_BASE = Path("tests/fixtures/8inch/CPM/CPM86-Generic-SSSD-FM-CPM86-256K")
 FIXTURE_OSBORNE_CPM22 = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-CPM22-200K.imd")
 FIXTURE_OSBORNE_WSTR = Path("tests/fixtures/5.25inch/CPM/Osbourne-CPM-SSDD-MFM-WSTR-200K.imd")
@@ -110,6 +113,31 @@ def test_cpm86_fixture_mounts_from_img_and_imd() -> None:
         assert len(detection.plugin.list_directory("/")) == 23
         for name, expected_hash in expected_hashes.items():
             assert hashlib.sha256(detection.plugin.extract_file(f"/{name}")).hexdigest() == expected_hash
+
+
+def test_xerox_820ii_cpm_fixture_lists_and_extracts_files_from_all_containers() -> None:
+    expected_names = {"SYSGEN.COM", "HELP.TXT", "XERMAIN.BOS", "INIT.COM"}
+    for extension in (".img", ".imd", ".scp"):
+        image = _prepare_image(FIXTURE_XEROX_820II.with_suffix(extension), "xerox_820ii_mfm_ssdd_500k", "mfm")
+        detection = detect_filesystem(image)
+        assert detection.primary == "cpm"
+        assert detection.plugin is not None
+        assert {entry.name for entry in detection.plugin.list_directory()} >= expected_names
+        assert detection.plugin.extract_file("/SYSGEN.COM").startswith(b"\xC3")
+        assert b"XEROX 820-II" in detection.plugin.extract_file("/HELP.TXT")
+
+
+def test_xerox_820ii_scp_auto_detection_recognises_format_and_filesystem() -> None:
+    load_builtin_layouts()
+    image = parse_scp(FIXTURE_XEROX_820II.with_suffix(".scp"))
+    assert detect_encoding(image).encoding == "mfm"
+    candidate = detect_layout_any(image)
+    assert candidate is not None
+    assert candidate.layout.layout_id == "xerox_820ii_mfm_ssdd_500k"
+    assert any(
+        evidence == "filesystem=cpm" or evidence.startswith("cpm_layout_directory_entries=")
+        for evidence in candidate.evidence
+    )
 
 
 def _mount_cpm_fixture(path: Path):
