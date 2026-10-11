@@ -45,6 +45,9 @@ DIAGNOSTIC_PRESETS: tuple[DiagnosticPreset, ...] = (
     DiagnosticPreset("acorn_dfs_ss", "BBC Micro DFS 5¼″ 100 KB · SS SD (FM)", "fm", 125, 40, 1, 10, 256, 300, "Single density"),
     DiagnosticPreset("acorn_dfs_ds", "BBC Micro DFS 5¼″ 200 KB · DS SD (FM)", "fm", 125, 40, 2, 10, 256, 300, "Single density"),
     DiagnosticPreset("acorn_dfs_ds80", "BBC Micro DFS 5¼″ 400 KB · DS SD (FM)", "fm", 125, 80, 2, 10, 256, 300, "Single density"),
+    DiagnosticPreset("trs80_sssd_35", "TRS-80 5¼″ Full-height SSSD 87.5 KB · 35-track", "fm", 125, 35, 1, 10, 256, 300, "Single density"),
+    DiagnosticPreset("trs80_ssdd_40", "TRS-80 5¼″ Full-height SSDD 180 KB · 40-track", "mfm", 250, 40, 1, 18, 256, 300, "Double density"),
+    DiagnosticPreset("kaypro_ii_200", "Kaypro II 5¼″ 200 KB · SS DD (MFM)", "mfm", 250, 40, 1, 10, 512, 300, "Double density"),
     DiagnosticPreset("osborne_sd", "Osborne 1 5¼″ 100 KB · SS SD (FM)", "fm", 125, 40, 1, 10, 256, 300, "Single density"),
 )
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")

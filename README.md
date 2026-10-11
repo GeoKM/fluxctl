@@ -296,7 +296,9 @@ Install that fork in the same Python environment as Fluxctl Studio:
 
 The **Disk format** dropdown fills the rate, FM/MFM encoding, expected sectors,
 track count, sides and double-step option for common IBM PC, DEC RX01, BBC
-Micro DFS and Osborne 1 disks.
+Micro DFS, TRS-80 full-height SSSD/SSDD, Kaypro II, and Osborne 1 disks. The
+TRS-80 SSSD preset is 87.5 KB (35 tracks of 10 × 256-byte FM sectors); SSDD is
+180 KB (40 tracks of 18 × 256-byte MFM sectors).
 **Manual / Custom** retains editable values for other formats. The summary
 shows bytes per sector, density and expected spindle speed; those are format
 expectations, not hardware density-pin settings or a forced RPM override.
@@ -315,6 +317,19 @@ port; **Drive** separately selects A/B or Shugart 0–3. If a seek reports
 stop the session, click **20 ms preset** beside Step delay, and start again.
 That sends `--step-delay 20000` for the new session without changing the
 device's saved `gw delays --step` setting.
+
+The TRS-80 presets select physical disk geometry and density, not a DOS.
+NEWDOS/80, LDOS and TRSDOS can use different disk parameters, and some boot
+disks use the opposite density on track 0. Drive Diagnostics uses one encoding
+and expected sector count for the session, so inspect mixed-density track 0
+separately from the data tracks. Sector numbering and DOS directory structures
+are outside this drive check.
+
+Choose the preset for the disk inserted: a known-good IBM PC 180 KB disk uses
+9 × 512-byte MFM sectors per track, while a Kaypro II 200 KB disk uses
+10 × 512-byte MFM sectors per track. A 35-track SSSD disk exercises tracks
+0–34 only; use a 40-track disk to check the full travel of a 40-track drive.
+Check the drive's rated track count before seeking farther.
 
 For SCP inputs, `convert` auto-detects the likely layout when `--layout` is not
 provided. Pass `--layout` when you want to force a specific interpretation or

@@ -90,6 +90,19 @@ to enter your own values. Editing a filled field switches back to Manual while
 keeping your current numbers. Bytes per sector, density and expected RPM are
 shown for reference. The preset does not switch density pin 2 or force the
 decoder's Fixed RPM; use Toggle Density if your drive requires it.</p>
+<p>The TRS-80 presets describe common physical track formats, not a particular
+DOS. NEWDOS/80, LDOS and TRSDOS can use different disk parameters, and some
+boot disks put track 0 in the opposite density from the data tracks. This
+diagnostic applies one encoding and expected sector count across the session;
+for a mixed-density boot disk, check track 0 and the data tracks in separate
+sessions with the matching presets/settings. Sector numbering and DOS directory
+structures are outside this drive check.</p>
+<p>Choose the preset for the <b>disk inserted</b>, regardless of which computer
+the drive came from. A 40-track single-sided drive can use a known-good IBM PC
+180 KB disk (9 × 512-byte sectors) or a Kaypro II 200 KB disk (10 × 512-byte
+sectors); select the corresponding preset. The TRS-80 87.5 KB SSSD format is
+roughly 90 KB in decimal units and tests only tracks 0–34. Check the drive's
+rated track count before seeking farther.</p>
 <p><b>Adapter port: Auto-detect</b> leaves the serial port blank so Greaseweazle
 selects the best matching connected adapter. Enter a port such as
 <code>/dev/cu.usbmodem…</code> or <code>COM3</code> to choose one explicitly.
