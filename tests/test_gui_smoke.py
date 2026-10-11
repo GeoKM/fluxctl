@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QItemSelectionModel, QSettings, QTimer, Qt
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QApplication, QAbstractItemView, QFileDialog, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QFileDialog, QInputDialog, QMessageBox, QTextBrowser
 
 from fluxctl import studio_services as services
 import fluxctl.gui as gui
@@ -607,12 +608,13 @@ def test_left_panel_requires_typed_confirmation_and_runs_verified_write(monkeypa
     window.close()
 
 
-def test_studio_uses_five_top_level_workflow_tabs() -> None:
+def test_studio_exposes_drive_diagnostics_workflow_tab() -> None:
     window = FluxctlStudio()
 
     assert window.toolbar.objectName() == "mainToolbar"
     assert [window.main_tabs.tabText(index) for index in range(window.main_tabs.count())] == [
         "Disk && Imaging",
+        "Drive Diagnostics",
         "Files && Directories",
         "HEX && ASCII",
         "Advanced",
@@ -621,6 +623,7 @@ def test_studio_uses_five_top_level_workflow_tabs() -> None:
     assert window.main_tabs.currentIndex() == window.disk_tab_index
     assert not window.main_tabs.isTabEnabled(window.advanced_tab_index)
     assert window.main_tabs.isTabEnabled(window.jobs_tab_index)
+    assert window.main_tabs.isTabEnabled(window.diagnostics_tab_index)
     assert not window.map_canvas_panel.isHidden()
 
     window.mode.setCurrentIndex(1)
@@ -633,6 +636,164 @@ def test_studio_uses_five_top_level_workflow_tabs() -> None:
 
     assert window.main_tabs.currentIndex() == window.disk_tab_index
     assert window.hex_mode_stack.currentWidget() == window.hex_panel
+    window.close()
+
+
+def test_drive_diagnostic_page_displays_live_fields_and_controls(monkeypatch) -> None:
+    monkeypatch.setattr("fluxctl.gui_drive_diagnostics.diagnostic_availability", lambda: (True, "Ready"))
+    window = FluxctlStudio()
+    page = window.diagnostics_page
+    assert page.start_button.isEnabled()
+    assert not page.stop_button.isEnabled()
+    page._accept_line(
+        "Drive A: T0, H0, RPM 300.00, S9/9, OT NO, SEL:ON, MOT:ON, "
+        "WP:H Unprot, TK0:L ON, DEN 2:L, DC34:?"
+    )
+    assert page.readings["rpm"].text() == "300.00"
+    assert page.readings["sectors"].text() == "9/9"
+    assert page.readings["track_zero"].text() == "L ON"
+    assert "color: #6fdb9a" in page.readings["sectors"].styleSheet()
+    assert "color: #ffc46b" in page.readings["disk_change"].styleSheet()
+    assert "Drive" in page.output.toPlainText()
+    assert "Sectors" in page.output.toPlainText()
+    assert "Off-track" in page.output.toPlainText()
+    assert "<br" in page.output.toHtml()
+    assert "--rate" in page.options().arguments()
+    window.close()
+
+
+def test_drive_diagnostic_inputs_use_dark_contrast_and_bad_readings_are_red(monkeypatch) -> None:
+    monkeypatch.setattr("fluxctl.gui_drive_diagnostics.diagnostic_availability", lambda: (True, "Ready"))
+    window = FluxctlStudio()
+    page = window.diagnostics_page
+    style = window.styleSheet()
+    assert "QSpinBox, QDoubleSpinBox" in style
+    assert "background: #0c1018; color: #e7edf7" in style
+    page._accept_line(
+        "Drive A: T11, H0, RPM ERR, S4/9, OT T10/S2, SEL:ON, MOT:ON, "
+        "WP:H Unprot, TK0:H OFF, DEN 2:L, DC34:?"
+    )
+    assert "color: #ff8389" in page.readings["sectors"].styleSheet()
+    assert "color: #ff8389" in page.readings["rpm"].styleSheet()
+    assert "color: #ff8389" in page.readings["off_track"].styleSheet()
+    assert "#ff8389" in page.output.toHtml()
+    window.close()
+
+
+def test_drive_diagnostic_slow_seek_preset_and_recovery_hint(monkeypatch) -> None:
+    monkeypatch.setattr("fluxctl.gui_drive_diagnostics.diagnostic_availability", lambda: (True, "Ready"))
+    window = FluxctlStudio()
+    page = window.diagnostics_page
+    assert page.step_delay_spin.value() == 0
+    assert "--step-delay" not in page.options().arguments()
+    page.slow_seek_button.click()
+    assert page.step_delay_spin.value() == 20000
+    assert page.options().arguments()[-2:] == ["--step-delay", "20000"]
+    assert "serial port" in page.device_input.placeholderText()
+    assert not page.seek_hint_label.isVisible()
+    page._accept_line("Track0 signal asserted after seek to cylinder 60")
+    assert not page.seek_hint_label.isHidden()
+    assert "Recalibrate" in page.seek_hint_label.text()
+    window.close()
+
+
+def test_drive_diagnostic_format_presets_fill_fields_and_keep_manual_edits(monkeypatch) -> None:
+    monkeypatch.setattr("fluxctl.gui_drive_diagnostics.diagnostic_availability", lambda: (True, "Ready"))
+    window = FluxctlStudio()
+    page = window.diagnostics_page
+    assert page.preset_combo.currentText() == "Manual / Custom"
+    page.preset_combo.setCurrentIndex(page.preset_combo.findData("ibm_1200"))
+    assert (page.rate_spin.value(), page.encoding_combo.currentText(),
+            page.sectors_spin.value(), page.cylinders_spin.value(),
+            page.heads_spin.value()) == (500, "mfm", 15, 80, 2)
+    assert "512 bytes/sector" in page.preset_summary.text()
+    assert "High density" in page.preset_summary.text()
+    assert "360 RPM" in page.preset_summary.text()
+    assert page.rpm_spin.value() == 0  # The preset does not force an RPM override.
+    assert "--rpm" not in page.options().arguments()
+    page.device_input.setText("/dev/cu.usbmodem-test")
+    args = page.options().arguments()
+    assert args[args.index("--device"):args.index("--device") + 2] == [
+        "--device", "/dev/cu.usbmodem-test",
+    ]
+    page._accept_line(
+        "Drive A: T0, H0, RPM 300.00, S15/15, OT NO, SEL:ON, MOT:ON, "
+        "WP:H Unprot, TK0:L ON, DEN 2:L, DC34:?"
+    )
+    assert "color: #ff8389" in page.readings["rpm"].styleSheet()
+    page.sectors_spin.setValue(16)
+    assert page.preset_combo.currentText() == "Manual / Custom"
+    assert page.sectors_spin.value() == 16
+    page.preset_combo.setCurrentIndex(page.preset_combo.findData("dec_rx01"))
+    assert (page.encoding_combo.currentText(), page.rate_spin.value(),
+            page.cylinders_spin.value(), page.heads_spin.value(),
+            page.sectors_spin.value()) == ("fm", 250, 77, 1, 26)
+    window.close()
+
+
+def test_drive_diagnostic_page_disables_start_without_fork(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "fluxctl.gui_drive_diagnostics.diagnostic_availability",
+        lambda: (False, "Install the diagnostic fork"),
+    )
+    window = FluxctlStudio()
+    page = window.diagnostics_page
+    assert not page.start_button.isEnabled()
+    assert "Install the diagnostic fork" in page.availability_label.text()
+    assert not page.previous_button.isEnabled()
+    assert page.help_button.isEnabled()
+    window.close()
+
+
+def test_drive_diagnostic_help_explains_fields_and_reopens(monkeypatch) -> None:
+    monkeypatch.setattr("fluxctl.gui_drive_diagnostics.diagnostic_availability", lambda: (True, "Ready"))
+    window = FluxctlStudio()
+    page = window.diagnostics_page
+    page.help_button.click()
+    dialog = page.help_dialog
+    assert dialog is not None and dialog.isVisible()
+    assert dialog.windowTitle() == "Drive Diagnostics Help"
+    guide = dialog.findChild(QTextBrowser, "driveDiagnosticsHelp")
+    assert guide is not None
+    text = guide.toPlainText()
+    for field in ("RPM", "Sectors", "Off-track", "Write protect", "Track 0",
+                  "Density", "Disk change / ready", "Typical IBM MFM examples"):
+        assert field in text
+    assert "295–305" in text
+    assert "unknown" in text
+    assert "Auto-detect" in text
+    assert "20 ms preset" in text
+    assert "misterblack1/greaseweazle" in guide.toHtml()
+    dialog.close()
+    page.help_button.click()
+    assert page.help_dialog is dialog and dialog.isVisible()
+    window.close()
+
+
+def test_drive_diagnostic_page_streams_worker_and_stops(monkeypatch) -> None:
+    monkeypatch.setattr("fluxctl.gui_drive_diagnostics.diagnostic_availability", lambda: (True, "Ready"))
+    script = (
+        "import sys\n"
+        "print('Drive A: T0, H0, RPM 300.00, S9/9, OT NO, SEL:ON, MOT:ON, '")
+    script += (
+        "'WP:H Unprot, TK0:L ON, DEN 2:L, DC34:?')\n"
+        "for line in sys.stdin:\n"
+        "    if line.strip() == 'q':\n"
+        "        break\n"
+    )
+    monkeypatch.setattr(
+        "fluxctl.gui_drive_diagnostics.worker_command",
+        lambda _options: [sys.executable, "-u", "-c", script],
+    )
+    app = _app()
+    window = FluxctlStudio()
+    page = window.diagnostics_page
+    page.start_session()
+    _wait_until(app, lambda: page.readings["rpm"].text() == "300.00")
+    assert page.stop_button.isEnabled()
+    page.stop_session()
+    _wait_until(app, lambda: not page.is_running())
+    assert page.start_button.isEnabled()
     window.close()
 
 

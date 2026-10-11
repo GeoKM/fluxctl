@@ -57,6 +57,7 @@ from .gui_pages import AdvancedPageController, FilesPageController, HexPageContr
 from .gui_jobs import Job
 from .gui_job_controller import StudioJobController
 from .gui_map import DiskMapWidget
+from .gui_drive_diagnostics import DriveDiagnosticsPage
 
 
 try:  # pragma: no cover - exercised only when GUI dependencies are installed.
@@ -274,6 +275,8 @@ class FluxctlStudio(QMainWindow):
 
         self.main_tabs = QTabWidget()
         self.disk_tab_index = self.main_tabs.addTab(self.main_page, "Disk && Imaging")
+        self.diagnostics_page = DriveDiagnosticsPage(self)
+        self.diagnostics_tab_index = self.main_tabs.addTab(self.diagnostics_page, "Drive Diagnostics")
         self.files_tab_index = self.main_tabs.addTab(self.file_panel, "Files && Directories")
         self.hex_tab_index = self.main_tabs.addTab(self.hex_page, "HEX && ASCII")
         self.advanced_tab_index = self.main_tabs.addTab(self.advanced, "Advanced")
@@ -616,10 +619,13 @@ class FluxctlStudio(QMainWindow):
                 border: 1px solid #253142;
                 color: #697386;
             }
-            QComboBox, QLineEdit, QTextEdit, QTableWidget {
-                background: #0c1018; border: 1px solid #2d3a4b; border-radius: 6px; padding: 6px;
+            QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QTextEdit, QTableWidget {
+                background: #0c1018; color: #e7edf7;
+                selection-background-color: #31455f; selection-color: #ffffff;
+                border: 1px solid #2d3a4b; border-radius: 6px; padding: 6px;
             }
-            QComboBox:disabled, QLineEdit:disabled, QTextEdit:disabled, QTableWidget:disabled {
+            QComboBox:disabled, QLineEdit:disabled, QSpinBox:disabled,
+            QDoubleSpinBox:disabled, QTextEdit:disabled, QTableWidget:disabled {
                 background: #0b0f16;
                 border: 1px solid #202a38;
                 color: #657080;
@@ -808,6 +814,7 @@ class FluxctlStudio(QMainWindow):
         self.settings.sync()
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        self.diagnostics_page.shutdown()
         self._save_settings()
         for job in tuple(self.active_jobs):
             job.cancel()

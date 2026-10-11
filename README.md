@@ -270,10 +270,11 @@ Install the GUI dependency and launch it:
 .venv/bin/fluxctl-studio
 ```
 
-Studio calls the shared fluxctl application and domain operations directly; it
-does not drive the CLI through subprocess command paths. This keeps the GUI and
-CLI on the same conversion, filesystem, output-safety, provenance, and recovery
-rules while allowing each frontend to present results in its own workflow.
+Studio calls the shared fluxctl application and domain operations directly for
+image workflows. This keeps the GUI and CLI on the same conversion, filesystem,
+output-safety, provenance, and recovery rules while allowing each frontend to
+present results in its own workflow. The live drive diagnostic runs in a
+separate process so hardware reads cannot block the GUI.
 
 Long-running Studio operations are shown in the Jobs & Logs tab with an elapsed
 time indicator and a cancellation control. Cancellation is cooperative: an
@@ -282,6 +283,38 @@ background, but its result is discarded. Starting a newer operation or opening
 another image likewise prevents an older result from replacing current-screen
 data. Window layout, mode, map view, format selections, and common browsing or
 Greaseweazle settings are saved with the operating system's application settings.
+
+### Live floppy drive diagnostics
+
+Studio's **Drive Diagnostics** page runs the live diagnostic engine from
+[Adrian Black's Greaseweazle fork](https://github.com/misterblack1/greaseweazle/tree/diag).
+Install that fork in the same Python environment as Fluxctl Studio:
+
+```bash
+.venv/bin/python -m pip install git+https://github.com/misterblack1/greaseweazle@diag
+```
+
+The **Disk format** dropdown fills the rate, FM/MFM encoding, expected sectors,
+track count, sides and double-step option for common IBM PC, DEC RX01, BBC
+Micro DFS and Osborne 1 disks.
+**Manual / Custom** retains editable values for other formats. The summary
+shows bytes per sector, density and expected spindle speed; those are format
+expectations, not hardware density-pin settings or a forced RPM override.
+The page also exposes the fork's drive, adapter port, step delay and TG43
+options. It shows live sector counts, off-track
+sector IDs, RPM, and drive signal levels, with controls for track stepping,
+track jumps, recalibration, head, motor, drive select, and density select.
+Install the fork before starting a session; ordinary Greaseweazle does not
+include `gw diag`. Use a known-good IBM FM or MFM disk for meaningful sector
+and alignment checks. Closing Studio stops the diagnostic process and motor.
+The page's **Help…** button explains each live field, the colour key,
+typical sector counts, and the controls using the fork's diagnostic README.
+Leave **Adapter port** blank to let Greaseweazle choose the best matching serial
+port; **Drive** separately selects A/B or Shugart 0–3. If a seek reports
+`Track0 signal asserted after seek`, try **Recalibrate**. If it persists,
+stop the session, click **20 ms preset** beside Step delay, and start again.
+That sends `--step-delay 20000` for the new session without changing the
+device's saved `gw delays --step` setting.
 
 For SCP inputs, `convert` auto-detects the likely layout when `--layout` is not
 provided. Pass `--layout` when you want to force a specific interpretation or
@@ -471,6 +504,14 @@ See [docs/packaging.md](docs/packaging.md) for wheel, source distribution, and
 standalone GUI/CLI packaging notes.
 See [docs/windows-prerequisites.md](docs/windows-prerequisites.md) for the
 Windows software checklist and installation walkthrough.
+
+## Acknowledgements
+Fluxctl's optional hardware and image-tool integrations build on the work of
+other projects and their contributors. With thanks to **Keir Fraser** for
+Greaseweazle, **Adrian Black** for the live drive-diagnostic additions in his
+Greaseweazle fork, and **Jean-François DEL NERO / HxC2001** for the HxC Floppy
+Emulator toolkit. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for
+project links, roles, and pointers to each project's license and notices.
 
 ## Provenance
 Commands that create output files write provenance sidecars by default:
