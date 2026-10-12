@@ -127,6 +127,24 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: python scripts/assemble_release.py --appimagetool ./appimagetool.AppImage
+      - name: Smoke test assembled Linux AppImage
+        if: runner.os == 'Linux'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          appimages=(dist/release/*.AppImage)
+          test "${#appimages[@]}" -eq 1
+          "${appimages[0]}" --cli doctor --json > dist/release/appimage-doctor.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("dist/release/appimage-doctor.json").read_text())
+          checks = {check["name"]: check for check in report["checks"]}
+          for name in ("native acceleration", "greaseweazle", "gw command", "gw diagnostics", "hxcfe"):
+              assert checks[name]["status"] == "ok", checks[name]
+          print("Assembled AppImage doctor passed")
+          PY
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
