@@ -3,7 +3,16 @@
 fluxctl is a modular toolkit for inspecting and converting floppy disk flux captures. It supports decoding flux streams, reconstructing sectors, quality control, visualization, extraction, and exporting to standard image formats.
 
 ## Getting started
-The easiest source-checkout install is:
+When integrated installers are published, download the one for your operating
+system from [Fluxctl Releases](https://github.com/GeoKM/fluxctl/releases). The Windows
+installer includes Fluxctl Studio and the CLI; macOS uses a DMG with the app and
+CLI; Linux has x86_64 and aarch64 AppImages (launch Studio directly, or run
+`./Fluxctl-<version>-linux-<arch>.AppImage --cli doctor`). Integrated release
+builds include Greaseweazle, HxCFE, and the native decoder, so no Python,
+Git, Rust, or compiler installation is needed to use them. Linux Greaseweazle
+hardware access may still require the upstream udev rules.
+
+For development from a source checkout:
 
 ```bash
 git clone https://github.com/GeoKM/fluxctl.git

@@ -10,7 +10,36 @@ Fluxctl ships two command entry points from the same Python package:
 1. Publish Python wheels and source distributions for technical users.
 2. Build platform-specific standalone bundles for users who do not want to
    manage Python directly.
-3. Keep Greaseweazle and HxCFE optional and discoverable through `fluxctl doctor`.
+3. Keep helper use optional at runtime and discoverable through `fluxctl doctor`.
+
+## Integrated Installer Builds
+
+The tag/dispatch packaging workflow now builds four integrated artifacts: a
+macOS DMG, a Windows per-user setup executable, and x86_64 and aarch64 Linux
+AppImages. The build
+uses a pinned revision of Adrian Black's Greaseweazle diagnostics fork (based
+on upstream v1.23) and HxCFE 2.16.10.1 source checkouts, builds the Rust
+decoder, packages both Greaseweazle commands and a console diagnostic worker,
+and runs `scripts/smoke_release.py`
+outside the source checkout before assembling an installer. The smoke test
+requires every integration to load and starts Studio in Qt offscreen mode.
+
+The installers carry Python and GUI runtime dependencies. End users do not need
+Git, Python, Rust, C++ build tools, or MSYS2. Greaseweazle hardware still needs
+OS-level access: Linux users may need upstream udev rules; Windows 10/11 use the
+USB serial driver supplied by the OS.
+
+The macOS and Windows artifacts produced by the workflow are unsigned
+development artifacts. Before public distribution, sign and notarize macOS app
+and DMG contents, and sign the Windows executable and bundled binaries. Review
+the copied third-party notices and source availability requirements when
+publishing. The release workflow uploads CI artifacts; it does not publish a
+GitHub Release automatically.
+
+The AppImage launches Studio by default. Run `./Fluxctl-<version>-linux-<arch>.AppImage
+--cli doctor` for the CLI. On macOS, the DMG includes a `Fluxctl CLI` folder.
+On Windows, the installer places `fluxctl.exe` under its `cli` directory and
+adds a Start Menu shortcut for `doctor`.
 
 ## Source Checkout Installer
 
@@ -148,8 +177,8 @@ python -m pip install "fluxctl[gui]"
 
 ## Standalone Builds
 
-Standalone builds are platform-specific and should be produced on each target
-OS:
+For a minimal standalone build without bundled integrations, build on the
+target OS:
 
 ```bash
 python -m pip install -e ".[gui,packaging]"
@@ -174,9 +203,9 @@ Notes:
   distribution.
 - Windows `.exe` artifacts should be built on Windows.
 - Linux artifacts should be built on a conservative Linux base image.
-- The optional Rust native decoder library is not yet bundled into wheels or
-  standalone apps. Fluxctl falls back to the Python decoder when the native
-  library is absent.
+- The optional Rust native decoder library is bundled in integrated installer
+  builds, but not in Python wheels or minimal standalone builds. Fluxctl falls
+  back to the Python decoder when the native library is absent.
 
 ## Rust Native Acceleration
 
@@ -235,8 +264,9 @@ target.
 
 ## Optional Integration Policy
 
-Packaging should not make Greaseweazle, HxCFE, or Rust native acceleration hard
-requirements. Instead:
+Python wheels and source installs should not make Greaseweazle, HxCFE, or Rust
+native acceleration hard requirements. Integrated installer builds carry these
+helpers, while their use remains optional. In all install modes:
 
 - `fluxctl doctor` reports what is available.
 - Installer/build docs explain how to add optional helpers.

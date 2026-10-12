@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import platform
 import struct
+import sys
 import sysconfig
 from typing import Optional, Sequence
 
@@ -91,6 +92,9 @@ def windows_pe_architecture(path: Path) -> str | None:
 def _candidate_paths() -> list[Path]:
     env_path = os.environ.get("FLUXCTL_NATIVE_PATH")
     paths = [Path(env_path)] if env_path else []
+    if getattr(sys, "frozen", False):
+        bundle_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        paths.append(bundle_dir / "native" / _library_filename())
     root = Path(__file__).resolve().parents[2]
     filename = _library_filename()
     target_root = root / "native" / "fluxctl_native" / "target"

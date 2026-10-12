@@ -37,3 +37,29 @@ def test_pyinstaller_build_includes_source_package_and_layouts(monkeypatch):
     source, destination = data_arg.split(os.pathsep, 1)
     assert source == str(builder.ROOT / "src" / "fluxctl" / "data" / "layouts")
     assert destination == "fluxctl/data/layouts"
+
+
+def test_pyinstaller_build_stages_all_optional_runtime_tools(monkeypatch, tmp_path):
+    builder = _load_builder()
+    commands: list[list[str]] = []
+    monkeypatch.setattr(builder, "_require_module", lambda module, hint: None)
+    monkeypatch.setattr(builder, "_run", lambda args: commands.append(args))
+    gw = tmp_path / "gw"
+    hxcfe = tmp_path / "hxcfe"
+    hxcfe_lib = tmp_path / "libhxcfe.dylib"
+    native = tmp_path / "libfluxctl_native.dylib"
+    worker = tmp_path / "fluxctl-diag-worker"
+
+    builder.build_pyinstaller(
+        "fluxctl", "fluxctl.cli:app", ["--console"],
+        bundled_gw=gw, hxcfe_bin=hxcfe, hxcfe_libs=[hxcfe_lib], native_bin=native,
+        diagnostic_worker=worker,
+    )
+
+    command = commands[0]
+    assert command.count("--collect-all") == 1
+    assert f"{gw}{os.pathsep}helpers/gw" in command
+    assert f"{hxcfe}{os.pathsep}helpers" in command
+    assert f"{hxcfe_lib}{os.pathsep}helpers" in command
+    assert f"{native}{os.pathsep}native" in command
+    assert f"{worker}{os.pathsep}helpers/diag-worker" in command

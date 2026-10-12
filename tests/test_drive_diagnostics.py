@@ -28,6 +28,19 @@ def test_diagnostic_options_cover_fork_controls() -> None:
     ]
 
 
+def test_frozen_studio_uses_bundled_console_diagnostic_worker(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        "fluxctl.integrations.diagnostic_worker_executable",
+        lambda: "/bundle/helpers/fluxctl-diag-worker",
+    )
+
+    command = worker_command(DiagnosticOptions())
+
+    assert command[0] == "/bundle/helpers/fluxctl-diag-worker"
+    assert "-m" not in command
+
+
 @pytest.mark.parametrize("options", [
     DiagnosticOptions(rate=0), DiagnosticOptions(sectors=0),
     DiagnosticOptions(rpm=-1), DiagnosticOptions(encoding="gcr"),
