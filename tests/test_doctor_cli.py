@@ -128,13 +128,15 @@ def test_doctor_hxcfe_hint_mentions_clone_and_build_when_missing() -> None:
 def test_doctor_finds_hxcfe_in_sibling_checkout(monkeypatch, tmp_path) -> None:
     checkout = tmp_path / "fluxctl"
     checkout.mkdir()
-    hxcfe = tmp_path / "HxCFloppyEmulator" / "build" / "hxcfe"
+    hxcfe_name = "hxcfe.exe" if cli.os.name == "nt" else "hxcfe"
+    hxcfe = tmp_path / "HxCFloppyEmulator" / "build" / hxcfe_name
     hxcfe.parent.mkdir(parents=True)
     hxcfe.write_text("#!/bin/sh\n", encoding="utf-8")
     hxcfe.chmod(0o755)
 
     monkeypatch.setattr(cli, "__file__", str(checkout / "src" / "fluxctl" / "cli.py"))
     monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+    monkeypatch.setattr(cli, "_executable_probe", lambda path, argument: (True, str(path)))
     monkeypatch.chdir(checkout)
 
     report = cli._doctor_report()
@@ -153,7 +155,7 @@ def test_doctor_reports_unloadable_hxcfe(monkeypatch, tmp_path) -> None:
     check = {item["name"]: item for item in report["checks"]}["hxcfe"]
 
     assert check["status"] == "fail"
-    assert "missing-library" in check["detail"]
+    assert "missing-library" in check["detail"] or "not a valid Win32 application" in check["detail"]
 
 
 def test_doctor_distinguishes_gw_import_from_command(monkeypatch) -> None:

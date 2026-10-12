@@ -1,4 +1,4 @@
-from pathlib import Path
+import os
 
 import fluxctl.integrations as integrations
 
@@ -9,9 +9,9 @@ def test_packaged_helpers_are_found_without_developer_checkout(monkeypatch, tmp_
     executable.touch()
     helpers = executable.parent / "helpers"
     helpers.mkdir()
-    gw = helpers / "gw"
+    gw = helpers / ("gw.exe" if os.name == "nt" else "gw")
     gw.touch()
-    hxcfe = helpers / "hxcfe"
+    hxcfe = helpers / ("hxcfe.exe" if os.name == "nt" else "hxcfe")
     hxcfe.touch()
     monkeypatch.setattr(integrations.sys, "executable", str(executable))
     monkeypatch.setattr(integrations.shutil, "which", lambda name: None)

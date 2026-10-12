@@ -64,7 +64,7 @@ def assemble_linux(version: str, appimagetool: Path) -> Path:
     output = DIST / "release" / f"Fluxctl-{version}-linux-{platform.machine().lower()}.AppImage"
     env = os.environ.copy()
     env["ARCH"] = platform.machine().lower()
-    subprocess.run([str(appimagetool), str(stage), str(output)], check=True, env=env)
+    subprocess.run([str(appimagetool.resolve()), str(stage), str(output)], check=True, env=env)
     return output
 
 
