@@ -85,7 +85,9 @@ jobs:
       - name: Build HxCFE on Windows
         if: runner.os == 'Windows'
         shell: msys2 {0}
-        run: make -C vendor/hxc/build TARGET=mingw64 HxCFloppyEmulator_cmdline
+        run: |
+          command -v gcc ar windres
+          make -C vendor/hxc/build TARGET=mingw64 CC=gcc AR=ar RESC=windres HxCFloppyEmulator_cmdline
       - name: Build HxCFE on macOS and Linux
         if: runner.os != 'Windows'
         run: make -C vendor/hxc/build HxCFloppyEmulator_cmdline
