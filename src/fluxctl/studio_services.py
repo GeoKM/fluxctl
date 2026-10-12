@@ -445,12 +445,9 @@ def _build_blank_cpm_image(layout_id: str) -> bytes:
 
 
 def _greaseweazle_executable() -> Optional[Path]:
-    exe_name = "gw.exe" if sys.platform.startswith("win") else "gw"
-    venv_candidate = Path(sys.executable).parent / exe_name
-    if venv_candidate.exists():
-        return venv_candidate
-    found = shutil.which("gw")
-    return Path(found) if found else None
+    from .integrations import greaseweazle_executable
+
+    return greaseweazle_executable()
 
 
 def _legacy_greaseweazle_status() -> GreaseweazleStatus:
@@ -612,7 +609,7 @@ def summarize_image(path: Path, hxcfe: Optional[Path] = None) -> ImageSummary:
     else:
         image = parse_scp(path)
         hint = None
-        if hxcfe:
+        if hxcfe or getattr(sys, "frozen", False):
             hint = _maybe_hxc_hint(path, hxcfe)
         encoding = detect_encoding(image, hint=hint)
         layout = detect_layout(image, encoding.encoding, hint=hint) if encoding else None

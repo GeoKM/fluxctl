@@ -63,6 +63,11 @@ _STATUS = re.compile(
 
 def diagnostic_availability() -> tuple[bool, str]:
     """Require Adrian Black's diagnostic package in Studio's Python environment."""
+    if getattr(sys, "frozen", False):
+        from .integrations import diagnostic_worker_executable
+
+        if diagnostic_worker_executable() is None:
+            return False, "The bundled Greaseweazle diagnostic worker is missing."
     try:
         available = importlib.util.find_spec("greaseweazle.tools.diag") is not None
     except (ImportError, ModuleNotFoundError, ValueError):
@@ -121,6 +126,13 @@ class DiagnosticOptions:
 
 
 def worker_command(options: DiagnosticOptions) -> list[str]:
+    if getattr(sys, "frozen", False):
+        from .integrations import diagnostic_worker_executable
+
+        worker = diagnostic_worker_executable()
+        if worker is None:
+            raise RuntimeError("Bundled Greaseweazle diagnostic worker is missing")
+        return [str(worker), *options.arguments()]
     return [sys.executable, "-u", "-m", "fluxctl.drive_diagnostics_worker", *options.arguments()]
 
 

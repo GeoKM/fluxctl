@@ -7,9 +7,7 @@ from datetime import datetime, timezone
 import json
 import os
 import shlex
-import shutil
 import subprocess
-import sys
 import tempfile
 
 from .compare_operations import compare_images
@@ -21,16 +19,12 @@ from .models import (
     HardwareWriteResult,
 )
 from ..exceptions import FluxctlError
+from ..integrations import greaseweazle_executable
 from ..output import validate_output_path
 
 
 def _greaseweazle_executable() -> Optional[Path]:
-    exe_name = "gw.exe" if sys.platform.startswith("win") else "gw"
-    candidate = Path(sys.executable).parent / exe_name
-    if candidate.exists():
-        return candidate
-    found = shutil.which("gw")
-    return Path(found) if found else None
+    return greaseweazle_executable()
 
 
 def greaseweazle_status():

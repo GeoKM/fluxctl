@@ -49,6 +49,10 @@ jobs:
           tests/test_output.py
           tests/test_compare_cli.py
           tests/test_doctor_cli.py
+          tests/test_drive_diagnostics.py
+          tests/test_integrations.py
+          tests/test_build_packages.py
+          tests/test_release_packaging.py
           tests/test_exceptions.py
           tests/test_install_fluxctl_script.py
           tests/test_layouts.py

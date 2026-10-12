@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import shutil
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -56,6 +57,8 @@ from .sector.reconstruct_gcr import (
     score_gcr_alignment,
 )
 from .external.hxc import probe_hxcfe
+from .integrations import bundled_hxcfe_candidates, greaseweazle_executable
+from .drive_diagnostics import diagnostic_availability
 from .application.compare_operations import compare_images
 from .application.conversion_operations import convert_image, roundtrip_image
 from .application.conversion_planner import ConversionContext, ConversionPlan, plan_conversion
@@ -231,8 +234,12 @@ def _hxcfe_candidate_paths(explicit_path: Optional[Path] = None) -> list[Path]:
     candidates: list[Path] = []
     if explicit_path is not None:
         candidates.append(explicit_path)
+    candidates.extend(bundled_hxcfe_candidates())
     if found := shutil.which("hxcfe"):
         candidates.append(Path(found))
+
+    if getattr(sys, "frozen", False):
+        return candidates
 
     roots = [
         Path(__file__).resolve().parents[2],
@@ -280,6 +287,25 @@ def _first_executable_hxcfe(explicit_path: Optional[Path] = None) -> Path | None
         if _is_executable(candidate):
             return candidate
     return None
+
+
+def _executable_probe(path: Path, argument: str) -> tuple[bool, str]:
+    try:
+        probe_env = None
+        if path.name.lower().startswith("hxcfe"):
+            probe_env = os.environ.copy()
+            key = "DYLD_LIBRARY_PATH" if sys.platform == "darwin" else "LD_LIBRARY_PATH"
+            probe_env[key] = os.pathsep.join(filter(None, [str(path.parent), probe_env.get(key, "")]))
+        result = subprocess.run(
+            [str(path), argument], capture_output=True, text=True, timeout=10, check=False,
+            env=probe_env,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, str(exc)
+    if result.returncode == 0:
+        return True, str(path)
+    detail = (result.stderr or result.stdout).strip().splitlines()
+    return False, detail[0] if detail else f"exit status {result.returncode}"
 
 
 def _native_build_suggestion() -> str:
@@ -386,6 +412,15 @@ def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
     else:
         checks.append(_status_check("greaseweazle", "ok", "optional package importable"))
 
+    gw_path = greaseweazle_executable()
+    if gw_path is None:
+        checks.append(_status_check("gw command", "warn", "optional command not found", "Install or bundle the Greaseweazle gw command."))
+    else:
+        gw_works, gw_detail = _executable_probe(gw_path, "--help")
+        checks.append(_status_check("gw command", "ok" if gw_works else "warn", gw_detail))
+    diagnostics_ready, diagnostics_detail = diagnostic_availability()
+    checks.append(_status_check("gw diagnostics", "ok" if diagnostics_ready else "warn", diagnostics_detail))
+
     hxcfe_path = hxcfe if hxcfe is not None else _first_executable_hxcfe()
     if hxcfe_path is None:
         checks.append(
@@ -403,7 +438,8 @@ def _doctor_report(hxcfe: Optional[Path] = None) -> dict:
             _status_check("hxcfe", "fail", f"{hxcfe_path} is not executable", "Run chmod +x or rebuild hxcfe.")
         )
     else:
-        checks.append(_status_check("hxcfe", "ok", str(hxcfe_path)))
+        hxc_works, hxc_detail = _executable_probe(hxcfe_path, "-help")
+        checks.append(_status_check("hxcfe", "ok" if hxc_works else "fail" if hxcfe is not None else "warn", hxc_detail))
 
     overall = "fail" if any(check["status"] == "fail" for check in checks) else "ok"
     return {
@@ -442,11 +478,19 @@ def _resolve_encoding_for_compare(path: Path, encoding: str) -> str:
 
 
 def _maybe_hxc_hint(path: Path, hxcfe: Optional[Path]) -> LayoutHint | None:
-    """Run HxC CLI when requested and convert the result into a layout hint."""
+    """Run an explicit HxC CLI or the helper shipped in a frozen release."""
 
+    bundled_default = hxcfe is None and getattr(sys, "frozen", False)
+    if hxcfe is None and getattr(sys, "frozen", False):
+        hxcfe = _first_executable_hxcfe()
     if not hxcfe:
         return None
-    metadata = probe_hxcfe(path, hxcfe)
+    try:
+        metadata = probe_hxcfe(path, hxcfe)
+    except FluxctlError:
+        if bundled_default:
+            return None
+        raise
     return metadata.to_layout_hint()
 
 

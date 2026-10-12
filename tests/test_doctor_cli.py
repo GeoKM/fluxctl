@@ -144,6 +144,46 @@ def test_doctor_finds_hxcfe_in_sibling_checkout(monkeypatch, tmp_path) -> None:
     assert checks["hxcfe"]["detail"] == str(hxcfe)
 
 
+def test_doctor_reports_unloadable_hxcfe(monkeypatch, tmp_path) -> None:
+    hxcfe = tmp_path / "hxcfe"
+    hxcfe.write_text("#!/bin/sh\necho missing-library >&2\nexit 127\n", encoding="utf-8")
+    hxcfe.chmod(0o755)
+
+    report = cli._doctor_report(hxcfe)
+    check = {item["name"]: item for item in report["checks"]}["hxcfe"]
+
+    assert check["status"] == "fail"
+    assert "missing-library" in check["detail"]
+
+
+def test_doctor_distinguishes_gw_import_from_command(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "greaseweazle_executable", lambda: None)
+
+    report = cli._doctor_report()
+    checks = {item["name"]: item for item in report["checks"]}
+
+    assert checks["gw command"]["status"] == "warn"
+    assert checks["gw command"]["detail"] == "optional command not found"
+
+
+def test_frozen_release_uses_bundled_hxcfe_for_hints(monkeypatch, tmp_path) -> None:
+    helper = tmp_path / "helpers" / "hxcfe"
+    helper.parent.mkdir()
+    helper.touch()
+    seen = []
+
+    class Metadata:
+        def to_layout_hint(self):
+            return "hint"
+
+    monkeypatch.setattr(cli.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(cli, "_first_executable_hxcfe", lambda: helper)
+    monkeypatch.setattr(cli, "probe_hxcfe", lambda path, executable: seen.append(executable) or Metadata())
+
+    assert cli._maybe_hxc_hint(tmp_path / "disk.scp", None) == "hint"
+    assert seen == [helper]
+
+
 def test_top_level_help_guides_real_workflows() -> None:
     result = runner.invoke(app, ["--help"])
 
