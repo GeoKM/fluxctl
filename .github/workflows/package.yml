@@ -4,6 +4,17 @@ on:
   push:
     tags:
       - "v*"
+  pull_request:
+    paths:
+      - ".github/workflows/package.yml"
+      - "packaging/**"
+      - "scripts/build_packages.py"
+      - "scripts/build_release.py"
+      - "scripts/assemble_release.py"
+      - "scripts/smoke_release.py"
+      - "src/fluxctl/integrations.py"
+      - "src/fluxctl/native.py"
+      - "src/fluxctl/drive_diagnostics.py"
   workflow_dispatch:
 
 jobs:
