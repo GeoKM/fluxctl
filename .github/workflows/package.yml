@@ -51,6 +51,8 @@ jobs:
             asset: "*.exe"
           - os: ubuntu-22.04
             asset: "*.AppImage"
+          - os: ubuntu-22.04-arm
+            asset: "*.AppImage"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -113,13 +115,18 @@ jobs:
       - name: Fetch pinned Linux AppImage tool
         if: runner.os == 'Linux'
         run: |
-          curl --fail --location --output appimagetool-x86_64.AppImage https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
-          chmod +x appimagetool-x86_64.AppImage
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64|aarch64) ;;
+            *) echo "Unsupported AppImage architecture: $arch" >&2; exit 1 ;;
+          esac
+          curl --fail --location --retry 3 --output appimagetool.AppImage "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${arch}.AppImage"
+          chmod +x appimagetool.AppImage
       - name: Assemble Linux AppImage
         if: runner.os == 'Linux'
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: python scripts/assemble_release.py --appimagetool ./appimagetool-x86_64.AppImage
+        run: python scripts/assemble_release.py --appimagetool ./appimagetool.AppImage
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:

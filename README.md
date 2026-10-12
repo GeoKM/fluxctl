@@ -6,7 +6,7 @@ fluxctl is a modular toolkit for inspecting and converting floppy disk flux capt
 When integrated installers are published, download the one for your operating
 system from [Fluxctl Releases](https://github.com/GeoKM/fluxctl/releases). The Windows
 installer includes Fluxctl Studio and the CLI; macOS uses a DMG with the app and
-CLI; Linux uses an AppImage (launch Studio directly, or run
+CLI; Linux has x86_64 and aarch64 AppImages (launch Studio directly, or run
 `./Fluxctl-<version>-linux-<arch>.AppImage --cli doctor`). Integrated release
 builds include Greaseweazle, HxCFE, and the native decoder, so no Python,
 Git, Rust, or compiler installation is needed to use them. Linux Greaseweazle

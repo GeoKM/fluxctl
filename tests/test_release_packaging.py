@@ -42,7 +42,8 @@ def test_release_inputs_require_all_hxc_and_native_libraries(monkeypatch, tmp_pa
         release.release_inputs(hxc, gw)
 
 
-def test_linux_appimage_exposes_studio_and_cli(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize("arch", ["x86_64", "aarch64"])
+def test_linux_appimage_exposes_studio_and_cli(monkeypatch, tmp_path, arch: str) -> None:
     release = _load_script("assemble_release.py")
     root = tmp_path / "repo"
     dist = root / "dist"
@@ -55,9 +56,9 @@ def test_linux_appimage_exposes_studio_and_cli(monkeypatch, tmp_path) -> None:
     (root / "THIRD_PARTY_NOTICES.md").touch()
     monkeypatch.setattr(release, "ROOT", root)
     monkeypatch.setattr(release, "DIST", dist)
-    monkeypatch.setattr(release.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(release.platform, "machine", lambda: arch)
     calls = []
-    monkeypatch.setattr(release.subprocess, "run", lambda args, **kwargs: calls.append(args))
+    monkeypatch.setattr(release.subprocess, "run", lambda args, **kwargs: calls.append((args, kwargs)))
 
     output = release.assemble_linux("0.3.8", tmp_path / "appimagetool")
 
@@ -65,4 +66,6 @@ def test_linux_appimage_exposes_studio_and_cli(monkeypatch, tmp_path) -> None:
     assert "--cli" in (appdir / "AppRun").read_text(encoding="utf-8")
     assert (appdir / "usr" / "lib" / "fluxctl" / "fluxctl").exists()
     assert (appdir / "usr" / "lib" / "fluxctl-studio" / "fluxctl-studio").exists()
-    assert calls[0][-1] == str(output)
+    assert output.name == f"Fluxctl-0.3.8-linux-{arch}.AppImage"
+    assert calls[0][0][-1] == str(output)
+    assert calls[0][1]["env"]["ARCH"] == arch

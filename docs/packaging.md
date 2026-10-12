@@ -14,8 +14,9 @@ Fluxctl ships two command entry points from the same Python package:
 
 ## Integrated Installer Builds
 
-The tag/dispatch packaging workflow now builds three integrated artifacts: a
-macOS DMG, a Windows per-user setup executable, and a Linux AppImage. The build
+The tag/dispatch packaging workflow now builds four integrated artifacts: a
+macOS DMG, a Windows per-user setup executable, and x86_64 and aarch64 Linux
+AppImages. The build
 uses a pinned revision of Adrian Black's Greaseweazle diagnostics fork (based
 on upstream v1.23) and HxCFE 2.16.10.1 source checkouts, builds the Rust
 decoder, packages both Greaseweazle commands and a console diagnostic worker,
