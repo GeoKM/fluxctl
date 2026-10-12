@@ -79,6 +79,7 @@ jobs:
           msystem: MINGW64
           install: >-
             make
+            gcc
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-binutils
             mingw-w64-x86_64-pkgconf
@@ -86,8 +87,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
-          command -v gcc ar windres
-          make -C vendor/hxc/build TARGET=mingw64 CC=gcc AR=ar RESC=windres HxCFloppyEmulator_cmdline
+          command -v gcc ar windres /usr/bin/gcc
+          make -C vendor/hxc/build TARGET=mingw64 CC=gcc AR=ar RESC=windres BUILD_CC=/usr/bin/gcc HxCFloppyEmulator_cmdline
       - name: Build HxCFE on macOS and Linux
         if: runner.os != 'Windows'
         run: make -C vendor/hxc/build HxCFloppyEmulator_cmdline
